@@ -4,80 +4,59 @@ import re
 import io
 
 # Set up the page layout
-st.set_page_config(page_title="FHSIS Data Processor - Abra Province", layout="wide")
-st.title("FHSIS Data Normalization App (Abra RHUs Only)")
-st.write("Upload your FHSIS CSV or Excel files to consolidate them into a clean master database for Abra.")
+st.set_page_config(page_title="FHSIS Data Processor - Abra", layout="wide")
+st.title("FHSIS Data Normalization App")
+st.markdown("Automated data consolidation for Abra Rural Health Units.")
 
-def clean_fhsis_columns(df):
-    """Cleans up merged Excel headers that turn into 'Unnamed' in CSVs/Excel."""
-    new_cols = []
-    current_main = ""
-    for col in df.columns:
-        if not str(col).startswith('Unnamed'):
-            current_main = str(col).strip()
-            new_cols.append(current_main)
-        else:
-            new_cols.append(current_main)
-    df.columns = new_cols
+# Create the Tabs (Starting with Immunization)
+tab1, tab2 = st.tabs(["1 Immunization", "More Priorities Coming Soon..."])
+
+# --- HELPER FUNCTIONS ---
+
+def get_period_from_filename(filename):
+    """Intelligently extracts the reporting period from the filename."""
+    fname = filename.lower()
+    if 'elig' in fname or 'pop' in fname: return 'Eligible Population'
     
-    first_row = df.iloc[0].fillna('').astype(str).str.strip()
-    if any(first_row.str.contains('Male|Female|Total|%', case=False, na=False)):
-        combined_cols = []
-        for main_col, sub_col in zip(df.columns, first_row):
-            if sub_col and sub_col.lower() not in main_col.lower():
-                combined_cols.append(f"{main_col} - {sub_col}")
-            else:
-                combined_cols.append(main_col)
-        df.columns = combined_cols
-        df = df.drop(0).reset_index(drop=True)
-    return df
-
-def extract_period_from_filename(filename):
-    """Extracts the reporting period from the filename."""
-    filename_lower = filename.lower()
-    if re.search(r'q[tr]*\s*1', filename_lower): return 'Q1'
-    if re.search(r'q[tr]*\s*2', filename_lower): return 'Q2'
-    if re.search(r'q[tr]*\s*3', filename_lower): return 'Q3'
-    if re.search(r'q[tr]*\s*4', filename_lower): return 'Q4'
-    
-    months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-    for m in months:
-        if m in filename_lower:
-            return m.capitalize()
-            
-    if 'elig' in filename_lower or 'pop' in filename_lower:
-        return 'Eligible Population'
-    return 'Annual Summary'
-
-def determine_category(filename):
-    """Maps the filename to the correct 8 Priority Health Outcome category."""
-    file_categories = {
-        '1 4ANC and 8ANC': 'Maternal Health - ANC',
-        '7 Pospartum Care': 'Maternal Health - Postpartum',
-        '1 Adults Risk Assessed': 'NCD - Adults',
-        '2 Seniors Risk Assessed': 'NCD - Seniors',
-        '5 Cervical Cancer': 'NCD - Cervical Cancer',
-        '6 Breast Cancer': 'NCD - Breast Cancer',
-        '1 CPAB, BCG and Hepa B': 'Immunization - Infants',
-        '2 DPT-HiB-HepB': 'Immunization - DPT',
-        '3 OPV and IPV': 'Immunization - Polio',
-        '4 PCV': 'Immunization - PCV',
-        '5 MMR, FIC and CIC': 'Immunization - MMR',
-        'Env_1 Safe Water': 'Environmental Health - Safe Water',
-        'Env_2 Sanitation': 'Environmental Health - Sanitation',
-        'F1 Plus 2 Death due to Traffic Injuries': 'Injuries - Traffic'
+    # Months
+    months = {
+        'jan': 'January', 'feb': 'February', 'mar': 'March', 'apr': 'April',
+        'may': 'May', 'jun': 'June', 'jul': 'July', 'aug': 'August',
+        'sep': 'September', 'oct': 'October', 'nov': 'November', 'dec': 'December'
     }
-    for pattern, category in file_categories.items():
-        if pattern.lower() in filename.lower():
-            return category
-    return 'Uncategorized - Other'
+    for key, value in months.items():
+        if key in fname:
+            return value
+            
+    # Quarters
+    if 'q1' in fname or '1st' in fname: return 'Q1'
+    if 'q2' in fname or '2nd' in fname: return 'Q2'
+    if 'q3' in fname or '3rd' in fname: return 'Q3'
+    if 'q4' in fname or '4th' in fname: return 'Q4'
+    
+    # Annual
+    if '2025' in fname or '2026' in fname or 'annual' in fname: return 'Annual'
+    
+    return 'Unspecified Period'
 
-def process_uploaded_file(uploaded_file):
-    """Processes an in-memory uploaded file and filters strictly for Abra."""
+def get_immunization_category(filename):
+    """Categorizes the specific immunization program based on file naming."""
+    fname = filename.upper()
+    if 'CPAB' in fname or 'BCG' in fname or 'HEPA' in fname or 'HEPB' in fname: return 'CPAB, BCG, HepB'
+    if 'DPT' in fname or 'HIB' in fname: return 'DPT-HiB-HepB'
+    if 'OPV' in fname or 'IPV' in fname: return 'OPV and IPV'
+    if 'PCV' in fname: return 'PCV'
+    if 'MMR' in fname or 'FIC' in fname or 'CIC' in fname: return 'MMR, FIC, CIC'
+    return 'Other Immunization'
+
+def process_immunization_file(uploaded_file):
+    """Reads, cleans, and unpivots FHSIS templates dynamically."""
     filename = uploaded_file.name
-    category = determine_category(filename)
+    period = get_period_from_filename(filename)
+    category = get_immunization_category(filename)
     is_excel = filename.lower().endswith('.xlsx')
     
+    # 1. Dynamically locate the header row
     if is_excel:
         temp_df = pd.read_excel(uploaded_file, nrows=20, header=None)
     else:
@@ -89,22 +68,43 @@ def process_uploaded_file(uploaded_file):
             header_row_idx = i
             break
             
-    uploaded_file.seek(0)
+    uploaded_file.seek(0) # Reset file pointer
     
+    # 2. Read actual data
     if is_excel:
         df = pd.read_excel(uploaded_file, skiprows=header_row_idx)
     else:
         df = pd.read_csv(uploaded_file, skiprows=header_row_idx)
+        
+    # 3. Clean complex merged headers (Forward Fill)
+    new_cols = []
+    current_main = ""
+    for col in df.columns:
+        if not str(col).startswith('Unnamed'):
+            current_main = str(col).strip()
+            new_cols.append(current_main)
+        else:
+            new_cols.append(current_main)
+    df.columns = new_cols
     
-    df = clean_fhsis_columns(df)
-    
+    # 4. Merge main headers with sub-headers (Male, Female, Total, %)
+    first_row = df.iloc[0].fillna('').astype(str).str.strip().str.lower()
+    if any(first_row.isin(['male', 'female', 'total', '%', 'no.', 'no'])):
+        combined_cols = []
+        for main_col, sub_col in zip(df.columns, df.iloc[0]):
+            sub_clean = str(sub_col).strip()
+            if sub_clean and sub_clean.lower() not in ['nan', 'none']:
+                combined_cols.append(f"{main_col} - {sub_clean}")
+            else:
+                combined_cols.append(main_col)
+        df.columns = combined_cols
+        df = df.drop(0).reset_index(drop=True)
+        
+    # 5. Rename Area column and filter strictly for Abra RHUs
     area_col = [col for col in df.columns if 'area' in str(col).lower()][0]
     df = df.rename(columns={area_col: 'Area'})
-    
-    # Strip spaces to ensure names match perfectly
     df['Area'] = df['Area'].astype(str).str.strip()
     
-    # --- STRICT ABRA FILTER ---
     abra_rhus = [
         'Bangued', 'Boliney', 'Bucay', 'Bucloc', 'Daguioman', 'Danglas',
         'Dolores', 'La Paz', 'Lacub', 'Lagangilang', 'Lagayan', 'Langiden',
@@ -114,100 +114,64 @@ def process_uploaded_file(uploaded_file):
     ]
     df = df[df['Area'].isin(abra_rhus)]
     
+    # 6. Drop interpretation/recommendation columns
     cols_to_drop = [col for col in df.columns if 'interpretation' in str(col).lower() or 'recommendation' in str(col).lower()]
     df = df.drop(columns=cols_to_drop, errors='ignore')
     
+    # 7. Unpivot (Wide to Long) for Power BI Star Schema compatibility
     df_long = pd.melt(df, id_vars=['Area'], var_name='Indicator', value_name='Value')
+    
+    # Clean values
     df_long['Value'] = pd.to_numeric(df_long['Value'].astype(str).str.replace(',', ''), errors='coerce')
     df_long = df_long.dropna(subset=['Value'])
     
-    df_long['Period'] = extract_period_from_filename(filename)
-    df_long['Year'] = 2025 
+    # 8. Append Metadata
+    df_long['Program'] = category
+    df_long['Period'] = period
     
-    # Separate the core Priority from the specific Health Outcome
-    df_long['Priority'] = category.split(' - ')[0]
-    df_long['Health_Outcome'] = category
+    # Extract year from filename if present, otherwise default to 2025
+    year_match = re.search(r'(202\d)', filename)
+    df_long['Year'] = int(year_match.group(1)) if year_match else 2025
+    
     df_long['Source_File'] = filename
     
-    return df_long[['Year', 'Period', 'Priority', 'Health_Outcome', 'Area', 'Indicator', 'Value', 'Source_File']]
+    return df_long[['Year', 'Period', 'Program', 'Area', 'Indicator', 'Value', 'Source_File']]
 
-# --- Streamlit UI Components ---
+# --- TAB 1: IMMUNIZATION ---
 
-uploaded_files = st.file_uploader("Drop your FHSIS CSV or Excel files here", accept_multiple_files=True, type=['csv', 'xlsx'])
-
-if uploaded_files:
-    if st.button("Process Data", type="primary"):
-        all_data = []
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        for i, file in enumerate(uploaded_files):
-            status_text.text(f"Processing {file.name}...")
-            try:
-                cleaned_df = process_uploaded_file(file)
-                all_data.append(cleaned_df)
-            except Exception as e:
-                st.error(f"Error processing {file.name}: {e}")
-            progress_bar.progress((i + 1) / len(uploaded_files))
+with tab1:
+    st.subheader("Vaccination & Immunization Processing")
+    st.write("Upload your CPAB, BCG, HepB, DPT, OPV, IPV, PCV, MMR, FIC, and CIC CSV/Excel files here.")
+    
+    uploaded_files = st.file_uploader("Drop Immunization Files", accept_multiple_files=True, type=['csv', 'xlsx'], key="imm_upload")
+    
+    if uploaded_files:
+        if st.button("Process Immunization Data", type="primary"):
+            all_data = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-        status_text.text("Consolidation complete!")
-        
-        if all_data:
-            master_db = pd.concat(all_data, ignore_index=True)
-            st.success(f"Successfully normalized {len(uploaded_files)} files. Filtered for Abra RHUs only: {len(master_db)} rows generated.")
-            
-            # Create the download button for the consolidated file
-            csv = master_db.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Download Abra Master Database (CSV)",
-                data=csv,
-                file_name="Abra_Master_FHSIS_Database_2025.csv",
-                mime="text/csv",
-            )
-            
-            # --- STREAMLIT TABBED DASHBOARD ---
-            st.divider()
-            st.subheader("📊 Abra RHU Quick Insights")
-            
-            # Extract unique Priority categories to generate the tabs
-            priorities = sorted(master_db['Priority'].dropna().unique())
-            
-            if priorities:
-                # Create a tab for each Priority Outcome
-                tabs = st.tabs(priorities)
+            for i, file in enumerate(uploaded_files):
+                status_text.text(f"Extracting data from {file.name}...")
+                try:
+                    cleaned_df = process_immunization_file(file)
+                    all_data.append(cleaned_df)
+                except Exception as e:
+                    st.error(f"Failed to process {file.name}: {e}")
+                progress_bar.progress((i + 1) / len(uploaded_files))
                 
-                # Loop through each tab to populate its specific dashboard filters
-                for idx, priority in enumerate(priorities):
-                    with tabs[idx]:
-                        priority_data = master_db[master_db['Priority'] == priority]
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            sub_categories = priority_data['Health_Outcome'].dropna().unique()
-                            selected_outcome = st.selectbox(
-                                "Select Specific Program:", 
-                                sorted(sub_categories),
-                                key=f"outcome_{priority}"
-                            )
-                        
-                        with col2:
-                            filtered_by_outcome = priority_data[priority_data['Health_Outcome'] == selected_outcome]
-                            indicators = filtered_by_outcome['Indicator'].dropna().unique()
-                            selected_indicator = st.selectbox(
-                                "Filter by Specific Indicator:", 
-                                sorted(indicators),
-                                key=f"ind_{priority}"
-                            )
-
-                        chart_data = filtered_by_outcome[filtered_by_outcome['Indicator'] == selected_indicator]
-                        
-                        # Exclude Eligible Population baseline files from the chart
-                        chart_data = chart_data[chart_data['Period'] != 'Eligible Population']
-
-                        if not chart_data.empty:
-                            summary_data = chart_data.groupby(['Area'])['Value'].sum().sort_values(ascending=False)
-                            
-                            st.write(f"**Total Reported Values for: {selected_indicator} (Excluding Baseline Population)**")
-                            st.bar_chart(summary_data)
-                        else:
-                            st.info("No reporting data available for the selected filters in this time period.")
+            status_text.text("Processing complete!")
+            
+            if all_data:
+                master_db = pd.concat(all_data, ignore_index=True)
+                st.success(f"Success! Normalized {len(uploaded_files)} files into {len(master_db)} rows of Abra RHU data.")
+                
+                st.dataframe(master_db.head(10), use_container_width=True)
+                
+                csv = master_db.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Download Cleaned Immunization Data (CSV)",
+                    data=csv,
+                    file_name="Abra_Immunization_Master.csv",
+                    mime="text/csv",
+                )
