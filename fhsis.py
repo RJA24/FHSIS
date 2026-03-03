@@ -2,49 +2,59 @@ import streamlit as st
 import pandas as pd
 import re
 
-# 1. Page Config
-st.set_page_config(page_title="Abra FHSIS Dashboard", layout="wide")
+# 1. Page Configuration
+st.set_page_config(page_title="Abra FHSIS Command Center", layout="wide")
 
 if 'master_db' not in st.session_state:
     st.session_state.master_db = None
 
-# 2. Resilient Period Extraction
-def get_period(text):
-    text = text.upper()
-    periods = {
-        "JAN": "January", "FEB": "February", "MAR": "March", "APR": "April", 
-        "MAY": "May", "JUN": "June", "JUL": "July", "AUG": "August", 
-        "SEP": "September", "OCT": "October", "NOV": "November", "DEC": "December",
-        "Q1": "1st Quarter", "Q2": "2nd Quarter", "Q3": "3rd Quarter", "Q4": "4th Quarter",
-        "ELIG": "Eligible Pop", "2025": "Annual 2025"
+# 2. Resilient Month/Quarter Mapping
+def get_period_label(text):
+    text = str(text).upper()
+    mapping = {
+        "JAN": "01-January", "FEB": "02-February", "MAR": "03-March", 
+        "APR": "04-April", "MAY": "05-May", "JUN": "06-June", 
+        "JUL": "07-July", "AUG": "08-August", "SEP": "09-September", 
+        "OCT": "10-October", "NOV": "11-November", "DEC": "12-December",
+        "Q1": "Q1-First Quarter", "Q2": "Q2-Second Quarter", 
+        "Q3": "Q3-Third Quarter", "Q4": "Q4-Fourth Quarter",
+        "2025": "Annual 2025", "ELIG": "Eligible Population"
     }
-    for key, val in periods.items():
-        if key in text: return val
-    return "Other Period"
+    for key, val in mapping.items():
+        if key in text:
+            return val
+    return "99-Other"
 
-# 3. Processing Engine
-def process_rhu_csv(file):
+# 3. Enhanced Processing Logic
+def process_fhsish_csv(file):
     filename = file.name
-    # Load CSV
-    df = pd.read_csv(file, header=None)
+    # Try to read with different encodings if needed
+    try:
+        df = pd.read_csv(file, header=None)
+    except:
+        return pd.DataFrame()
     
-    # Locate "Area"
-    area_idx = -1
+    # Find row with "Area"
+    area_row_idx = -1
     for i, row in df.iterrows():
         if any(str(v).strip().lower() == 'area' for v in row.values):
-            area_idx = i
+            area_row_idx = i
             break
-    if area_idx == -1: return pd.DataFrame()
-
-    # Get Indicators (usually at area_idx) and Sex (usually at area_idx + 2)
-    header_row = df.iloc[area_idx].fillna(method='ffill').astype(str).str.strip()
-    sex_row = df.iloc[area_idx + 2].fillna('').astype(str).str.strip().str.title()
     
-    # Filter data for Abra
-    data = df.iloc[area_idx + 3:].copy()
+    if area_row_idx == -1:
+        return pd.DataFrame()
+
+    # Identify Headers and Sex Subheaders
+    # Indicators are usually in the Area row (idx)
+    # Male/Female are usually 2 rows below (idx + 2)
+    header_row = df.iloc[area_row_idx].fillna(method='ffill').astype(str).str.strip()
+    sex_row = df.iloc[area_row_idx + 2].fillna('').astype(str).str.strip().str.title()
+    
+    # Filter for Abra RHUs
+    data = df.iloc[area_row_idx + 3:].copy()
     data.columns = [f"{h}|{s}" if s in ['Male', 'Female', 'Total'] else h for h, s in zip(header_row, sex_row)]
     
-    # Rename Area Column
+    # Rename Area
     area_col = [c for c in data.columns if 'area' in str(c).lower()][0]
     data = data.rename(columns={area_col: 'Area'})
     
@@ -52,84 +62,89 @@ def process_rhu_csv(file):
     data['Area'] = data['Area'].astype(str).str.strip()
     data = data[data['Area'].isin(abra_rhus)]
 
-    # Pivot to Long Format
+    # Transform to Long Format
     long = data.melt(id_vars=['Area'], var_name='Metric', value_name='Count')
+    
+    # Strictly filter for only columns we tagged with a Sex breakdown (ignoring denominators)
     long = long[long['Metric'].str.contains('\|', na=False)]
-    if long.empty: return pd.DataFrame()
+    if long.empty:
+        return pd.DataFrame()
 
     long[['Indicator', 'Sex']] = long['Metric'].str.split('|', expand=True)
     long['Count'] = pd.to_numeric(long['Count'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
     
     final = long.pivot_table(index=['Area', 'Indicator'], columns='Sex', values='Count', aggfunc='sum').reset_index()
-    final['Month'] = get_period(filename)
+    
+    # Add standardized Period
+    final['Period'] = get_period_label(filename)
     final['Source'] = filename
     return final
 
-# 4. Sidebar Upload
+# 4. Sidebar Controller
 with st.sidebar:
-    st.header("📂 Data Controller")
-    st.write("Upload the FHSIS CSV files for Abra RHUs.")
-    files = st.file_uploader("Drop CSVs here", accept_multiple_files=True, type=['csv'])
+    st.header("⚙️ Data Entry")
+    st.info("Upload your 2025 FHSIS CSV files here.")
+    files = st.file_uploader("Drop Files", accept_multiple_files=True, type=['csv'])
     
-    if st.button("🚀 Consolidate & Generate Charts", type="primary"):
+    if st.button("🚀 Process & Build Dashboard", type="primary"):
         if files:
-            all_dfs = []
+            all_data = []
             for f in files:
-                res = process_rhu_csv(f)
-                if not res.empty: all_dfs.append(res)
+                res = process_fhsish_csv(f)
+                if not res.empty:
+                    all_data.append(res)
             
-            if all_dfs:
-                st.session_state.master_db = pd.concat(all_dfs, ignore_index=True)
-                st.success("Analysis Ready!")
-        else:
-            st.warning("Please upload files first.")
+            if all_data:
+                st.session_state.master_db = pd.concat(all_data, ignore_index=True)
+                st.success("Successfully Normalized!")
+            else:
+                st.error("No accomplishment data found. Ensure these are service delivery CSVs.")
 
-# 5. Main Dashboard (1 Chart/Table per Indicator)
-st.title("FHSIS Priority 1: Immunization (Abra RHU Level)")
+# 5. Main Dashboard
+st.title("FHSIS Priority 1: Immunization (Abra RHUs)")
 
 if st.session_state.master_db is not None:
     db = st.session_state.master_db
     
-    # Month Filter for the whole dashboard
-    all_months = sorted(db['Month'].unique())
-    selected_month = st.select_slider("Select Reporting Period to View:", options=all_months)
+    # Global Filter
+    periods = sorted(db['Period'].unique())
+    selected_period = st.select_slider("Select Reporting Period:", options=periods)
     
-    # Filter DB by month
-    month_data = db[db['Month'] == selected_month]
+    # Filtered Data
+    view_data = db[db['Period'] == selected_period]
+    indicators = sorted(view_data['Indicator'].unique())
     
-    # Get unique indicators
-    indicators = sorted(month_data['Indicator'].unique())
-    
-    # Iterate and create one section per indicator
+    # Generate 1 section per Indicator
     for ind in indicators:
         with st.container():
             st.divider()
             st.subheader(f"💉 {ind}")
             
-            # Filter for specific indicator
-            ind_data = month_data[month_data['Indicator'] == ind].copy()
+            # Data for this vaccine
+            ind_df = view_data[view_data['Indicator'] == ind].copy()
             
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                # Bar Chart
-                st.write("**RHU Accomplishment (Male vs Female)**")
-                st.bar_chart(ind_data.set_index('Area')[['Male', 'Female']])
-            
-            with col2:
-                # Summary Table
-                st.write("**Top Performing RHUs**")
-                top_rhus = ind_data.sort_values(by='Total', ascending=False)[['Area', 'Total']].head(5)
-                st.table(top_rhus)
+                st.write("**Accomplishments by RHU**")
+                # Bar chart with Male/Female split
+                plot_data = ind_df.set_index('Area')[['Male', 'Female']]
+                st.bar_chart(plot_data)
                 
-                # Total Accomplishment Metric
-                total_val = int(ind_data['Total'].sum())
-                st.metric("Total Abra Count", f"{total_val:,}")
+            with col2:
+                st.write("**Leaderboard (Top 5)**")
+                # Table
+                top_5 = ind_df.sort_values(by='Total', ascending=False)[['Area', 'Total']].head(5)
+                st.table(top_5)
+                
+                # Big Metric
+                total_abra = int(ind_df['Total'].sum())
+                st.metric("Total Count (Abra)", f"{total_abra:,}")
 
-    # Export Section
+    # Export
     st.divider()
     csv = db.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Full Consolidated Database (Fact Table)", csv, "Abra_Imm_Master_FactTable.csv", "text/csv")
+    st.download_button("📥 Download Power BI Fact Table", csv, "Abra_Immunization_2025.csv", "text/csv")
 
 else:
-    st.info("👈 Please upload your 2025 Immunization CSVs in the sidebar to generate the automated indicators.")
+    st.warning("👈 Upload your FHSIS files in the sidebar to generate the automated indicators.")
