@@ -70,7 +70,7 @@ def determine_category(filename):
     for pattern, category in file_categories.items():
         if pattern.lower() in filename.lower():
             return category
-    return 'Uncategorized'
+    return 'Uncategorized - Other'
 
 def process_uploaded_file(uploaded_file):
     """Processes an in-memory uploaded file and filters strictly for Abra."""
@@ -101,7 +101,7 @@ def process_uploaded_file(uploaded_file):
     area_col = [col for col in df.columns if 'area' in str(col).lower()][0]
     df = df.rename(columns={area_col: 'Area'})
     
-    # Strip spaces to ensure names like "Boliney " match perfectly
+    # Strip spaces to ensure names match perfectly
     df['Area'] = df['Area'].astype(str).str.strip()
     
     # --- STRICT ABRA FILTER ---
@@ -123,10 +123,13 @@ def process_uploaded_file(uploaded_file):
     
     df_long['Period'] = extract_period_from_filename(filename)
     df_long['Year'] = 2025 
+    
+    # Separate the core Priority from the specific Health Outcome
+    df_long['Priority'] = category.split(' - ')[0]
     df_long['Health_Outcome'] = category
     df_long['Source_File'] = filename
     
-    return df_long[['Year', 'Period', 'Health_Outcome', 'Area', 'Indicator', 'Value', 'Source_File']]
+    return df_long[['Year', 'Period', 'Priority', 'Health_Outcome', 'Area', 'Indicator', 'Value', 'Source_File']]
 
 # --- Streamlit UI Components ---
 
@@ -153,9 +156,6 @@ if uploaded_files:
             master_db = pd.concat(all_data, ignore_index=True)
             st.success(f"Successfully normalized {len(uploaded_files)} files. Filtered for Abra RHUs only: {len(master_db)} rows generated.")
             
-            # Show a preview of the clean data
-            st.dataframe(master_db.head(10), use_container_width=True)
-            
             # Create the download button for the consolidated file
             csv = master_db.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -165,30 +165,49 @@ if uploaded_files:
                 mime="text/csv",
             )
             
-            # --- STREAMLIT LIVE DASHBOARD (Track 3) ---
+            # --- STREAMLIT TABBED DASHBOARD ---
             st.divider()
             st.subheader("📊 Abra RHU Quick Insights")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                outcomes = master_db['Health_Outcome'].dropna().unique()
-                selected_outcome = st.selectbox("Filter by Health Outcome:", sorted(outcomes))
+            # Extract unique Priority categories to generate the tabs
+            priorities = sorted(master_db['Priority'].dropna().unique())
             
-            with col2:
-                filtered_by_outcome = master_db[master_db['Health_Outcome'] == selected_outcome]
-                indicators = filtered_by_outcome['Indicator'].dropna().unique()
-                selected_indicator = st.selectbox("Filter by Specific Indicator:", sorted(indicators))
-
-            chart_data = filtered_by_outcome[filtered_by_outcome['Indicator'] == selected_indicator]
-            
-            # Exclude Eligible Population files from the chart to prevent skewed visual scaling
-            chart_data = chart_data[chart_data['Period'] != 'Eligible Population']
-
-            if not chart_data.empty:
-                # Group by Area to show a comparative bar chart across municipalities
-                summary_data = chart_data.groupby(['Area'])['Value'].sum().sort_values(ascending=False)
+            if priorities:
+                # Create a tab for each Priority Outcome
+                tabs = st.tabs(priorities)
                 
-                st.write(f"**Total Reported Values for: {selected_indicator} (Excluding Baseline Population)**")
-                st.bar_chart(summary_data)
-            else:
-                st.info("No reporting data available for the selected filters.")
+                # Loop through each tab to populate its specific dashboard filters
+                for idx, priority in enumerate(priorities):
+                    with tabs[idx]:
+                        priority_data = master_db[master_db['Priority'] == priority]
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            sub_categories = priority_data['Health_Outcome'].dropna().unique()
+                            selected_outcome = st.selectbox(
+                                "Select Specific Program:", 
+                                sorted(sub_categories),
+                                key=f"outcome_{priority}"
+                            )
+                        
+                        with col2:
+                            filtered_by_outcome = priority_data[priority_data['Health_Outcome'] == selected_outcome]
+                            indicators = filtered_by_outcome['Indicator'].dropna().unique()
+                            selected_indicator = st.selectbox(
+                                "Filter by Specific Indicator:", 
+                                sorted(indicators),
+                                key=f"ind_{priority}"
+                            )
+
+                        chart_data = filtered_by_outcome[filtered_by_outcome['Indicator'] == selected_indicator]
+                        
+                        # Exclude Eligible Population baseline files from the chart
+                        chart_data = chart_data[chart_data['Period'] != 'Eligible Population']
+
+                        if not chart_data.empty:
+                            summary_data = chart_data.groupby(['Area'])['Value'].sum().sort_values(ascending=False)
+                            
+                            st.write(f"**Total Reported Values for: {selected_indicator} (Excluding Baseline Population)**")
+                            st.bar_chart(summary_data)
+                        else:
+                            st.info("No reporting data available for the selected filters in this time period.")
