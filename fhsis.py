@@ -16,6 +16,13 @@ ABRA_MUNIS = [
     'Tayum', 'Tineg', 'Tubo', 'Villaviciosa'
 ]
 
+PERIOD_ORDER = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Q1": 4, 
+    "Apr": 5, "May": 6, "Jun": 7, "Q2": 8, 
+    "Jul": 9, "Aug": 10, "Sep": 11, "Q3": 12, 
+    "Oct": 13, "Nov": 14, "Dec": 15, "Q4": 16, "Annual": 17
+}
+
 # ---------------------------------------------------------
 # THE INTELLIGENT PARSER
 # ---------------------------------------------------------
@@ -37,14 +44,16 @@ def detect_indicator_type(filename):
     return "Uncategorized Indicator"
 
 def extract_period(filename):
-    """Extracts the month or quarter from the file name."""
     match = re.search(r'-\s*([A-Za-z0-9\s]+)\.(csv|xlsx|xls)', filename)
-    return match.group(1).strip() if match else "Annual"
+    period = match.group(1).strip() if match else "Annual"
+    # Standardize names for sorting
+    if period == "Sept": period = "Sep"
+    if period == "July": period = "Jul"
+    return period
 
 @st.cache_data
 def parse_fhsis_template(uploaded_file):
     file_name = uploaded_file.name.lower()
-    
     try:
         if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
             df = pd.read_excel(uploaded_file, header=None)
@@ -65,8 +74,7 @@ def parse_fhsis_template(uploaded_file):
             area_col_index = col
             break
             
-    if area_col_index is None:
-        return None, "Could not locate Area column."
+    if area_col_index is None: return None, "Could not locate Area column."
 
     car_start = df[df[area_col_index] == 'C A R'].index.min()
     abra_start = df[df[area_col_index] == 'Abra'].index.min()
@@ -76,7 +84,6 @@ def parse_fhsis_template(uploaded_file):
     if pd.isna(abra_start): abra_start = 0
     if pd.isna(apayao_start): apayao_start = len(df)
 
-    # Header Flattener
     header_rows = df.iloc[max(0, car_start-3):car_start].copy()
     header_rows = header_rows.replace(['nan', 'None', '', 'NaN'], pd.NA)
     header_rows = header_rows.ffill(axis=1)
@@ -88,10 +95,8 @@ def parse_fhsis_template(uploaded_file):
         for text in col_texts:
             if text not in clean_texts and "Unnamed" not in text:
                 clean_texts.append(text)
-        
         header_name = " | ".join(clean_texts)
-        if not header_name:
-            header_name = f"Col_{col}"
+        if not header_name: header_name = f"Col_{col}"
         flat_headers.append(header_name)
         
     df.columns = flat_headers
@@ -104,8 +109,7 @@ def parse_fhsis_template(uploaded_file):
     clean_df.dropna(axis=1, how='all', inplace=True)
     
     final_cols = ['Municipality'] + [col for col in clean_df.columns if 'Total' in col or '%' in col]
-    if len(final_cols) == 1:
-        final_cols = clean_df.columns.tolist()
+    if len(final_cols) == 1: final_cols = clean_df.columns.tolist()
 
     return clean_df[final_cols], "Success"
 
@@ -113,7 +117,7 @@ def parse_fhsis_template(uploaded_file):
 # APP UI & ROUTING
 # ---------------------------------------------------------
 st.title("🏥 Abra Provincial FHSIS Dashboard")
-st.markdown("### Automated Data Pipeline (2021-2025)")
+st.markdown("### Automated Data Pipeline & Trend Analysis (2021-2025)")
 
 with st.expander("📂 Upload FHSIS Templates", expanded=True):
     uploaded_files = st.file_uploader(
@@ -125,7 +129,6 @@ with st.expander("📂 Upload FHSIS Templates", expanded=True):
 if uploaded_files:
     st.success(f"{len(uploaded_files)} files loaded successfully.")
     
-    # Group files by Indicator Type
     grouped_files = {}
     for file in uploaded_files:
         indicator = detect_indicator_type(file.name)
@@ -139,43 +142,103 @@ if uploaded_files:
         with tabs[i]:
             st.markdown(f"## {indicator}")
             
+            # 1. PROCESS ALL DATA FOR THIS INDICATOR
+            all_period_data = []
             for file in files:
                 parsed_data, status = parse_fhsis_template(file)
-                period = extract_period(file.name)
-                
                 if parsed_data is not None:
-                    with st.expander(f"📊 {period} Data & Chart", expanded=False):
+                    period = extract_period(file.name)
+                    parsed_data['Period'] = period
+                    parsed_data['Period_Order'] = PERIOD_ORDER.get(period, 99) # For chronological sorting
+                    all_period_data.append(parsed_data)
+            
+            if not all_period_data:
+                st.warning("No valid data could be extracted for this indicator.")
+                continue
+                
+            master_df = pd.concat(all_period_data, ignore_index=True)
+            numeric_cols = [c for c in master_df.columns if c not in ['Municipality', 'Period', 'Period_Order']]
+            
+            # 2. THE TREND ANALYSIS ENGINE
+            if numeric_cols:
+                st.markdown("### 📈 Chronological Trend Analysis")
+                
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    selected_trend_col = st.selectbox(
+                        "Select Metric to Track Over Time:", 
+                        numeric_cols, 
+                        key=f"trend_metric_{indicator}"
+                    )
+                with col2:
+                    selected_munis = st.multiselect(
+                        "Select Municipalities to Compare:",
+                        options=ABRA_MUNIS,
+                        default=['Bangued', 'Manabo'],
+                        key=f"trend_munis_{indicator}"
+                    )
+                
+                # Prepare Trend Data
+                trend_df = master_df[['Period', 'Period_Order', 'Municipality', selected_trend_col]].copy()
+                trend_df[selected_trend_col] = trend_df[selected_trend_col].astype(str).str.replace(',', '').str.replace('%', '')
+                trend_df[selected_trend_col] = pd.to_numeric(trend_df[selected_trend_col], errors='coerce').fillna(0)
+                
+                # Filter by selected municipalities (or show all if none selected)
+                if selected_munis:
+                    trend_df = trend_df[trend_df['Municipality'].isin(selected_munis)]
+                
+                # Sort chronologically (Jan -> Feb -> Mar)
+                trend_df = trend_df.sort_values(by=['Period_Order', 'Municipality'])
+                
+                # Plot the Line Chart
+                fig_trend = px.line(
+                    trend_df, 
+                    x='Period', 
+                    y=selected_trend_col, 
+                    color='Municipality',
+                    markers=True,
+                    title=f"Trend: {selected_trend_col}",
+                    template="plotly_white"
+                )
+                fig_trend.update_layout(xaxis_title="Reporting Period", yaxis_title="Accomplishment")
+                fig_trend.update_traces(line=dict(width=3), marker=dict(size=8))
+                st.plotly_chart(fig_trend, use_container_width=True)
+                
+                st.divider()
+
+            # 3. INDIVIDUAL FILE REPORTS (The Phase 3 Code)
+            st.markdown("### 📄 Individual Period Reports")
+            for file in files:
+                period = extract_period(file.name)
+                # Find the specific dataframe for this file from our combined list
+                file_df = master_df[master_df['Period'] == period].drop(columns=['Period', 'Period_Order'])
+                
+                with st.expander(f"📊 {period} Data & Chart", expanded=False):
+                    if numeric_cols:
+                        selected_bar_col = st.selectbox(
+                            f"Select Metric to Visualize ({period}):", 
+                            numeric_cols, 
+                            key=f"bar_{file.name}"
+                        )
                         
-                        # The Charting Engine
-                        numeric_cols = [c for c in parsed_data.columns if c != 'Municipality']
-                        if numeric_cols:
-                            selected_col = st.selectbox(f"Select Metric to Visualize ({period}):", numeric_cols, key=file.name)
-                            
-                            # Clean data for charting (convert string numbers to float)
-                            chart_df = parsed_data[['Municipality', selected_col]].copy()
-                            # Remove commas or percent signs before converting
-                            chart_df[selected_col] = chart_df[selected_col].astype(str).str.replace(',', '').str.replace('%', '')
-                            chart_df[selected_col] = pd.to_numeric(chart_df[selected_col], errors='coerce').fillna(0)
-                            
-                            # Sort highest to lowest
-                            chart_df = chart_df.sort_values(by=selected_col, ascending=False)
-                            
-                            fig = px.bar(
-                                chart_df, 
-                                x='Municipality', 
-                                y=selected_col, 
-                                title=f"{period}: {selected_col} by RHU",
-                                text_auto='.2s',
-                                template="plotly_white",
-                                color=selected_col,
-                                color_continuous_scale="Blues"
-                            )
-                            fig.update_traces(textfont_size=12, textangle=0, textposition="outside", cliponaxis=False)
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                        # Show the raw table underneath the chart
-                        st.dataframe(parsed_data, use_container_width=True)
-                else:
-                    st.error(f"Failed to load {file.name}: {status}")
+                        chart_df = file_df[['Municipality', selected_bar_col]].copy()
+                        chart_df[selected_bar_col] = chart_df[selected_bar_col].astype(str).str.replace(',', '').str.replace('%', '')
+                        chart_df[selected_bar_col] = pd.to_numeric(chart_df[selected_bar_col], errors='coerce').fillna(0)
+                        chart_df = chart_df.sort_values(by=selected_bar_col, ascending=False)
+                        
+                        fig_bar = px.bar(
+                            chart_df, 
+                            x='Municipality', 
+                            y=selected_bar_col, 
+                            title=f"{period}: {selected_bar_col} by RHU",
+                            text_auto='.2s',
+                            template="plotly_white",
+                            color=selected_bar_col,
+                            color_continuous_scale="Blues"
+                        )
+                        fig_bar.update_traces(textfont_size=12, textangle=0, textposition="outside", cliponaxis=False)
+                        st.plotly_chart(fig_bar, use_container_width=True)
+                        
+                    st.dataframe(file_df, use_container_width=True)
 else:
     st.info("Awaiting file upload... Drop your monthly CSVs above.")
