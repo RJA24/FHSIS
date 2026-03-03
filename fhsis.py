@@ -1,46 +1,12 @@
 import streamlit as st
 import pandas as pd
 import re
-import io
 
 # Set up the page layout
-st.set_page_config(page_title="FHSIS Data Processor - Abra", layout="wide")
-st.title("FHSIS Data Normalization App")
-st.markdown("Automated data consolidation for Abra Rural Health Units.")
-
-# Create the Tabs
-tab1, tab2 = st.tabs(["1 Immunization", "More Priorities Coming Soon..."])
-
-# --- HELPER FUNCTIONS ---
-
-def get_period_from_filename(filename):
-    """Intelligently extracts the reporting period from the filename."""
-    fname = filename.lower()
-    if 'elig' in fname or 'pop' in fname: return 'Eligible Population'
-    
-    # Months
-    months = {
-        'jan': 'January', 'feb': 'February', 'mar': 'March', 'apr': 'April',
-        'may': 'May', 'jun': 'June', 'jul': 'July', 'aug': 'August',
-        'sep': 'September', 'oct': 'October', 'nov': 'November', 'dec': 'December'
-    }
-    for key, value in months.items():
-        if key in fname:
-            return value
-            
-    # Quarters
-    if 'q1' in fname or '1st' in fname: return 'Q1'
-    if 'q2' in fname or '2nd' in fname: return 'Q2'
-    if 'q3' in fname or '3rd' in fname: return 'Q3'
-    if 'q4' in fname or '4th' in fname: return 'Q4'
-    
-    # Annual
-    if '2025' in fname or '2026' in fname or 'annual' in fname: return 'Annual'
-    
-    return 'Unspecified Period'
+st.set_page_config(page_title="Abra FHSIS Processor", layout="wide")
+st.title("Immunization Data Normalizer (Abra RHUs)")
 
 def get_immunization_category(filename):
-    """Categorizes the specific immunization program based on file naming."""
     fname = filename.upper()
     if 'CPAB' in fname or 'BCG' in fname or 'HEPA' in fname or 'HEPB' in fname: return 'CPAB, BCG, HepB'
     if 'DPT' in fname or 'HIB' in fname: return 'DPT-HiB-HepB'
@@ -49,160 +15,72 @@ def get_immunization_category(filename):
     if 'MMR' in fname or 'FIC' in fname or 'CIC' in fname: return 'MMR, FIC, CIC'
     return 'Other Immunization'
 
-def process_immunization_file(uploaded_file):
-    """Reads FHSIS templates, links main indicators to Male/Female/Total, and pivots them."""
+def process_file(uploaded_file):
     filename = uploaded_file.name
-    period = get_period_from_filename(filename)
-    category = get_immunization_category(filename)
     is_excel = filename.lower().endswith('.xlsx')
     
-    # 1. Dynamically locate the header row
-    if is_excel:
-        temp_df = pd.read_excel(uploaded_file, nrows=20, header=None)
-    else:
-        temp_df = pd.read_csv(uploaded_file, nrows=20, header=None)
-        
-    header_row_idx = 0
+    # 1. Read to find the header
+    if is_excel: temp_df = pd.read_excel(uploaded_file, nrows=20, header=None)
+    else: temp_df = pd.read_csv(uploaded_file, nrows=20, header=None)
+    
+    header_idx = 0
     for i, row in temp_df.iterrows():
-        if any(str(val).strip().lower() == 'area' for val in row.values):
-            header_row_idx = i
+        if any(str(v).strip().lower() == 'area' for v in row.values):
+            header_idx = i
             break
             
-    uploaded_file.seek(0) # Reset file pointer
+    uploaded_file.seek(0)
+    if is_excel: df = pd.read_excel(uploaded_file, skiprows=header_idx)
+    else: df = pd.read_csv(uploaded_file, skiprows=header_idx)
     
-    # 2. Read actual data
-    if is_excel:
-        df = pd.read_excel(uploaded_file, skiprows=header_row_idx)
-    else:
-        df = pd.read_csv(uploaded_file, skiprows=header_row_idx)
+    # 2. Clean and Flatten headers
+    cols = pd.Series(df.columns).astype(str).str.replace('\n', ' ').str.strip()
+    sub_headers = df.iloc[0].fillna('').astype(str).str.strip().str.title()
+    
+    new_cols = []
+    curr_main = ""
+    for i in range(len(cols)):
+        if not cols[i].startswith('Unnamed'): curr_main = cols[i]
         
-    # 3. Clean complex merged headers (Forward Fill)
-    cols = pd.Series(df.columns)
-    for i in range(1, len(cols)):
-        if 'Unnamed' in str(cols[i]):
-            cols[i] = cols[i-1]
-            
-    cols = cols.astype(str).str.replace('\n', ' ').str.strip()
+        sub = sub_headers[i]
+        if sub in ['Male', 'Female', 'Total']:
+            new_cols.append(f"{curr_main}|{sub}")
+        else:
+            new_cols.append(curr_main)
+    df.columns = new_cols
+    df = df.drop(0).reset_index(drop=True)
     
-    # 4. Find the Sub-Headers (Scan the first few rows to bypass blank rows)
-    sub_col_idx = -1
-    for idx in range(min(5, len(df))):
-        row_vals = df.iloc[idx].fillna('').astype(str).str.strip().str.title()
-        if any(val in ['Male', 'Female', 'Total'] for val in row_vals):
-            sub_col_idx = idx
-            break
-            
-    # Combine Headers
-    if sub_col_idx != -1:
-        sub_cols = df.iloc[sub_col_idx].fillna('').astype(str).str.strip().str.title()
-        new_cols = []
-        for main_col, sub_col in zip(cols, sub_cols):
-            if sub_col in ['Male', 'Female', 'Total']:
-                new_cols.append(f"{main_col}|{sub_col}")
-            else:
-                new_cols.append(main_col)
-        df.columns = new_cols
-        # Drop rows up to the sub-header
-        df = df.iloc[sub_col_idx + 1:].reset_index(drop=True)
-    else:
-        df.columns = cols
+    # 3. Filter for Abra
+    area_col = [c for c in df.columns if 'area' in c.lower()][0]
+    df = df.rename(columns={area_col: 'Area'})
+    abra_rhus = ['Bangued', 'Boliney', 'Bucay', 'Bucloc', 'Daguioman', 'Danglas', 'Dolores', 'La Paz', 'Lacub', 'Lagangilang', 'Lagayan', 'Langiden', 'Licuan-Baay', 'Luba', 'Malibcong', 'Manabo', 'Penarrubia', 'Pidigan', 'Pilar', 'Sallapadan', 'San Isidro', 'San Juan', 'San Quintin', 'Tayum', 'Tineg', 'Tubo', 'Villaviciosa']
+    df = df[df['Area'].astype(str).str.strip().isin(abra_rhus)]
+    
+    # 4. Melt and Pivot
+    df_long = df.melt(id_vars=['Area'], var_name='Metric', value_name='Count')
+    df_long = df_long[df_long['Metric'].str.contains('\|')]
+    df_long[['Indicator', 'Sex']] = df_long['Metric'].str.split('|', expand=True)
+    df_long['Count'] = pd.to_numeric(df_long['Count'], errors='coerce').fillna(0)
+    
+    final_df = df_long.pivot_table(index=['Area', 'Indicator'], columns='Sex', values='Count', aggfunc='sum').reset_index()
+    
+    # Metadata
+    final_df['Program'] = get_immunization_category(filename)
+    final_df['Period'] = 'Monthly' if 'Jan' in filename or 'Feb' in filename else 'Quarterly/Annual'
+    final_df['Year'] = 2025
+    return final_df
 
-    # 5. Rename Area column and filter strictly for Abra RHUs
-    area_col = [col for col in df.columns if 'Area' in str(col).title()]
-    if not area_col:
-        return pd.DataFrame()
-    
-    df = df.rename(columns={area_col[0]: 'Area'})
-    df['Area'] = df['Area'].astype(str).str.strip()
-    
-    abra_rhus = [
-        'Bangued', 'Boliney', 'Bucay', 'Bucloc', 'Daguioman', 'Danglas',
-        'Dolores', 'La Paz', 'Lacub', 'Lagangilang', 'Lagayan', 'Langiden',
-        'Licuan-Baay', 'Luba', 'Malibcong', 'Manabo', 'Penarrubia', 'Pidigan',
-        'Pilar', 'Sallapadan', 'San Isidro', 'San Juan', 'San Quintin',
-        'Tayum', 'Tineg', 'Tubo', 'Villaviciosa'
-    ]
-    df = df[df['Area'].isin(abra_rhus)]
-    
-    # 6. Unpivot (Wide to Long)
-    df_long = pd.melt(df, id_vars=['Area'], var_name='Raw_Indicator', value_name='Value')
-    
-    # Filter ONLY columns that we merged with a pipe
-    df_long = df_long[df_long['Raw_Indicator'].astype(str).str.contains('\|', na=False)]
-    
-    # GUARD: If this file didn't have Male/Female/Total (like Elig Pop files), skip it safely.
-    if df_long.empty:
-        return pd.DataFrame()
-        
-    # Split the Indicator from the Sex/Category
-    df_long[['Indicator', 'Sex']] = df_long['Raw_Indicator'].str.split('|', n=1, expand=True)
-    df_long['Indicator'] = df_long['Indicator'].str.strip()
-    
-    # Clean numeric values
-    df_long['Value'] = pd.to_numeric(df_long['Value'].astype(str).str.replace(',', ''), errors='coerce')
-    df_long = df_long.dropna(subset=['Value'])
-    
-    # 7. Pivot so Male, Female, and Total become their own columns
-    df_pivot = df_long.pivot_table(
-        index=['Area', 'Indicator'], 
-        columns='Sex', 
-        values='Value', 
-        aggfunc='sum'
-    ).reset_index()
-    
-    # Ensure columns exist even if data is missing
-    for col in ['Male', 'Female', 'Total']:
-        if col not in df_pivot.columns:
-            df_pivot[col] = 0
-            
-    df_pivot.columns.name = None 
-    
-    # 8. Append Metadata
-    df_pivot['Program'] = category
-    df_pivot['Period'] = period
-    
-    year_match = re.search(r'(202\d)', filename)
-    df_pivot['Year'] = int(year_match.group(1)) if year_match else 2025
-    df_pivot['Source_File'] = filename
-    
-    return df_pivot[['Year', 'Period', 'Program', 'Area', 'Indicator', 'Male', 'Female', 'Total', 'Source_File']]
-
-# --- TAB 1: IMMUNIZATION ---
+# UI
+tab1, tab2 = st.tabs(["1 Immunization", "Upcoming Priorities"])
 
 with tab1:
-    st.subheader("Vaccination & Immunization Processing")
-    st.write("Upload your CPAB, BCG, HepB, DPT, OPV, IPV, PCV, MMR, FIC, and CIC CSV/Excel files here.")
-    
-    uploaded_files = st.file_uploader("Drop Immunization Files", accept_multiple_files=True, type=['csv', 'xlsx'], key="imm_upload")
-    
-    if uploaded_files:
-        if st.button("Process Immunization Data", type="primary"):
-            all_data = []
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i, file in enumerate(uploaded_files):
-                status_text.text(f"Extracting data from {file.name}...")
-                try:
-                    cleaned_df = process_immunization_file(file)
-                    if not cleaned_df.empty:
-                        all_data.append(cleaned_df)
-                except Exception as e:
-                    st.error(f"Failed to process {file.name}: {e}")
-                progress_bar.progress((i + 1) / len(uploaded_files))
-                
-            status_text.text("Processing complete!")
-            
-            if all_data:
-                master_db = pd.concat(all_data, ignore_index=True)
-                st.success(f"Success! Normalized {len(uploaded_files)} files into {len(master_db)} rows of Abra RHU data.")
-                
-                st.dataframe(master_db.head(10), use_container_width=True)
-                
-                csv = master_db.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Download Cleaned Immunization Data (CSV)",
-                    data=csv,
-                    file_name="Abra_Immunization_Master.csv",
-                    mime="text/csv",
-                )
+    uploaded_files = st.file_uploader("Upload Immunization files", accept_multiple_files=True, type=['csv', 'xlsx'])
+    if uploaded_files and st.button("Consolidate Immunization"):
+        data_list = []
+        for file in uploaded_files:
+            data_list.append(process_file(file))
+        
+        master = pd.concat(data_list)
+        st.dataframe(master)
+        csv = master.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Master CSV", csv, "Abra_Immunization_2025.csv", "text/csv")
