@@ -36,10 +36,25 @@ def detect_indicator_type(filename):
 
 @st.cache_data
 def parse_fhsis_template(uploaded_file):
-    df = pd.read_csv(uploaded_file, header=None)
+    # 1. Handle both CSV and Excel securely with encoding fallbacks
+    file_name = uploaded_file.name.lower()
+    
+    try:
+        if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
+            df = pd.read_excel(uploaded_file, header=None)
+        else:
+            try:
+                df = pd.read_csv(uploaded_file, header=None, encoding='utf-8')
+            except UnicodeDecodeError:
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, header=None, encoding='latin-1')
+    except Exception as e:
+        return None, f"Could not read file: {e}"
+
+    # Clean up string columns
     df = df.applymap(lambda x: str(x).strip() if isinstance(x, str) else x)
 
-    # 1. Locate Area Column
+    # 2. Locate Area Column
     area_col_index = None
     for col in df.columns:
         if df[col].astype(str).isin(['Bangued', 'Manabo']).any():
@@ -49,7 +64,7 @@ def parse_fhsis_template(uploaded_file):
     if area_col_index is None:
         return None, "Could not locate Area column."
 
-    # 2. Locate Data Bounds
+    # 3. Locate Data Bounds
     car_start = df[df[area_col_index] == 'C A R'].index.min()
     abra_start = df[df[area_col_index] == 'Abra'].index.min()
     apayao_start = df[df[area_col_index] == 'Apayao'].index.min()
@@ -58,20 +73,15 @@ def parse_fhsis_template(uploaded_file):
     if pd.isna(abra_start): abra_start = 0
     if pd.isna(apayao_start): apayao_start = len(df)
 
-    # 3. --- THE HEADER FLATTENER ---
-    # Grab the 3 rows above 'C A R' to act as our headers
+    # 4. --- THE HEADER FLATTENER ---
     header_rows = df.iloc[max(0, car_start-3):car_start].copy()
-    
-    # Forward-fill horizontally to fix DOH merged cells
     header_rows = header_rows.replace(['nan', 'None', '', 'NaN'], pd.NA)
     header_rows = header_rows.ffill(axis=1)
 
     flat_headers = []
     for col in df.columns:
-        # Extract text from the 3 rows, dropping NaNs
         col_texts = [str(val) for val in header_rows[col].values if pd.notna(val)]
         
-        # Remove duplicates
         clean_texts = []
         for text in col_texts:
             if text not in clean_texts and "Unnamed" not in text:
@@ -84,10 +94,8 @@ def parse_fhsis_template(uploaded_file):
         
     df.columns = flat_headers
 
-    # 4. Slice the Abra Block
+    # 5. Slice the Abra Block
     abra_df = df.iloc[abra_start:apayao_start].copy()
-    
-    # Filter precisely for 27 Municipalities using the new flattened header name
     area_col_name = df.columns[area_col_index]
     clean_df = abra_df[abra_df[area_col_name].isin(ABRA_MUNIS)].copy()
     
@@ -98,7 +106,6 @@ def parse_fhsis_template(uploaded_file):
     # Filter to only keep Municipality, Total, and % columns to clean up the UI
     final_cols = ['Municipality'] + [col for col in clean_df.columns if 'Total' in col or '%' in col]
     
-    # Fallback just in case a sheet doesn't have "Total" written in it
     if len(final_cols) == 1:
         final_cols = clean_df.columns.tolist()
 
@@ -112,7 +119,7 @@ st.markdown("### Automated Data Pipeline (2021-2025)")
 
 with st.expander("📂 Upload FHSIS Templates", expanded=True):
     uploaded_files = st.file_uploader(
-        "Drag and drop FHSIS CSV files here", 
+        "Drag and drop FHSIS CSV or Excel files here", 
         type=['csv', 'xlsx'], 
         accept_multiple_files=True
     )
@@ -140,5 +147,7 @@ if uploaded_files:
                 if parsed_data is not None:
                     with st.expander(f"📄 {file.name}", expanded=False):
                         st.dataframe(parsed_data, use_container_width=True)
+                else:
+                    st.error(f"Failed to load {file.name}: {status}")
 else:
     st.info("Awaiting file upload... Drop your monthly CSVs above.")
