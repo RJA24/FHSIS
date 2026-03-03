@@ -46,7 +46,6 @@ def detect_indicator_type(filename):
 def extract_period(filename):
     match = re.search(r'-\s*([A-Za-z0-9\s]+)\.(csv|xlsx|xls)', filename)
     period = match.group(1).strip() if match else "Annual"
-    # Standardize names for sorting
     if period == "Sept": period = "Sep"
     if period == "July": period = "Jul"
     return period
@@ -149,7 +148,7 @@ if uploaded_files:
                 if parsed_data is not None:
                     period = extract_period(file.name)
                     parsed_data['Period'] = period
-                    parsed_data['Period_Order'] = PERIOD_ORDER.get(period, 99) # For chronological sorting
+                    parsed_data['Period_Order'] = PERIOD_ORDER.get(period, 99)
                     all_period_data.append(parsed_data)
             
             if not all_period_data:
@@ -168,29 +167,25 @@ if uploaded_files:
                     selected_trend_col = st.selectbox(
                         "Select Metric to Track Over Time:", 
                         numeric_cols, 
-                        key=f"trend_metric_{indicator}"
+                        key=f"trend_metric_{indicator}_{i}"  # Unique Key Added
                     )
                 with col2:
                     selected_munis = st.multiselect(
                         "Select Municipalities to Compare:",
                         options=ABRA_MUNIS,
                         default=['Bangued', 'Manabo'],
-                        key=f"trend_munis_{indicator}"
+                        key=f"trend_munis_{indicator}_{i}"  # Unique Key Added
                     )
                 
-                # Prepare Trend Data
                 trend_df = master_df[['Period', 'Period_Order', 'Municipality', selected_trend_col]].copy()
                 trend_df[selected_trend_col] = trend_df[selected_trend_col].astype(str).str.replace(',', '').str.replace('%', '')
                 trend_df[selected_trend_col] = pd.to_numeric(trend_df[selected_trend_col], errors='coerce').fillna(0)
                 
-                # Filter by selected municipalities (or show all if none selected)
                 if selected_munis:
                     trend_df = trend_df[trend_df['Municipality'].isin(selected_munis)]
                 
-                # Sort chronologically (Jan -> Feb -> Mar)
                 trend_df = trend_df.sort_values(by=['Period_Order', 'Municipality'])
                 
-                # Plot the Line Chart
                 fig_trend = px.line(
                     trend_df, 
                     x='Period', 
@@ -202,15 +197,16 @@ if uploaded_files:
                 )
                 fig_trend.update_layout(xaxis_title="Reporting Period", yaxis_title="Accomplishment")
                 fig_trend.update_traces(line=dict(width=3), marker=dict(size=8))
-                st.plotly_chart(fig_trend, use_container_width=True)
+                
+                # Unique Key Added
+                st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_chart_{indicator}_{i}")
                 
                 st.divider()
 
-            # 3. INDIVIDUAL FILE REPORTS (The Phase 3 Code)
+            # 3. INDIVIDUAL FILE REPORTS
             st.markdown("### 📄 Individual Period Reports")
             for file in files:
                 period = extract_period(file.name)
-                # Find the specific dataframe for this file from our combined list
                 file_df = master_df[master_df['Period'] == period].drop(columns=['Period', 'Period_Order'])
                 
                 with st.expander(f"📊 {period} Data & Chart", expanded=False):
@@ -218,7 +214,7 @@ if uploaded_files:
                         selected_bar_col = st.selectbox(
                             f"Select Metric to Visualize ({period}):", 
                             numeric_cols, 
-                            key=f"bar_{file.name}"
+                            key=f"bar_select_{indicator}_{file.name}"  # Unique Key Added
                         )
                         
                         chart_df = file_df[['Municipality', selected_bar_col]].copy()
@@ -237,7 +233,9 @@ if uploaded_files:
                             color_continuous_scale="Blues"
                         )
                         fig_bar.update_traces(textfont_size=12, textangle=0, textposition="outside", cliponaxis=False)
-                        st.plotly_chart(fig_bar, use_container_width=True)
+                        
+                        # THE FIX: Unique Key Added to prevent Duplicate Element ID
+                        st.plotly_chart(fig_bar, use_container_width=True, key=f"bar_chart_{indicator}_{file.name}")
                         
                     st.dataframe(file_df, use_container_width=True)
 else:
