@@ -26,15 +26,20 @@ def get_period_label(text):
             return val
     return "99-Other"
 
-# 3. Enhanced Processing Logic
-def process_fhsish_csv(file):
+# 3. Enhanced Processing Logic (Handles XLSX and CSV)
+def process_fhsish_file(file):
     filename = file.name
     try:
-        df = pd.read_csv(file, header=None)
-    except:
+        if filename.lower().endswith('.xlsx'):
+            # If it's an Excel file, we try to process the first visible sheet
+            df = pd.read_excel(file, header=None)
+        else:
+            df = pd.read_csv(file, header=None)
+    except Exception as e:
+        st.error(f"Could not read {filename}: {e}")
         return pd.DataFrame()
     
-    # Step 1: Find the row where data begins (The "Area" row)
+    # Step 1: Find the "Area" row
     area_row_idx = -1
     for i, row in df.iterrows():
         if any(str(v).strip().lower() == 'area' for v in row.values):
@@ -44,12 +49,11 @@ def process_fhsish_csv(file):
     if area_row_idx == -1:
         return pd.DataFrame()
 
-    # Step 2: Identify Indicators and Sex Breakdowns
-    # Indicator names are usually in the Area row. Forward fill bridges across Male/Female cells.
-    header_row = df.iloc[area_row_idx].fillna(method='ffill').astype(str).str.strip()
+    # Step 2: Extract Indicators (Row 5) and Sex Subheaders (Row 7)
+    # Indicator names are in the Area row. Forward fill bridges across Male/Female cells.
+    header_row = df.iloc[area_row_idx].ffill().astype(str).str.replace('\n', ' ').str.strip()
     
-    # Identify the Sex sub-header row (Male/Female/Total)
-    # Analysis shows it's usually 2 rows below the Area header
+    # Sex sub-header row (Male/Female/Total) is 2 rows below Area in these templates
     sex_row_idx = area_row_idx + 2
     if sex_row_idx >= len(df): return pd.DataFrame()
     
@@ -63,6 +67,7 @@ def process_fhsish_csv(file):
     if not area_col_candidates: return pd.DataFrame()
     data = data.rename(columns={area_col_candidates[0]: 'Area'})
     
+    # Strict Abra Filter
     abra_rhus = [
         'Bangued', 'Boliney', 'Bucay', 'Bucloc', 'Daguioman', 'Danglas',
         'Dolores', 'La Paz', 'Lacub', 'Lagangilang', 'Lagayan', 'Langiden',
@@ -76,7 +81,7 @@ def process_fhsish_csv(file):
     # Step 4: Normalize to Long Format (Star Schema style for Power BI)
     long = data.melt(id_vars=['Area'], var_name='Metric', value_name='Count')
     
-    # Filter: ONLY keep service metrics (Indicator + Sex). This ignores denominators (Elig Pop).
+    # Filter: ONLY keep service metrics (Indicator + Sex). This ignores denominators.
     long = long[long['Metric'].str.contains('\|', na=False)]
     if long.empty: return pd.DataFrame()
 
@@ -96,57 +101,68 @@ def process_fhsish_csv(file):
 
 # 4. Sidebar Controller
 with st.sidebar:
-    st.header("📂 Data Controller")
-    st.info("Upload the 2025 FHSIS Immunization CSV files.")
-    files = st.file_uploader("Drop CSVs here", accept_multiple_files=True, type=['csv'])
+    st.header("📂 Data Entry")
+    st.info("Upload your 2025 FHSIS CSV or XLSX files here.")
+    # FIX: Added 'xlsx' to the allowed types
+    files = st.file_uploader("Drop Files", accept_multiple_files=True, type=['csv', 'xlsx'])
     
-    if st.button("🚀 Consolidate & Build Command Center", type="primary"):
+    if st.button("🚀 Build Immunization Dashboard", type="primary"):
         if files:
             all_data = []
             for f in files:
-                res = process_fhsish_csv(f)
+                res = process_fhsish_file(f)
                 if not res.empty: all_data.append(res)
             
             if all_data:
                 st.session_state.master_db = pd.concat(all_data, ignore_index=True)
-                st.success("Successfully Normalized!")
+                st.success("Analysis Ready!")
             else:
-                st.error("No valid accomplishment data found. Check file formatting.")
+                st.error("No valid accomplishment data found. Ensure these are the service delivery templates.")
 
 # 5. Main Dashboard
 st.title("FHSIS Priority 1: Immunization (Abra RHUs)")
 
-if st.session_state.master_db is not None:
-    db = st.session_state.master_db
-    
-    # Period Filter
-    periods = sorted(db['Period'].unique())
-    selected_period = st.select_slider("Select Reporting Period:", options=periods)
-    
-    view_data = db[db['Period'] == selected_period]
-    indicators = sorted(view_data['Indicator'].unique())
-    
-    # Generate 1 Visual Scorecard per Indicator (BCG, DPT, OPV, etc.)
-    for ind in indicators:
-        with st.container():
-            st.divider()
-            st.subheader(f"💉 {ind}")
-            ind_df = view_data[view_data['Indicator'] == ind].copy()
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.write("**Performance by RHU (Male vs Female)**")
-                st.bar_chart(ind_df.set_index('Area')[['Male', 'Female']])
-            with col2:
-                st.write("**Leaderboard**")
-                top_5 = ind_df.sort_values(by='Total', ascending=False)[['Area', 'Total']].head(5)
-                st.table(top_5)
-                total_abra = int(ind_df['Total'].sum())
-                st.metric(f"Total {ind} (Abra)", f"{total_abra:,}")
+# Persistent Navigation
+tab1, tab2 = st.tabs(["1 Immunization", "Upcoming Priorities"])
 
-    # Final Master Export
-    st.divider()
-    csv = db.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Power BI Fact Table", csv, "Abra_Imm_2025_FactTable.csv", "text/csv")
-else:
-    st.warning("👈 Please upload your 2025 Immunization CSVs in the sidebar to begin.")
+with tab1:
+    if st.session_state.master_db is not None:
+        db = st.session_state.master_db
+        
+        # Period Filter Sorter
+        periods = sorted(db['Period'].unique())
+        selected_period = st.select_slider("Select Reporting Month/Period:", options=periods)
+        
+        view_data = db[db['Period'] == selected_period]
+        indicators = sorted(view_data['Indicator'].unique())
+        
+        # Generate 1 Visual Scorecard per Indicator (BCG, DPT, OPV, etc.)
+        for ind in indicators:
+            with st.container():
+                st.divider()
+                st.subheader(f"💉 {ind}")
+                ind_df = view_data[view_data['Indicator'] == ind].copy()
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.write("**RHU Performance Breakdown (Male vs Female)**")
+                    # Display a stacked bar chart
+                    plot_data = ind_df.set_index('Area')[['Male', 'Female']]
+                    st.bar_chart(plot_data)
+                with col2:
+                    st.write("**Leaderboard**")
+                    top_5 = ind_df.sort_values(by='Total', ascending=False)[['Area', 'Total']].head(5)
+                    st.table(top_5)
+                    total_abra = int(ind_df['Total'].sum())
+                    st.metric(f"Total {ind} (Abra)", f"{total_abra:,}")
+
+        # Final Master Export
+        st.divider()
+        st.subheader("📦 Master Database Export")
+        csv = db.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Master CSV for Power BI", csv, "Abra_Imm_2025_Master.csv", "text/csv")
+    else:
+        st.warning("👈 Please upload your 2025 Immunization files (XLSX or CSV) in the sidebar to begin.")
+
+with tab2:
+    st.info("This section will be built once Immunization is perfected.")
