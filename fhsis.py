@@ -155,3 +155,31 @@ if uploaded_files:
                 file_name="Master_FHSIS_Database_2025.csv",
                 mime="text/csv",
             )
+# --- NEW CODE: Streamlit Dashboard ---
+            st.divider()
+            st.subheader("📊 Quick Dashboard Preview")
+            
+            # Create interactive filters
+            col1, col2 = st.columns(2)
+            with col1:
+                outcomes = master_db['Health_Outcome'].dropna().unique()
+                selected_outcome = st.selectbox("Filter by Health Outcome:", sorted(outcomes))
+            
+            with col2:
+                # Filter indicators based on selected outcome
+                filtered_by_outcome = master_db[master_db['Health_Outcome'] == selected_outcome]
+                indicators = filtered_by_outcome['Indicator'].dropna().unique()
+                selected_indicator = st.selectbox("Filter by Specific Indicator:", sorted(indicators))
+
+            # Filter the dataframe based on user selections
+            chart_data = filtered_by_outcome[filtered_by_outcome['Indicator'] == selected_indicator]
+            
+            if not chart_data.empty:
+                # Group by Area and Period for the chart
+                summary_data = chart_data.groupby(['Area', 'Period'])['Value'].sum().unstack().fillna(0)
+                
+                st.write(f"**Total Reported Values for: {selected_indicator}**")
+                # Render a native Streamlit bar chart
+                st.bar_chart(summary_data)
+            else:
+                st.info("No data available for the selected filters.")
