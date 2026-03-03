@@ -1,69 +1,45 @@
 import streamlit as st
 import pandas as pd
 import re
-import io
 
-# 1. Page Configuration
+# 1. Page Setup
 st.set_page_config(page_title="Abra FHSIS App", layout="wide")
 
-# 2. Persistent Session State
 if 'master_db' not in st.session_state:
     st.session_state.master_db = None
 
-# 3. Intelligent Processing Engine
-def process_file(uploaded_file):
+# 2. Intelligent Processing Logic
+def process_rhu_file(uploaded_file):
     filename = uploaded_file.name
     is_excel = filename.lower().endswith('.xlsx')
     
-    # --- STEP 1: Find the Header Row ---
+    # Load data
     if is_excel:
-        temp_df = pd.read_excel(uploaded_file, nrows=25, header=None)
+        df = pd.read_excel(uploaded_file, header=None)
     else:
-        temp_df = pd.read_csv(uploaded_file, nrows=25, header=None)
-    
+        df = pd.read_csv(uploaded_file, header=None)
+
+    # Step 1: Find the 'Area' row
     header_idx = -1
-    for i, row in temp_df.iterrows():
+    for i, row in df.iterrows():
         if any(str(v).strip().lower() == 'area' for v in row.values):
             header_idx = i
             break
     
-    if header_idx == -1:
-        return pd.DataFrame() # Skip file if 'Area' not found
+    if header_idx == -1: return pd.DataFrame()
 
-    uploaded_file.seek(0)
-    if is_excel:
-        df = pd.read_excel(uploaded_file, skiprows=header_idx)
-    else:
-        df = pd.read_csv(uploaded_file, skiprows=header_idx)
+    # Step 2: Extract Headers (Row with Indicators) and Subheaders (Male/Female/Total)
+    header_row = df.iloc[header_idx].fillna(method='ffill').astype(str).str.strip()
+    # The sub-header (Male/Female) is usually 1 or 2 rows below 'Area'
+    sub_header_row = df.iloc[header_idx + 2].fillna('').astype(str).str.strip().str.title()
     
-    # --- STEP 2: Handle Merged Excel Headers ---
-    cols = pd.Series(df.columns).astype(str).str.replace('\n', ' ').str.strip()
-    # Forward fill 'Unnamed' columns
-    curr_main = ""
-    for i in range(len(cols)):
-        if not cols[i].startswith('Unnamed'):
-            curr_main = cols[i]
-        else:
-            cols[i] = curr_main
-
-    # Merge with sub-headers (Male, Female, Total) usually found in the first row of data
-    sub_headers = df.iloc[0].fillna('').astype(str).str.strip().str.title()
+    # Data starts after headers
+    data_df = df.iloc[header_idx + 3:].copy()
+    data_df.columns = [f"{h}|{s}" if s in ['Male', 'Female', 'Total'] else h for h, s in zip(header_row, sub_header_row)]
     
-    new_cols = []
-    for i in range(len(cols)):
-        sub = sub_headers[i]
-        if sub in ['Male', 'Female', 'Total']:
-            new_cols.append(f"{cols[i]}|{sub}")
-        else:
-            new_cols.append(cols[i])
-            
-    df.columns = new_cols
-    df = df.drop(0).reset_index(drop=True)
-    
-    # --- STEP 3: Filter for Abra RHUs ---
-    area_col = [c for c in df.columns if 'area' in c.lower()][0]
-    df = df.rename(columns={area_col: 'Area'})
-    df['Area'] = df['Area'].astype(str).str.strip()
+    # Step 3: Filter for Abra RHUs
+    area_col = [c for c in data_df.columns if 'area' in c.lower()][0]
+    data_df = data_df.rename(columns={area_col: 'Area'})
     
     abra_rhus = [
         'Bangued', 'Boliney', 'Bucay', 'Bucloc', 'Daguioman', 'Danglas',
@@ -72,95 +48,70 @@ def process_file(uploaded_file):
         'Pilar', 'Sallapadan', 'San Isidro', 'San Juan', 'San Quintin',
         'Tayum', 'Tineg', 'Tubo', 'Villaviciosa'
     ]
-    df = df[df['Area'].isin(abra_rhus)]
+    data_df['Area'] = data_df['Area'].astype(str).str.strip()
+    data_df = data_df[data_df['Area'].isin(abra_rhus)]
+
+    # Step 4: Transform to Long Format
+    df_long = data_df.melt(id_vars=['Area'], var_name='Metric', value_name='Count')
     
-    # --- STEP 4: Melt and Pivot Accomplishments ---
-    df_long = df.melt(id_vars=['Area'], var_name='Metric', value_name='Count')
-    
-    # Only keep metrics that have the Male/Female/Total breakdown
+    # Filter for only accomplishment columns (those we tagged with '|')
     df_long = df_long[df_long['Metric'].str.contains('\|', na=False)]
-    if df_long.empty:
-        return pd.DataFrame()
+    if df_long.empty: return pd.DataFrame()
 
     df_long[['Indicator', 'Sex']] = df_long['Metric'].str.split('|', expand=True)
     df_long['Count'] = pd.to_numeric(df_long['Count'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+
+    # Step 5: Final Pivot to get Male/Female/Total columns
+    final = df_long.pivot_table(index=['Area', 'Indicator'], columns='Sex', values='Count', aggfunc='sum').reset_index()
     
-    # Pivot to create separate Male, Female, and Total columns
-    final_df = df_long.pivot_table(
-        index=['Area', 'Indicator'], 
-        columns='Sex', 
-        values='Count', 
-        aggfunc='sum'
-    ).reset_index()
-    
-    # --- STEP 5: Add Intelligence (Metadata) ---
-    final_df['Year'] = 2025 # Can be dynamic later
-    
-    # Extract Month/Period from filename
-    fname_low = filename.lower()
+    # Metadata
+    final['Year'] = 2025
+    fname = filename.lower()
     months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-    final_df['Period'] = 'Annual'
-    for m in months:
-        if m in fname_low:
-            final_df['Period'] = m.capitalize()
-            break
-            
-    final_df['Source'] = filename
-    return final_df
+    final['Period'] = next((m.capitalize() for m in months if m in fname), 'Annual')
+    final['Source'] = filename
 
-# 4. Sidebar: Data Control Portal
+    return final
+
+# 3. Sidebar UI
 with st.sidebar:
-    st.header("⚙️ Data Entry")
-    st.info("Upload your RHU Accomplishment reports here.")
-    uploaded_files = st.file_uploader("Upload CSV/Excel", accept_multiple_files=True, type=['csv', 'xlsx'])
-    
-    if st.button("🚀 Consolidate Data", type="primary"):
-        if uploaded_files:
-            all_data = []
-            progress = st.progress(0)
-            for i, f in enumerate(uploaded_files):
-                res = process_file(f)
-                if not res.empty:
-                    all_data.append(res)
-                progress.progress((i+1)/len(uploaded_files))
+    st.title("Data Entry")
+    files = st.file_uploader("Upload Immunization Reports", accept_multiple_files=True, type=['csv', 'xlsx'])
+    if st.button("🚀 Consolidate Now", type="primary"):
+        if files:
+            results = []
+            for f in files:
+                processed = process_rhu_file(f)
+                if not processed.empty: results.append(processed)
             
-            if all_data:
-                st.session_state.master_db = pd.concat(all_data, ignore_index=True)
-                st.success("Successfully Processed!")
+            if results:
+                st.session_state.master_db = pd.concat(results, ignore_index=True)
+                st.success("Data loaded!")
             else:
-                st.error("Could not find accomplishment data in these files.")
-        else:
-            st.warning("Please select files first.")
+                st.error("No valid data found in those files.")
 
-# 5. Main Content: Priority Tabs
-st.title("FHSIS Priority Health Outcomes - Abra")
+# 4. Main Dashboard
+st.title("FHSIS Priority 1: Immunization")
 
-tab1, tab2 = st.tabs(["1 Immunization", "Upcoming Priorities..."])
-
-with tab1:
-    if st.session_state.master_db is not None:
-        db = st.session_state.master_db
-        
-        # --- Metrics Row ---
-        m1, m2, m3 = st.columns(3)
-        m1.metric("RHUs Covered", len(db['Area'].unique()))
-        m2.metric("Total Accomplishments", int(db['Total'].sum()))
-        m3.metric("Indicators Tracked", len(db['Indicator'].unique()))
-
-        # --- Dashboard ---
-        st.subheader("Monthly Breakdown")
-        month_sel = st.selectbox("Select Month/Period:", sorted(db['Period'].unique()))
-        indicator_sel = st.selectbox("Select Vaccine/Indicator:", sorted(db['Indicator'].unique()))
-        
-        chart_data = db[(db['Period'] == month_sel) & (db['Indicator'] == indicator_sel)]
-        st.bar_chart(chart_data.set_index('Area')[['Male', 'Female']])
-        
-        # --- Data View ---
-        st.subheader("Raw Consolidated Data")
+if st.session_state.master_db is not None:
+    db = st.session_state.master_db
+    
+    # Tab layout
+    tab_data, tab_viz = st.tabs(["📋 Consolidated Table", "📊 RHU Visuals"])
+    
+    with tab_data:
+        st.subheader("Master Accomplishment List")
         st.dataframe(db, use_container_width=True)
-        
-        # Download
         csv = db.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Master CSV for Power BI", csv, "Abra_Immunization_FactTable.csv", "text/csv")
-    else:
-        st.warning("👈 Please upload the 2025 immunization files in the sidebar to view the dashboard.")
+        st.download_button("📥 Download Master CSV for Power BI", csv, "Abra_Immunization_Master.csv", "text/csv")
+        
+    with tab_viz:
+        st.subheader("RHU Performance Comparison")
+        ind_list = sorted(db['Indicator'].unique())
+        selected_ind = st.selectbox("Select Indicator:", ind_list)
+        
+        # Plot
+        viz_data = db[db['Indicator'] == selected_ind].groupby('Area')[['Male', 'Female']].sum()
+        st.bar_chart(viz_data)
+else:
+    st.info("Waiting for data. Please upload files in the sidebar to generate the immunization dashboard.")
