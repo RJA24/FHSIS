@@ -82,26 +82,37 @@ def process_immunization_file(uploaded_file):
         if 'Unnamed' in str(cols[i]):
             cols[i] = cols[i-1]
             
-    # Clean up line breaks in headers (e.g. "OPV 1 \n(0-12 mos)" -> "OPV 1 (0-12 mos)")
     cols = cols.astype(str).str.replace('\n', ' ').str.strip()
     
-    # 4. Extract the Sub-Headers (Male, Female, Total)
-    sub_cols = df.iloc[0].fillna('').astype(str).str.strip().str.title()
-    
-    # Create a unified header with a pipe delimiter if it's Male/Female/Total
-    new_cols = []
-    for main_col, sub_col in zip(cols, sub_cols):
-        if sub_col in ['Male', 'Female', 'Total']:
-            new_cols.append(f"{main_col}|{sub_col}")
-        else:
-            new_cols.append(main_col)
+    # 4. Find the Sub-Headers (Scan the first few rows to bypass blank rows)
+    sub_col_idx = -1
+    for idx in range(min(5, len(df))):
+        row_vals = df.iloc[idx].fillna('').astype(str).str.strip().str.title()
+        if any(val in ['Male', 'Female', 'Total'] for val in row_vals):
+            sub_col_idx = idx
+            break
             
-    df.columns = new_cols
-    df = df.drop(0).reset_index(drop=True)
-    
+    # Combine Headers
+    if sub_col_idx != -1:
+        sub_cols = df.iloc[sub_col_idx].fillna('').astype(str).str.strip().str.title()
+        new_cols = []
+        for main_col, sub_col in zip(cols, sub_cols):
+            if sub_col in ['Male', 'Female', 'Total']:
+                new_cols.append(f"{main_col}|{sub_col}")
+            else:
+                new_cols.append(main_col)
+        df.columns = new_cols
+        # Drop rows up to the sub-header
+        df = df.iloc[sub_col_idx + 1:].reset_index(drop=True)
+    else:
+        df.columns = cols
+
     # 5. Rename Area column and filter strictly for Abra RHUs
-    area_col = [col for col in df.columns if 'Area' in str(col).title()][0]
-    df = df.rename(columns={area_col: 'Area'})
+    area_col = [col for col in df.columns if 'Area' in str(col).title()]
+    if not area_col:
+        return pd.DataFrame()
+    
+    df = df.rename(columns={area_col[0]: 'Area'})
     df['Area'] = df['Area'].astype(str).str.strip()
     
     abra_rhus = [
@@ -116,11 +127,15 @@ def process_immunization_file(uploaded_file):
     # 6. Unpivot (Wide to Long)
     df_long = pd.melt(df, id_vars=['Area'], var_name='Raw_Indicator', value_name='Value')
     
-    # Filter ONLY columns that we merged with a pipe (which strictly targets the Accomplishments)
-    df_long = df_long[df_long['Raw_Indicator'].str.contains('\|', na=False)]
+    # Filter ONLY columns that we merged with a pipe
+    df_long = df_long[df_long['Raw_Indicator'].astype(str).str.contains('\|', na=False)]
     
+    # GUARD: If this file didn't have Male/Female/Total (like Elig Pop files), skip it safely.
+    if df_long.empty:
+        return pd.DataFrame()
+        
     # Split the Indicator from the Sex/Category
-    df_long[['Indicator', 'Sex']] = df_long['Raw_Indicator'].str.split('|', expand=True)
+    df_long[['Indicator', 'Sex']] = df_long['Raw_Indicator'].str.split('|', n=1, expand=True)
     df_long['Indicator'] = df_long['Indicator'].str.strip()
     
     # Clean numeric values
@@ -140,7 +155,6 @@ def process_immunization_file(uploaded_file):
         if col not in df_pivot.columns:
             df_pivot[col] = 0
             
-    # Remove the column name axis from pivot
     df_pivot.columns.name = None 
     
     # 8. Append Metadata
@@ -157,37 +171,4 @@ def process_immunization_file(uploaded_file):
 
 with tab1:
     st.subheader("Vaccination & Immunization Processing")
-    st.write("Upload your CPAB, BCG, HepB, DPT, OPV, IPV, PCV, MMR, FIC, and CIC CSV/Excel files here.")
-    
-    uploaded_files = st.file_uploader("Drop Immunization Files", accept_multiple_files=True, type=['csv', 'xlsx'], key="imm_upload")
-    
-    if uploaded_files:
-        if st.button("Process Immunization Data", type="primary"):
-            all_data = []
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i, file in enumerate(uploaded_files):
-                status_text.text(f"Extracting data from {file.name}...")
-                try:
-                    cleaned_df = process_immunization_file(file)
-                    all_data.append(cleaned_df)
-                except Exception as e:
-                    st.error(f"Failed to process {file.name}: {e}")
-                progress_bar.progress((i + 1) / len(uploaded_files))
-                
-            status_text.text("Processing complete!")
-            
-            if all_data:
-                master_db = pd.concat(all_data, ignore_index=True)
-                st.success(f"Success! Normalized {len(uploaded_files)} files into {len(master_db)} rows of Abra RHU data.")
-                
-                st.dataframe(master_db.head(10), use_container_width=True)
-                
-                csv = master_db.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Download Cleaned Immunization Data (CSV)",
-                    data=csv,
-                    file_name="Abra_Immunization_Master.csv",
-                    mime="text/csv",
-                )
+    st.write("Upload your CPAB, BCG, HepB, DPT, OPV,
