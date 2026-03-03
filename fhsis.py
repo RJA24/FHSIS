@@ -2,22 +2,67 @@ import streamlit as st
 import pandas as pd
 import re
 
-# Set up the page layout
+# Set page config
 st.set_page_config(page_title="Abra FHSIS Processor", layout="wide")
-st.title("Immunization Data Normalizer (Abra RHUs Only)")
 
-# Create the Tabs
+# Initialize session state to persist data
+if 'master_db' not in st.session_state:
+    st.session_state.master_db = None
+
+# --- SIDEBAR: DATA CONTROL ---
+with st.sidebar:
+    st.header("Data Control")
+    uploaded_files = st.file_uploader("Upload Immunization Files", accept_multiple_files=True, type=['csv', 'xlsx'])
+    
+    if st.button("Consolidate Immunization", type="primary"):
+        if uploaded_files:
+            all_data = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for i, file in enumerate(uploaded_files):
+                status_text.text(f"Processing {file.name}...")
+                try:
+                    df = process_file(file)
+                    if not df.empty: all_data.append(df)
+                except Exception as e:
+                    st.error(f"Error in {file.name}: {e}")
+                progress_bar.progress((i + 1) / len(uploaded_files))
+            
+            if all_data:
+                st.session_state.master_db = pd.concat(all_data, ignore_index=True)
+                st.success("Processing complete!")
+                status_text.text("Ready.")
+            else:
+                st.warning("No valid accomplishment data found.")
+        else:
+            st.warning("Please upload files first.")
+
+# --- MAIN PAGE: DASHBOARD ---
+st.title("FHSIS Immunization Dashboard - Abra")
+
 tab1, tab2 = st.tabs(["1 Immunization", "Upcoming Priorities"])
 
-def get_immunization_category(filename):
-    fname = filename.upper()
-    if 'CPAB' in fname or 'BCG' in fname or 'HEPA' in fname or 'HEPB' in fname: return 'CPAB, BCG, HepB'
-    if 'DPT' in fname or 'HIB' in fname: return 'DPT-HiB-HepB'
-    if 'OPV' in fname or 'IPV' in fname: return 'OPV and IPV'
-    if 'PCV' in fname: return 'PCV'
-    if 'MMR' in fname or 'FIC' in fname or 'CIC' in fname: return 'MMR, FIC, CIC'
-    return 'Other Immunization'
+with tab1:
+    if st.session_state.master_db is not None:
+        st.write(f"Normalized records: **{len(st.session_state.master_db)}**")
+        
+        # Download Button
+        csv = st.session_state.master_db.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Master CSV", csv, "Abra_Immunization_2025.csv", "text/csv")
+        
+        # Visuals
+        indicators = sorted(st.session_state.master_db['Indicator'].unique())
+        sel_ind = st.selectbox("Select Indicator:", indicators)
+        
+        chart_data = st.session_state.master_db[st.session_state.master_db['Indicator'] == sel_ind]
+        st.bar_chart(chart_data.groupby('Area')[['Male', 'Female', 'Total']].sum())
+        
+        st.dataframe(st.session_state.master_db)
+    else:
+        st.info("Upload your CSV/Excel immunization files in the sidebar to begin.")
 
+# --- PROCESSING LOGIC ---
 def process_file(uploaded_file):
     filename = uploaded_file.name
     is_excel = filename.lower().endswith('.xlsx')
@@ -37,26 +82,22 @@ def process_file(uploaded_file):
     else: df = pd.read_csv(uploaded_file, skiprows=header_idx)
     
     # 2. Clean and Flatten headers
-    # Fill unnamed columns
-    cols = pd.Series(df.columns)
-    current_main = ""
-    for i in range(len(cols)):
-        if not str(cols[i]).startswith('Unnamed'): current_main = str(cols[i]).strip()
-        else: cols[i] = current_main
+    cols = pd.Series(df.columns).astype(str).str.replace('\n', ' ').str.strip()
+    sub_headers = df.iloc[0].fillna('').astype(str).str.strip().str.title()
     
-    # Merge with sub-headers (Male, Female, Total)
-    sub_headers = df.iloc[0].fillna('').astype(str).str.strip()
     new_cols = []
+    curr_main = ""
     for i in range(len(cols)):
+        if not cols[i].startswith('Unnamed'): curr_main = cols[i]
         sub = sub_headers[i]
         if sub in ['Male', 'Female', 'Total']:
-            new_cols.append(f"{cols[i]}|{sub}")
+            new_cols.append(f"{curr_main}|{sub}")
         else:
             new_cols.append(cols[i])
     df.columns = new_cols
     df = df.drop(0).reset_index(drop=True)
     
-    # 3. Filter for Abra
+    # 3. Filter Abra
     area_col = [c for c in df.columns if 'area' in c.lower()][0]
     df = df.rename(columns={area_col: 'Area'})
     abra_rhus = ['Bangued', 'Boliney', 'Bucay', 'Bucloc', 'Daguioman', 'Danglas', 'Dolores', 'La Paz', 'Lacub', 'Lagangilang', 'Lagayan', 'Langiden', 'Licuan-Baay', 'Luba', 'Malibcong', 'Manabo', 'Penarrubia', 'Pidigan', 'Pilar', 'Sallapadan', 'San Isidro', 'San Juan', 'San Quintin', 'Tayum', 'Tineg', 'Tubo', 'Villaviciosa']
@@ -64,38 +105,10 @@ def process_file(uploaded_file):
     
     # 4. Melt and Pivot
     df_long = df.melt(id_vars=['Area'], var_name='Metric', value_name='Count')
-    
-    # DEFENSIVE FILTER: Only rows with '|' (Accomplishments)
-    df_long = df_long[df_long['Metric'].str.contains('\|', na=False)]
-    
-    # If no data found, return empty
-    if df_long.empty: return pd.DataFrame()
-    
+    df_long = df_long[df_long['Metric'].str.contains('\|')]
     df_long[['Indicator', 'Sex']] = df_long['Metric'].str.split('|', expand=True)
     df_long['Count'] = pd.to_numeric(df_long['Count'], errors='coerce').fillna(0)
     
     final_df = df_long.pivot_table(index=['Area', 'Indicator'], columns='Sex', values='Count', aggfunc='sum').reset_index()
-    
-    # Add metadata
-    final_df['Program'] = get_immunization_category(filename)
-    final_df['Period'] = 'Monthly' if any(m in filename for m in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']) else 'Quarterly/Annual'
     final_df['Year'] = 2025
     return final_df
-
-# UI
-with tab1:
-    uploaded_files = st.file_uploader("Upload Immunization files", accept_multiple_files=True, type=['csv', 'xlsx'])
-    if uploaded_files and st.button("Consolidate Immunization"):
-        data_list = []
-        for file in uploaded_files:
-            try:
-                res = process_file(file)
-                if not res.empty: data_list.append(res)
-            except Exception as e:
-                st.error(f"Error in {file.name}: {e}")
-        
-        if data_list:
-            master = pd.concat(data_list)
-            st.dataframe(master)
-            csv = master.to_csv(index=False).encode('utf-8')
-            st.download_button("Download Master CSV", csv, "Abra_Immunization_2025.csv", "text/csv")
