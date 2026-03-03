@@ -8,7 +8,7 @@ st.set_page_config(page_title="FHSIS Data Processor - Abra", layout="wide")
 st.title("FHSIS Data Normalization App")
 st.markdown("Automated data consolidation for Abra Rural Health Units.")
 
-# Create the Tabs (Starting with Immunization)
+# Create the Tabs
 tab1, tab2 = st.tabs(["1 Immunization", "More Priorities Coming Soon..."])
 
 # --- HELPER FUNCTIONS ---
@@ -50,7 +50,7 @@ def get_immunization_category(filename):
     return 'Other Immunization'
 
 def process_immunization_file(uploaded_file):
-    """Reads, cleans, and unpivots FHSIS templates dynamically."""
+    """Reads FHSIS templates, links main indicators to Male/Female/Total, and pivots them."""
     filename = uploaded_file.name
     period = get_period_from_filename(filename)
     category = get_immunization_category(filename)
@@ -77,31 +77,30 @@ def process_immunization_file(uploaded_file):
         df = pd.read_csv(uploaded_file, skiprows=header_row_idx)
         
     # 3. Clean complex merged headers (Forward Fill)
-    new_cols = []
-    current_main = ""
-    for col in df.columns:
-        if not str(col).startswith('Unnamed'):
-            current_main = str(col).strip()
-            new_cols.append(current_main)
-        else:
-            new_cols.append(current_main)
-    df.columns = new_cols
+    cols = pd.Series(df.columns)
+    for i in range(1, len(cols)):
+        if 'Unnamed' in str(cols[i]):
+            cols[i] = cols[i-1]
+            
+    # Clean up line breaks in headers (e.g. "OPV 1 \n(0-12 mos)" -> "OPV 1 (0-12 mos)")
+    cols = cols.astype(str).str.replace('\n', ' ').str.strip()
     
-    # 4. Merge main headers with sub-headers (Male, Female, Total, %)
-    first_row = df.iloc[0].fillna('').astype(str).str.strip().str.lower()
-    if any(first_row.isin(['male', 'female', 'total', '%', 'no.', 'no'])):
-        combined_cols = []
-        for main_col, sub_col in zip(df.columns, df.iloc[0]):
-            sub_clean = str(sub_col).strip()
-            if sub_clean and sub_clean.lower() not in ['nan', 'none']:
-                combined_cols.append(f"{main_col} - {sub_clean}")
-            else:
-                combined_cols.append(main_col)
-        df.columns = combined_cols
-        df = df.drop(0).reset_index(drop=True)
-        
+    # 4. Extract the Sub-Headers (Male, Female, Total)
+    sub_cols = df.iloc[0].fillna('').astype(str).str.strip().str.title()
+    
+    # Create a unified header with a pipe delimiter if it's Male/Female/Total
+    new_cols = []
+    for main_col, sub_col in zip(cols, sub_cols):
+        if sub_col in ['Male', 'Female', 'Total']:
+            new_cols.append(f"{main_col}|{sub_col}")
+        else:
+            new_cols.append(main_col)
+            
+    df.columns = new_cols
+    df = df.drop(0).reset_index(drop=True)
+    
     # 5. Rename Area column and filter strictly for Abra RHUs
-    area_col = [col for col in df.columns if 'area' in str(col).lower()][0]
+    area_col = [col for col in df.columns if 'Area' in str(col).title()][0]
     df = df.rename(columns={area_col: 'Area'})
     df['Area'] = df['Area'].astype(str).str.strip()
     
@@ -114,28 +113,45 @@ def process_immunization_file(uploaded_file):
     ]
     df = df[df['Area'].isin(abra_rhus)]
     
-    # 6. Drop interpretation/recommendation columns
-    cols_to_drop = [col for col in df.columns if 'interpretation' in str(col).lower() or 'recommendation' in str(col).lower()]
-    df = df.drop(columns=cols_to_drop, errors='ignore')
+    # 6. Unpivot (Wide to Long)
+    df_long = pd.melt(df, id_vars=['Area'], var_name='Raw_Indicator', value_name='Value')
     
-    # 7. Unpivot (Wide to Long) for Power BI Star Schema compatibility
-    df_long = pd.melt(df, id_vars=['Area'], var_name='Indicator', value_name='Value')
+    # Filter ONLY columns that we merged with a pipe (which strictly targets the Accomplishments)
+    df_long = df_long[df_long['Raw_Indicator'].str.contains('\|', na=False)]
     
-    # Clean values
+    # Split the Indicator from the Sex/Category
+    df_long[['Indicator', 'Sex']] = df_long['Raw_Indicator'].str.split('|', expand=True)
+    df_long['Indicator'] = df_long['Indicator'].str.strip()
+    
+    # Clean numeric values
     df_long['Value'] = pd.to_numeric(df_long['Value'].astype(str).str.replace(',', ''), errors='coerce')
     df_long = df_long.dropna(subset=['Value'])
     
+    # 7. Pivot so Male, Female, and Total become their own columns
+    df_pivot = df_long.pivot_table(
+        index=['Area', 'Indicator'], 
+        columns='Sex', 
+        values='Value', 
+        aggfunc='sum'
+    ).reset_index()
+    
+    # Ensure columns exist even if data is missing
+    for col in ['Male', 'Female', 'Total']:
+        if col not in df_pivot.columns:
+            df_pivot[col] = 0
+            
+    # Remove the column name axis from pivot
+    df_pivot.columns.name = None 
+    
     # 8. Append Metadata
-    df_long['Program'] = category
-    df_long['Period'] = period
+    df_pivot['Program'] = category
+    df_pivot['Period'] = period
     
-    # Extract year from filename if present, otherwise default to 2025
     year_match = re.search(r'(202\d)', filename)
-    df_long['Year'] = int(year_match.group(1)) if year_match else 2025
+    df_pivot['Year'] = int(year_match.group(1)) if year_match else 2025
+    df_pivot['Source_File'] = filename
     
-    df_long['Source_File'] = filename
-    
-    return df_long[['Year', 'Period', 'Program', 'Area', 'Indicator', 'Value', 'Source_File']]
+    return df_pivot[['Year', 'Period', 'Program', 'Area', 'Indicator', 'Male', 'Female', 'Total', 'Source_File']]
 
 # --- TAB 1: IMMUNIZATION ---
 
