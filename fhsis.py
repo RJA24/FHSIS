@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import re
 
 # ---------------------------------------------------------
 # CONFIGURATION & CONSTANTS
@@ -20,25 +18,28 @@ ABRA_MUNIS = [
 # THE INTELLIGENT PARSER
 # ---------------------------------------------------------
 def detect_indicator_type(filename):
-    """Sniffs the filename to determine the FHSIS indicator category."""
     name = filename.lower()
     if "cpab" in name or "bcg" in name: return "Immunization - BCG/HepB"
     if "dpt" in name or "hib" in name: return "Immunization - DPT/HiB/HepB"
     if "opv" in name or "ipv" in name: return "Immunization - Polio"
     if "pcv" in name: return "Immunization - PCV"
     if "mmr" in name or "fic" in name: return "Immunization - MMR/FIC"
+    if "hpv" in name: return "Immunization - HPV"
     if "diarrhea" in name: return "Sick Children - Diarrhea"
     if "pneumonia" in name: return "Sick Children - Pneumonia"
     if "mam" in name or "sam" in name: return "Nutrition - Malnutrition"
+    if "vitamin a" in name: return "Nutrition - Vitamin A"
+    if "mnp" in name: return "Nutrition - MNP"
+    if "lns" in name: return "Nutrition - LNS-SQ"
+    if "low birth" in name or "bf" in name: return "Nutrition - LBW/BF"
     return "Uncategorized Indicator"
 
 @st.cache_data
 def parse_fhsis_template(uploaded_file):
-    # Read raw file
     df = pd.read_csv(uploaded_file, header=None)
     df = df.applymap(lambda x: str(x).strip() if isinstance(x, str) else x)
 
-    # 1. Locate the Area Column
+    # 1. Locate Area Column
     area_col_index = None
     for col in df.columns:
         if df[col].astype(str).isin(['Bangued', 'Manabo']).any():
@@ -48,23 +49,60 @@ def parse_fhsis_template(uploaded_file):
     if area_col_index is None:
         return None, "Could not locate Area column."
 
-    # 2. Slice the Abra Block
+    # 2. Locate Data Bounds
+    car_start = df[df[area_col_index] == 'C A R'].index.min()
     abra_start = df[df[area_col_index] == 'Abra'].index.min()
     apayao_start = df[df[area_col_index] == 'Apayao'].index.min()
 
+    if pd.isna(car_start): car_start = abra_start - 3
     if pd.isna(abra_start): abra_start = 0
     if pd.isna(apayao_start): apayao_start = len(df)
 
+    # 3. --- THE HEADER FLATTENER ---
+    # Grab the 3 rows above 'C A R' to act as our headers
+    header_rows = df.iloc[max(0, car_start-3):car_start].copy()
+    
+    # Forward-fill horizontally to fix DOH merged cells
+    header_rows = header_rows.replace(['nan', 'None', '', 'NaN'], pd.NA)
+    header_rows = header_rows.ffill(axis=1)
+
+    flat_headers = []
+    for col in df.columns:
+        # Extract text from the 3 rows, dropping NaNs
+        col_texts = [str(val) for val in header_rows[col].values if pd.notna(val)]
+        
+        # Remove duplicates
+        clean_texts = []
+        for text in col_texts:
+            if text not in clean_texts and "Unnamed" not in text:
+                clean_texts.append(text)
+        
+        header_name = " | ".join(clean_texts)
+        if not header_name:
+            header_name = f"Col_{col}"
+        flat_headers.append(header_name)
+        
+    df.columns = flat_headers
+
+    # 4. Slice the Abra Block
     abra_df = df.iloc[abra_start:apayao_start].copy()
     
-    # 3. Filter precisely for 27 Municipalities (Ignore RHU/Hospital splits for now)
-    clean_df = abra_df[abra_df[area_col_index].isin(ABRA_MUNIS)].copy()
+    # Filter precisely for 27 Municipalities using the new flattened header name
+    area_col_name = df.columns[area_col_index]
+    clean_df = abra_df[abra_df[area_col_name].isin(ABRA_MUNIS)].copy()
     
     # Clean up the grid
-    clean_df.rename(columns={area_col_index: 'Municipality'}, inplace=True)
+    clean_df.rename(columns={area_col_name: 'Municipality'}, inplace=True)
     clean_df.dropna(axis=1, how='all', inplace=True)
     
-    return clean_df, "Success"
+    # Filter to only keep Municipality, Total, and % columns to clean up the UI
+    final_cols = ['Municipality'] + [col for col in clean_df.columns if 'Total' in col or '%' in col]
+    
+    # Fallback just in case a sheet doesn't have "Total" written in it
+    if len(final_cols) == 1:
+        final_cols = clean_df.columns.tolist()
+
+    return clean_df[final_cols], "Success"
 
 # ---------------------------------------------------------
 # APP UI & ROUTING
@@ -82,7 +120,7 @@ with st.expander("📂 Upload FHSIS Templates", expanded=True):
 if uploaded_files:
     st.success(f"{len(uploaded_files)} files loaded successfully.")
     
-    # Group files by Indicator Type to organize the Dashboard
+    # Group files by Indicator Type
     grouped_files = {}
     for file in uploaded_files:
         indicator = detect_indicator_type(file.name)
@@ -90,7 +128,6 @@ if uploaded_files:
             grouped_files[indicator] = []
         grouped_files[indicator].append(file)
         
-    # Create Tabs for each Indicator Category
     tabs = st.tabs(list(grouped_files.keys()))
     
     for i, (indicator, files) in enumerate(grouped_files.items()):
@@ -103,12 +140,5 @@ if uploaded_files:
                 if parsed_data is not None:
                     with st.expander(f"📄 {file.name}", expanded=False):
                         st.dataframe(parsed_data, use_container_width=True)
-                        
-                        # Data Validation Check
-                        missing = set(ABRA_MUNIS) - set(parsed_data['Municipality'].tolist())
-                        if missing:
-                            st.warning(f"Missing Data for: {', '.join(missing)}")
-                        else:
-                            st.success("All 27 Municipalities extracted successfully.")
 else:
     st.info("Awaiting file upload... Drop your monthly CSVs above.")
