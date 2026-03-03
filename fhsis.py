@@ -4,7 +4,10 @@ import re
 
 # Set up the page layout
 st.set_page_config(page_title="Abra FHSIS Processor", layout="wide")
-st.title("Immunization Data Normalizer (Abra RHUs)")
+st.title("Immunization Data Normalizer (Abra RHUs Only)")
+
+# Create the Tabs
+tab1, tab2 = st.tabs(["1 Immunization", "Upcoming Priorities"])
 
 def get_immunization_category(filename):
     fname = filename.upper()
@@ -34,19 +37,22 @@ def process_file(uploaded_file):
     else: df = pd.read_csv(uploaded_file, skiprows=header_idx)
     
     # 2. Clean and Flatten headers
-    cols = pd.Series(df.columns).astype(str).str.replace('\n', ' ').str.strip()
-    sub_headers = df.iloc[0].fillna('').astype(str).str.strip().str.title()
-    
-    new_cols = []
-    curr_main = ""
+    # Fill unnamed columns
+    cols = pd.Series(df.columns)
+    current_main = ""
     for i in range(len(cols)):
-        if not cols[i].startswith('Unnamed'): curr_main = cols[i]
-        
+        if not str(cols[i]).startswith('Unnamed'): current_main = str(cols[i]).strip()
+        else: cols[i] = current_main
+    
+    # Merge with sub-headers (Male, Female, Total)
+    sub_headers = df.iloc[0].fillna('').astype(str).str.strip()
+    new_cols = []
+    for i in range(len(cols)):
         sub = sub_headers[i]
         if sub in ['Male', 'Female', 'Total']:
-            new_cols.append(f"{curr_main}|{sub}")
+            new_cols.append(f"{cols[i]}|{sub}")
         else:
-            new_cols.append(curr_main)
+            new_cols.append(cols[i])
     df.columns = new_cols
     df = df.drop(0).reset_index(drop=True)
     
@@ -58,29 +64,38 @@ def process_file(uploaded_file):
     
     # 4. Melt and Pivot
     df_long = df.melt(id_vars=['Area'], var_name='Metric', value_name='Count')
-    df_long = df_long[df_long['Metric'].str.contains('\|')]
+    
+    # DEFENSIVE FILTER: Only rows with '|' (Accomplishments)
+    df_long = df_long[df_long['Metric'].str.contains('\|', na=False)]
+    
+    # If no data found, return empty
+    if df_long.empty: return pd.DataFrame()
+    
     df_long[['Indicator', 'Sex']] = df_long['Metric'].str.split('|', expand=True)
     df_long['Count'] = pd.to_numeric(df_long['Count'], errors='coerce').fillna(0)
     
     final_df = df_long.pivot_table(index=['Area', 'Indicator'], columns='Sex', values='Count', aggfunc='sum').reset_index()
     
-    # Metadata
+    # Add metadata
     final_df['Program'] = get_immunization_category(filename)
-    final_df['Period'] = 'Monthly' if 'Jan' in filename or 'Feb' in filename else 'Quarterly/Annual'
+    final_df['Period'] = 'Monthly' if any(m in filename for m in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']) else 'Quarterly/Annual'
     final_df['Year'] = 2025
     return final_df
 
 # UI
-tab1, tab2 = st.tabs(["1 Immunization", "Upcoming Priorities"])
-
 with tab1:
     uploaded_files = st.file_uploader("Upload Immunization files", accept_multiple_files=True, type=['csv', 'xlsx'])
     if uploaded_files and st.button("Consolidate Immunization"):
         data_list = []
         for file in uploaded_files:
-            data_list.append(process_file(file))
+            try:
+                res = process_file(file)
+                if not res.empty: data_list.append(res)
+            except Exception as e:
+                st.error(f"Error in {file.name}: {e}")
         
-        master = pd.concat(data_list)
-        st.dataframe(master)
-        csv = master.to_csv(index=False).encode('utf-8')
-        st.download_button("Download Master CSV", csv, "Abra_Immunization_2025.csv", "text/csv")
+        if data_list:
+            master = pd.concat(data_list)
+            st.dataframe(master)
+            csv = master.to_csv(index=False).encode('utf-8')
+            st.download_button("Download Master CSV", csv, "Abra_Immunization_2025.csv", "text/csv")
