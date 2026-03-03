@@ -171,4 +171,38 @@ def process_immunization_file(uploaded_file):
 
 with tab1:
     st.subheader("Vaccination & Immunization Processing")
-    st.write("Upload your CPAB, BCG, HepB, DPT, OPV,
+    st.write("Upload your CPAB, BCG, HepB, DPT, OPV, IPV, PCV, MMR, FIC, and CIC CSV/Excel files here.")
+    
+    uploaded_files = st.file_uploader("Drop Immunization Files", accept_multiple_files=True, type=['csv', 'xlsx'], key="imm_upload")
+    
+    if uploaded_files:
+        if st.button("Process Immunization Data", type="primary"):
+            all_data = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for i, file in enumerate(uploaded_files):
+                status_text.text(f"Extracting data from {file.name}...")
+                try:
+                    cleaned_df = process_immunization_file(file)
+                    if not cleaned_df.empty:
+                        all_data.append(cleaned_df)
+                except Exception as e:
+                    st.error(f"Failed to process {file.name}: {e}")
+                progress_bar.progress((i + 1) / len(uploaded_files))
+                
+            status_text.text("Processing complete!")
+            
+            if all_data:
+                master_db = pd.concat(all_data, ignore_index=True)
+                st.success(f"Success! Normalized {len(uploaded_files)} files into {len(master_db)} rows of Abra RHU data.")
+                
+                st.dataframe(master_db.head(10), use_container_width=True)
+                
+                csv = master_db.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Download Cleaned Immunization Data (CSV)",
+                    data=csv,
+                    file_name="Abra_Immunization_Master.csv",
+                    mime="text/csv",
+                )
