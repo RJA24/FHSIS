@@ -4,12 +4,12 @@ import re
 import io
 
 # Set up the page layout
-st.set_page_config(page_title="FHSIS Data Processor", layout="wide")
-st.title("FHSIS Data Normalization App")
-st.write("Upload your monthly or quarterly FHSIS CSV or Excel files to consolidate them into a clean master database.")
+st.set_page_config(page_title="FHSIS Data Processor - Abra Province", layout="wide")
+st.title("FHSIS Data Normalization App (Abra RHUs Only)")
+st.write("Upload your FHSIS CSV or Excel files to consolidate them into a clean master database for Abra.")
 
 def clean_fhsis_columns(df):
-    """Cleans up merged Excel headers that turn into 'Unnamed' in CSVs."""
+    """Cleans up merged Excel headers that turn into 'Unnamed' in CSVs/Excel."""
     new_cols = []
     current_main = ""
     for col in df.columns:
@@ -73,12 +73,11 @@ def determine_category(filename):
     return 'Uncategorized'
 
 def process_uploaded_file(uploaded_file):
-    """Processes an in-memory uploaded file from Streamlit (CSV or Excel)."""
+    """Processes an in-memory uploaded file and filters strictly for Abra."""
     filename = uploaded_file.name
     category = determine_category(filename)
     is_excel = filename.lower().endswith('.xlsx')
     
-    # Read the first few rows to find the actual header
     if is_excel:
         temp_df = pd.read_excel(uploaded_file, nrows=20, header=None)
     else:
@@ -90,7 +89,6 @@ def process_uploaded_file(uploaded_file):
             header_row_idx = i
             break
             
-    # Reset file pointer to the beginning before reading the full dataframe
     uploaded_file.seek(0)
     
     if is_excel:
@@ -102,8 +100,19 @@ def process_uploaded_file(uploaded_file):
     
     area_col = [col for col in df.columns if 'area' in str(col).lower()][0]
     df = df.rename(columns={area_col: 'Area'})
-    df = df.dropna(subset=['Area'])
-    df = df[~df['Area'].astype(str).str.contains('C A R|Interpretation|Recommendation', na=False, case=False)]
+    
+    # Strip spaces to ensure names like "Boliney " match perfectly
+    df['Area'] = df['Area'].astype(str).str.strip()
+    
+    # --- STRICT ABRA FILTER ---
+    abra_rhus = [
+        'Bangued', 'Boliney', 'Bucay', 'Bucloc', 'Daguioman', 'Danglas',
+        'Dolores', 'La Paz', 'Lacub', 'Lagangilang', 'Lagayan', 'Langiden',
+        'Licuan-Baay', 'Luba', 'Malibcong', 'Manabo', 'Penarrubia', 'Pidigan',
+        'Pilar', 'Sallapadan', 'San Isidro', 'San Juan', 'San Quintin',
+        'Tayum', 'Tineg', 'Tubo', 'Villaviciosa'
+    ]
+    df = df[df['Area'].isin(abra_rhus)]
     
     cols_to_drop = [col for col in df.columns if 'interpretation' in str(col).lower() or 'recommendation' in str(col).lower()]
     df = df.drop(columns=cols_to_drop, errors='ignore')
@@ -142,7 +151,7 @@ if uploaded_files:
         
         if all_data:
             master_db = pd.concat(all_data, ignore_index=True)
-            st.success(f"Successfully normalized {len(uploaded_files)} files into {len(master_db)} rows of data.")
+            st.success(f"Successfully normalized {len(uploaded_files)} files. Filtered for Abra RHUs only: {len(master_db)} rows generated.")
             
             # Show a preview of the clean data
             st.dataframe(master_db.head(10), use_container_width=True)
@@ -150,36 +159,36 @@ if uploaded_files:
             # Create the download button for the consolidated file
             csv = master_db.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="Download Master Database (CSV)",
+                label="Download Abra Master Database (CSV)",
                 data=csv,
-                file_name="Master_FHSIS_Database_2025.csv",
+                file_name="Abra_Master_FHSIS_Database_2025.csv",
                 mime="text/csv",
             )
-# --- NEW CODE: Streamlit Dashboard ---
-            st.divider()
-            st.subheader("📊 Quick Dashboard Preview")
             
-            # Create interactive filters
+            # --- STREAMLIT LIVE DASHBOARD (Track 3) ---
+            st.divider()
+            st.subheader("📊 Abra RHU Quick Insights")
+            
             col1, col2 = st.columns(2)
             with col1:
                 outcomes = master_db['Health_Outcome'].dropna().unique()
                 selected_outcome = st.selectbox("Filter by Health Outcome:", sorted(outcomes))
             
             with col2:
-                # Filter indicators based on selected outcome
                 filtered_by_outcome = master_db[master_db['Health_Outcome'] == selected_outcome]
                 indicators = filtered_by_outcome['Indicator'].dropna().unique()
                 selected_indicator = st.selectbox("Filter by Specific Indicator:", sorted(indicators))
 
-            # Filter the dataframe based on user selections
             chart_data = filtered_by_outcome[filtered_by_outcome['Indicator'] == selected_indicator]
             
+            # Exclude Eligible Population files from the chart to prevent skewed visual scaling
+            chart_data = chart_data[chart_data['Period'] != 'Eligible Population']
+
             if not chart_data.empty:
-                # Group by Area and Period for the chart
-                summary_data = chart_data.groupby(['Area', 'Period'])['Value'].sum().unstack().fillna(0)
+                # Group by Area to show a comparative bar chart across municipalities
+                summary_data = chart_data.groupby(['Area'])['Value'].sum().sort_values(ascending=False)
                 
-                st.write(f"**Total Reported Values for: {selected_indicator}**")
-                # Render a native Streamlit bar chart
+                st.write(f"**Total Reported Values for: {selected_indicator} (Excluding Baseline Population)**")
                 st.bar_chart(summary_data)
             else:
-                st.info("No data available for the selected filters.")
+                st.info("No reporting data available for the selected filters.")
