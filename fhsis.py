@@ -223,7 +223,6 @@ def filter_data(df, start_month, end_month, gender, year):
     cols_to_keep = ['Area', 'Month']
     if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
 
-    # --- FIX: YEAR-AWARE AND TEMPLATE-AWARE FILTERING ---
     for col in filtered_df.columns:
         if col in ['Area', 'Month', 'Year']: 
             continue
@@ -232,16 +231,13 @@ def filter_data(df, start_month, end_month, gender, year):
         is_valid_gender = False
         
         if gender == "Total":
-            # For "Total", accept _Total OR anything that is NOT specifically _Male or _Female (handles 2024 plain names)
             if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
                 is_valid_gender = True
         else:
-            # For "Male"/"Female", accept exactly that tag
             if col.endswith(f"_{gender}"):
                 is_valid_gender = True
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
-            # Crucial Check: Only load the column into the dropdown if it actually contains data for this year!
             if pd.api.types.is_numeric_dtype(filtered_df[col]):
                 if filtered_df[col].sum() > 0:
                     cols_to_keep.append(col)
@@ -269,11 +265,11 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
-                # We already handled gender string matching cleanly in `filter_data`, 
-                # so we just check the base name here.
                 if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
-                    if col not in cols_to_plot:  
-                        cols_to_plot.append(col)
+                    # --- FIX: EXPLICITLY REJECT ANY COLUMN WITH A PERCENTAGE SIGN ---
+                    if "%" not in col:
+                        if col not in cols_to_plot:  
+                            cols_to_plot.append(col)
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
@@ -316,7 +312,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_picker_clean_{safe_filename}_{year}", # Added Year to key to force refresh on year change
+                    key=f"ms_picker_no_percent_{safe_filename}_{year}",
                     label_visibility="collapsed"
                 )
 
@@ -372,7 +368,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     
                 fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
-                # --- FIX: Added specific UI keys to ALL charts to completely prevent Duplicate ID crashes! ---
                 st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'scale': 4}})
 
                 st.markdown("---")
@@ -579,8 +574,7 @@ elif page == "📈 YoY Comparison":
             available_cols = []
             for base in base_mets:
                 for col in raw_df.columns:
-                    if base.lower() in col.lower():
-                        # Use the new dynamic gender selection logic for YoY too
+                    if base.lower() in col.lower() and "%" not in col:
                         is_valid = False
                         if gender_filter == "Total":
                             if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
@@ -614,7 +608,6 @@ elif page == "📈 YoY Comparison":
                     fig_yoy = px.bar(melted_yoy, x='Area', y='Doses', color='Year', barmode='group',
                                      title=f"Head-to-Head Comparison: {year_a} vs {year_b}", text_auto=True, color_discrete_sequence=["#1f77b4", "#ff7f0e"])
                     fig_yoy.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Doses", margin=dict(t=40))
-                    # --- Added keys to YoY charts just to be totally safe ---
                     st.plotly_chart(fig_yoy, use_container_width=True, key=f"yoy_bar_{compare_col}_{year_a}_{year_b}")
 
                     st.markdown(f"#### 📈 Growth / Decline (Variance)")
