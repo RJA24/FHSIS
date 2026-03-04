@@ -183,6 +183,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         
         if cols_to_plot:
             agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
+            safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
             
             # --- KPI SCORECARDS ---
             st.markdown("#### 🏆 Province-Wide Summary")
@@ -195,29 +196,60 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             
             st.markdown("---")
             
-            # --- PLOTLY CHART ---
+            # --- 1. PROVINCE TOTAL CHART (For Regional Reporting) ---
+            st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
+            
+            # Aggregate the totals for the province
+            abra_total_df = agg_df[cols_to_plot].sum().reset_index()
+            abra_total_df.columns = ['Vaccine/Antigen', 'Count']
+            abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+            
+            fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen',
+                              title=f"Abra Province Total ({start_m} - {end_m})",
+                              text_auto=True,
+                              color_discrete_sequence=px.colors.qualitative.Pastel)
+            
+            fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+            fig_abra.update_layout(xaxis_title="Antigen", yaxis_title="Number of Children", showlegend=False, margin=dict(t=60))
+            
+            config_abra = {
+                'toImageButtonOptions': {
+                    'format': 'png', 
+                    'filename': f'Abra_Provincial_Total_{safe_filename}',
+                    'height': 600,
+                    'width': 1000,
+                    'scale': 4 
+                }
+            }
+            st.plotly_chart(fig_abra, use_container_width=True, config=config_abra)
+
+            st.markdown("---")
+            
+            # --- 2. RHU BREAKDOWN CHART (For Local Monitoring) ---
+            st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+            
             melted = agg_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
             melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
             
-            fig = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
-                         title=f"{tab_title} Coverage by RHU ({start_m} - {end_m})",
+            fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
+                         title=f"RHU Breakdown ({start_m} - {end_m})",
                          text_auto=True,
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             
-            fig.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=60))
+            fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+            fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=60))
             
-            safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
-            config = {
+            config_rhu = {
                 'toImageButtonOptions': {
                     'format': 'png', 
-                    'filename': f'Abra_FHSIS_{safe_filename}',
+                    'filename': f'Abra_RHU_Breakdown_{safe_filename}',
                     'height': 600,
                     'width': 1200,
                     'scale': 4 
                 }
             }
-            st.plotly_chart(fig, use_container_width=True, config=config)
+            st.plotly_chart(fig_rhu, use_container_width=True, config=config_rhu)
+            
         else:
             st.warning("Could not find graphing columns for the selected demographic.")
             
