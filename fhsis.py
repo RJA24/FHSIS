@@ -2,46 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import os
-import shutil
 from streamlit_gsheets import GSheetsConnection
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", layout="wide")
-
-# --- LOCAL STORAGE CONFIG ---
-SAVE_DIR = "saved_fhsis_data"
-
-def save_data_to_disk(data_dict):
-    """Saves the dataframes to local disk so they survive a refresh."""
-    if not os.path.exists(SAVE_DIR):
-        os.makedirs(SAVE_DIR)
-    for key, df in data_dict.items():
-        df.to_pickle(os.path.join(SAVE_DIR, f"{key}.pkl"))
-
-def load_saved_data():
-    """Loads saved dataframes from the local disk if they exist."""
-    loaded_data = {}
-    if os.path.exists(SAVE_DIR):
-        for key in ["CPAB_BCG_HepB", "Penta", "Polio", "PCV", "MMR"]:
-            file_path = os.path.join(SAVE_DIR, f"{key}.pkl")
-            if os.path.exists(file_path):
-                loaded_data[key] = pd.read_pickle(file_path)
-    return loaded_data
-
-def clear_saved_data():
-    """Wipes the saved data folder."""
-    if os.path.exists(SAVE_DIR):
-        shutil.rmtree(SAVE_DIR)
-
-# --- LIST OF 27 ABRA RHUs ---
-ABRA_RHUS = [
-    "Bangued", "Boliney", "Bucay", "Bucloc", "Daguioman", "Danglas", 
-    "Dolores", "La Paz", "Lacub", "Lagangilang", "Lagayan", "Langiden", 
-    "Licuan-Baay", "Luba", "Malibcong", "Manabo", "Penarrubia", "Pidigan", 
-    "Pilar", "Sallapadan", "San Isidro", "San Juan", "San Quintin", 
-    "Tayum", "Tineg", "Tubo", "Villaviciosa"
-]
 
 # --- GSHEETS CONFIGURATION ---
 # We will create one worksheet per dataset inside your master Google Sheet
@@ -54,18 +18,11 @@ SHEET_MAPPING = {
 }
 
 def save_data_to_gsheets(data_dict):
-    """Pushes the uploaded FHSIS data permanently to Google Sheets, completely overwriting old data."""
+    """Pushes the uploaded FHSIS data permanently to Google Sheets."""
     conn = st.connection("gsheets", type=GSheetsConnection)
-    spreadsheet_url = st.secrets.connections.gsheets.spreadsheet
-    
     for app_key, df in data_dict.items():
         sheet_name = SHEET_MAPPING[app_key]
         with st.spinner(f"Saving {app_key} to cloud database..."):
-            # 1. Connect to the specific tab and wipe it completely clean
-            ws = conn.client.open_by_url(spreadsheet_url).worksheet(sheet_name)
-            ws.clear()
-            
-            # 2. Paste the new, current data starting at A1
             conn.update(worksheet=sheet_name, data=df)
 
 def load_data_from_gsheets():
@@ -88,6 +45,15 @@ def load_data_from_gsheets():
 def clear_session_data():
     """Wipes the current session data (Note: Does not delete from GSheets)."""
     st.session_state['fhsis_data'] = {}
+
+# --- LIST OF 27 ABRA RHUs ---
+ABRA_RHUS = [
+    "Bangued", "Boliney", "Bucay", "Bucloc", "Daguioman", "Danglas", 
+    "Dolores", "La Paz", "Lacub", "Lagangilang", "Lagayan", "Langiden", 
+    "Licuan-Baay", "Luba", "Malibcong", "Manabo", "Penarrubia", "Pidigan", 
+    "Pilar", "Sallapadan", "San Isidro", "San Juan", "San Quintin", 
+    "Tayum", "Tineg", "Tubo", "Villaviciosa"
+]
 
 # --- DATA CLEANING FUNCTION ---
 @st.cache_data
@@ -346,6 +312,13 @@ if page == "📊 Dashboard":
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
+    
+    # --- ADMIN SECURITY GATE ---
+    admin_password = st.text_input("Enter Admin Password", type="password")
+    if admin_password != st.secrets.get("admin_password", "AbraAdmin2026"):
+        st.warning("🔒 This section is restricted. Please enter the password to unlock the uploader.")
+        st.stop() # This halts the script here, keeping the layout exactly as you wanted but hiding the uploader!
+        
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     
     col1, col2 = st.columns(2)
