@@ -218,7 +218,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
-                # FIX: Made the search case-insensitive with .lower() so it catches all variations
                 if base.lower() in col.lower() and col.endswith(f"_{gender}"):
                     if col not in cols_to_plot:  
                         cols_to_plot.append(col)
@@ -300,21 +299,42 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
 
                 st.markdown("---")
                 
-                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
-                melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+                # --- NEW: RHU BREAKDOWN & TOP 5 LEADERBOARD ---
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown & Top 5")
                 
-                fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
-                             title=f"RHU Breakdown ({start_m} - {end_m})",
-                             text_auto=True,
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                rhu_col1, rhu_col2 = st.columns([7, 3]) # 70% left, 30% right
                 
-                if view_mode == "Percentage (%) Coverage" and elig_cols:
-                    fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                with rhu_col1:
+                    melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
+                    melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                     
-                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
-                st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
+                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
+                                 title=f"All RHUs ({start_m} - {end_m})",
+                                 text_auto=True,
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                    
+                    if view_mode == "Percentage (%) Coverage" and elig_cols:
+                        fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                        
+                    fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                    fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
+                    st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
+                
+                with rhu_col2:
+                    # Calculate the Top 5 by taking the average of all selected columns for each RHU
+                    top5_df = chart_df.copy()
+                    top5_df['Rank_Metric'] = top5_df[selected_cols].mean(axis=1)
+                    # Sort ascending so the best RHU appears at the top of the horizontal bar chart
+                    top5_df = top5_df.sort_values(by='Rank_Metric', ascending=True).tail(5)
+                    
+                    fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h',
+                                      title="🏆 Top 5 Performing RHUs (Avg)",
+                                      text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True,
+                                      color='Rank_Metric',
+                                      color_continuous_scale="Greens")
+                    
+                    fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="", showlegend=False, margin=dict(t=60, l=0, r=0))
+                    st.plotly_chart(fig_top5, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
                 
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
@@ -398,7 +418,6 @@ if page == "📊 Dashboard":
         "🎯 MMR, FIC & CIC"
     ])
     
-    # FIX: Broadened and simplified Tab 1 base metrics
     with tab1:
         render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"], start_month, end_month, gender_filter)
 
