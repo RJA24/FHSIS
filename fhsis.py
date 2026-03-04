@@ -2,9 +2,36 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import os
+import shutil
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", layout="wide")
+
+# --- LOCAL STORAGE CONFIG ---
+SAVE_DIR = "saved_fhsis_data"
+
+def save_data_to_disk(data_dict):
+    """Saves the dataframes to local disk so they survive a refresh."""
+    if not os.path.exists(SAVE_DIR):
+        os.makedirs(SAVE_DIR)
+    for key, df in data_dict.items():
+        df.to_pickle(os.path.join(SAVE_DIR, f"{key}.pkl"))
+
+def load_saved_data():
+    """Loads saved dataframes from the local disk if they exist."""
+    loaded_data = {}
+    if os.path.exists(SAVE_DIR):
+        for key in ["CPAB_BCG_HepB", "Penta", "Polio", "PCV", "MMR"]:
+            file_path = os.path.join(SAVE_DIR, f"{key}.pkl")
+            if os.path.exists(file_path):
+                loaded_data[key] = pd.read_pickle(file_path)
+    return loaded_data
+
+def clear_saved_data():
+    """Wipes the saved data folder."""
+    if os.path.exists(SAVE_DIR):
+        shutil.rmtree(SAVE_DIR)
 
 # --- LIST OF 27 ABRA RHUs ---
 ABRA_RHUS = [
@@ -145,8 +172,9 @@ with st.sidebar:
         st.subheader("Global Filters")
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
+# --- INITIALIZE SESSION STATE FROM DISK ---
 if 'fhsis_data' not in st.session_state:
-    st.session_state['fhsis_data'] = {}
+    st.session_state['fhsis_data'] = load_saved_data()
 
 # --- HELPER FUNCTIONS ---
 def filter_data(df, start_month, end_month, gender):
@@ -185,7 +213,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
             safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
             
-            # --- KPI SCORECARDS ---
             st.markdown("#### 🏆 Province-Wide Summary")
             kpi_cols = st.columns(len(cols_to_plot))
             for i, col in enumerate(cols_to_plot):
@@ -196,10 +223,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             
             st.markdown("---")
             
-            # --- 1. PROVINCE TOTAL CHART (For Regional Reporting) ---
             st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
-            
-            # Aggregate the totals for the province
             abra_total_df = agg_df[cols_to_plot].sum().reset_index()
             abra_total_df.columns = ['Vaccine/Antigen', 'Count']
             abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
@@ -212,22 +236,12 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
             fig_abra.update_layout(xaxis_title="Antigen", yaxis_title="Number of Children", showlegend=False, margin=dict(t=60))
             
-            config_abra = {
-                'toImageButtonOptions': {
-                    'format': 'png', 
-                    'filename': f'Abra_Provincial_Total_{safe_filename}',
-                    'height': 600,
-                    'width': 1000,
-                    'scale': 4 
-                }
-            }
+            config_abra = {'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'height': 600, 'width': 1000, 'scale': 4}}
             st.plotly_chart(fig_abra, use_container_width=True, config=config_abra)
 
             st.markdown("---")
             
-            # --- 2. RHU BREAKDOWN CHART (For Local Monitoring) ---
             st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-            
             melted = agg_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
             melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
             
@@ -239,31 +253,16 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=60))
             
-            config_rhu = {
-                'toImageButtonOptions': {
-                    'format': 'png', 
-                    'filename': f'Abra_RHU_Breakdown_{safe_filename}',
-                    'height': 600,
-                    'width': 1200,
-                    'scale': 4 
-                }
-            }
+            config_rhu = {'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'height': 600, 'width': 1200, 'scale': 4}}
             st.plotly_chart(fig_rhu, use_container_width=True, config=config_rhu)
             
         else:
             st.warning("Could not find graphing columns for the selected demographic.")
             
-        # --- DATA TABLE & CSV DOWNLOAD ---
         with st.expander("📄 View & Download Filtered Data"):
             st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-            
             csv_data = convert_df_to_csv(filtered_df)
-            st.download_button(
-                label="📥 Download Data as CSV",
-                data=csv_data,
-                file_name=f"Abra_{safe_filename}_Data_{start_m}_to_{end_m}.csv",
-                mime="text/csv"
-            )
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data_{start_m}_to_{end_m}.csv", mime="text/csv")
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
@@ -300,7 +299,7 @@ if page == "📊 Dashboard":
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
-    st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets and filters for Abra's 27 RHUs automatically.")
+    st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them safely.")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -330,5 +329,20 @@ elif page == "📁 Data Uploader":
             df = load_and_clean_fhsis_data(file_mmr)
             if df is not None: st.session_state['fhsis_data']["MMR"] = df
             
-    if st.button("Save Data & Go to Dashboard"):
-        st.success("Files processed successfully! Please select '📊 Dashboard' from the left sidebar to view.")
+    st.markdown("---")
+    action_col1, action_col2 = st.columns(2)
+    
+    with action_col1:
+        if st.button("💾 Save Data & Go to Dashboard", type="primary", use_container_width=True):
+            if st.session_state['fhsis_data']:
+                save_data_to_disk(st.session_state['fhsis_data'])
+                st.success("✅ Files processed and safely saved! You can now freely refresh the app. Head over to the Dashboard.")
+            else:
+                st.error("No data uploaded yet to save.")
+                
+    with action_col2:
+        if st.button("🗑️ Clear Saved Data", type="secondary", use_container_width=True):
+            clear_saved_data()
+            st.session_state['fhsis_data'] = {}
+            st.warning("All saved data has been wiped. The dashboard is now clean.")
+            st.rerun()
