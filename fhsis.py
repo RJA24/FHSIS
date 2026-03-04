@@ -6,12 +6,21 @@ import plotly.express as px
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", layout="wide")
 
+# --- LIST OF 27 ABRA RHUs ---
+ABRA_RHUS = [
+    "Bangued", "Boliney", "Bucay", "Bucloc", "Daguioman", "Danglas", 
+    "Dolores", "La Paz", "Lacub", "Lagangilang", "Lagayan", "Langiden", 
+    "Licuan-Baay", "Luba", "Malibcong", "Manabo", "Penarrubia", "Pidigan", 
+    "Pilar", "Sallapadan", "San Isidro", "San Juan", "San Quintin", 
+    "Tayum", "Tineg", "Tubo", "Villaviciosa"
+]
+
 # --- DATA CLEANING FUNCTION ---
 @st.cache_data
 def load_and_clean_fhsis_data(uploaded_file):
     """
-    Cleans the FHSIS Excel/CSV files by dynamically searching for header rows 
-    to bypass formatting inconsistencies and forcing unique column names.
+    Cleans the FHSIS Excel files, extracts the 12 monthly sheets,
+    and strictly filters the data for the 27 RHUs of Abra.
     """
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -23,7 +32,8 @@ def load_and_clean_fhsis_data(uploaded_file):
             valid_months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             
             for sheet in xls.sheet_names:
-                if any(month.lower() in sheet.lower() for month in valid_months) and "Q" not in sheet:
+                # Only load sheets representing months, ignore Quarters/Annuals
+                if any(month.lower() in sheet.lower() for month in valid_months) and "Q" not in sheet and "202" not in sheet:
                     sheets_to_process[sheet] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
@@ -97,13 +107,38 @@ def load_and_clean_fhsis_data(uploaded_file):
                 df_clean.rename(columns={first_col: 'Area'}, inplace=True)
             
             df_clean.dropna(subset=['Area'], inplace=True)
-            df_clean = df_clean[~df_clean['Area'].astype(str).str.contains('Area|Interpretation|Recommendation|NaN', na=False, case=False)]
             
-            month_val = sheet_name[:3].capitalize()
-            if month_val == "Sep": month_val = "Sep"
+            # ---------------------------------------------------------
+            # STRICT FILTERING FOR ABRA'S 27 RHUs
+            # ---------------------------------------------------------
+            # Clean up trailing spaces in the raw data (e.g., "Boliney ")
+            df_clean['Area_Clean'] = df_clean['Area'].astype(str).str.strip()
+            # Keep ONLY the rows that match our exact Abra RHU list
+            df_clean = df_clean[df_clean['Area_Clean'].isin(ABRA_RHUS)]
+            # Drop the temporary clean column, swap it into the main Area column
+            df_clean['Area'] = df_clean['Area_Clean']
+            df_clean.drop(columns=['Area_Clean'], inplace=True)
+            # ---------------------------------------------------------
+
+            # Robustly attach the specific Month
+            sheet_lower = sheet_name.lower()
+            if "jan" in sheet_lower: month_val = "Jan"
+            elif "feb" in sheet_lower: month_val = "Feb"
+            elif "mar" in sheet_lower: month_val = "Mar"
+            elif "apr" in sheet_lower: month_val = "Apr"
+            elif "may" in sheet_lower: month_val = "May"
+            elif "jun" in sheet_lower: month_val = "Jun"
+            elif "jul" in sheet_lower: month_val = "Jul"
+            elif "aug" in sheet_lower: month_val = "Aug"
+            elif "sep" in sheet_lower: month_val = "Sep"
+            elif "oct" in sheet_lower: month_val = "Oct"
+            elif "nov" in sheet_lower: month_val = "Nov"
+            elif "dec" in sheet_lower: month_val = "Dec"
+            else: month_val = "Unknown"
+            
             df_clean['Month'] = month_val
             
-            # 6. Convert to numbers (Bulletproofed against DataFrames)
+            # 6. Convert to numbers
             for col in df_clean.columns:
                 if col not in ['Area', 'Month', 'Interpretation', 'Recommendation/Actions Taken']:
                     if isinstance(df_clean[col], pd.DataFrame):
@@ -159,15 +194,14 @@ def filter_data(df, start_month, end_month, gender):
         if col.endswith(f"_{gender}") or col in ['Interpretation', 'Recommendation/Actions Taken'] or "%" in col:
             cols_to_keep.append(col)
             
-    # Fallback gracefully if no specific demographics found
     if len(cols_to_keep) > 2:
         return filtered_df[cols_to_keep]
     return filtered_df
 
 # --- MAIN DASHBOARD PAGE ---
 if page == "📊 Dashboard":
-    st.title("💉 Child Immunization Dashboard")
-    st.markdown("Monitor health outcomes, vaccine coverage, and fully immunized children.")
+    st.title("💉 Child Immunization Dashboard - Abra Province")
+    st.markdown(f"Monitoring health outcomes across the **27 RHUs** of Abra.")
     
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_month, end_month = st.select_slider("Select Month Range", options=months, value=("Jan", "Dec"))
@@ -186,7 +220,7 @@ if page == "📊 Dashboard":
             raw_df = st.session_state['fhsis_data']["CPAB_BCG_HepB"]
             filtered_df = filter_data(raw_df, start_month, end_month, gender_filter)
             st.success(f"Displaying data for {start_month}-{end_month} ({gender_filter})")
-            st.dataframe(filtered_df.head(15), use_container_width=True)
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
         else:
             st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
@@ -194,7 +228,7 @@ if page == "📊 Dashboard":
         st.header("Pentavalent Vaccine (DPT-HiB-HepB)")
         if "Penta" in st.session_state['fhsis_data']:
             raw_df = st.session_state['fhsis_data']["Penta"]
-            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter).head(15), use_container_width=True)
+            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter), use_container_width=True, hide_index=True)
         else:
             st.info("No data uploaded yet.")
 
@@ -202,7 +236,7 @@ if page == "📊 Dashboard":
         st.header("Polio Vaccines (OPV & IPV)")
         if "Polio" in st.session_state['fhsis_data']:
             raw_df = st.session_state['fhsis_data']["Polio"]
-            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter).head(15), use_container_width=True)
+            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter), use_container_width=True, hide_index=True)
         else:
             st.info("No data uploaded yet.")
 
@@ -210,7 +244,7 @@ if page == "📊 Dashboard":
         st.header("Pneumococcal Conjugate Vaccine (PCV)")
         if "PCV" in st.session_state['fhsis_data']:
             raw_df = st.session_state['fhsis_data']["PCV"]
-            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter).head(15), use_container_width=True)
+            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter), use_container_width=True, hide_index=True)
         else:
             st.info("No data uploaded yet.")
 
@@ -218,14 +252,14 @@ if page == "📊 Dashboard":
         st.header("Measles, FIC, and CIC")
         if "MMR" in st.session_state['fhsis_data']:
             raw_df = st.session_state['fhsis_data']["MMR"]
-            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter).head(15), use_container_width=True)
+            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter), use_container_width=True, hide_index=True)
         else:
             st.info("No data uploaded yet.")
 
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
-    st.markdown("Upload your FHSIS Excel/CSV files here to populate the dashboard. You must upload the original multi-sheet Excel files for full functionality.")
+    st.markdown("Upload your FHSIS Excel files here to populate the dashboard. The app will automatically extract the 12 monthly sheets and isolate data for Abra's 27 RHUs.")
     
     col1, col2 = st.columns(2)
     
