@@ -221,10 +221,33 @@ def filter_data(df, start_month, end_month, gender, year):
         filtered_df = filtered_df[filtered_df['Year'] == year]
         
     cols_to_keep = ['Area', 'Month']
+    if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
+
+    # --- FIX: YEAR-AWARE AND TEMPLATE-AWARE FILTERING ---
     for col in filtered_df.columns:
-        if col.endswith(f"_{gender}") or col in ['Interpretation', 'Recommendation/Actions Taken'] or "%" in col or "elig" in col.lower() or "pop" in col.lower():
-            cols_to_keep.append(col)
+        if col in ['Area', 'Month', 'Year']: 
+            continue
             
+        clean_col = col.lower()
+        is_valid_gender = False
+        
+        if gender == "Total":
+            # For "Total", accept _Total OR anything that is NOT specifically _Male or _Female (handles 2024 plain names)
+            if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                is_valid_gender = True
+        else:
+            # For "Male"/"Female", accept exactly that tag
+            if col.endswith(f"_{gender}"):
+                is_valid_gender = True
+                
+        if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
+            # Crucial Check: Only load the column into the dropdown if it actually contains data for this year!
+            if pd.api.types.is_numeric_dtype(filtered_df[col]):
+                if filtered_df[col].sum() > 0:
+                    cols_to_keep.append(col)
+            else:
+                cols_to_keep.append(col)
+                
     cols_to_keep = list(dict.fromkeys(cols_to_keep))
     
     if len(cols_to_keep) > 2:
@@ -246,7 +269,9 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
-                if base.lower() in col.lower() and col.endswith(f"_{gender}"):
+                # We already handled gender string matching cleanly in `filter_data`, 
+                # so we just check the base name here.
+                if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
                     if col not in cols_to_plot:  
                         cols_to_plot.append(col)
         
@@ -264,22 +289,18 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 key=f"toggle_view_{safe_filename}"
             )
             
-            # --- FIX: SMART PARENT/CHILD LOGIC TO HIDE AGGREGATE "TOTAL" COLUMNS BY DEFAULT ---
             default_cols = []
             for c in cols_to_plot:
                 clean_lower = c.replace(f"_{gender}", "").strip().lower()
                 c_base = c.replace(f"_{gender}", "").strip()
                 
-                # 1. Hard-exclude specific unwanted sub-categories by default
                 if "(routine)" in clean_lower or "(catch-up)" in clean_lower:
                     continue
                     
-                # 2. Check if this column is a "Parent" summary to other more detailed columns
                 is_parent = False
                 for other_c in cols_to_plot:
                     if other_c != c:
                         other_base = other_c.replace(f"_{gender}", "").strip()
-                        # If another column starts with this column's name + a space or parenthesis (e.g. OPV 1 -> OPV 1 (0-12 mos))
                         if other_base.startswith(c_base + " ") or other_base.startswith(c_base + "("):
                             is_parent = True
                             break
@@ -287,7 +308,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 if not is_parent:
                     default_cols.append(c)
             
-            # Fallback just in case everything was somehow filtered out
             if not default_cols and len(cols_to_plot) > 0:
                 default_cols = [cols_to_plot[0]]
             
@@ -296,7 +316,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_picker_final_{safe_filename}", # Changed ID to wipe Streamlit's old cache!
+                    key=f"ms_picker_clean_{safe_filename}_{year}", # Added Year to key to force refresh on year change
                     label_visibility="collapsed"
                 )
 
@@ -352,7 +372,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     
                 fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
-                st.plotly_chart(fig_abra, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'scale': 4}})
+                # --- FIX: Added specific UI keys to ALL charts to completely prevent Duplicate ID crashes! ---
+                st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'scale': 4}})
 
                 st.markdown("---")
                 
@@ -371,7 +392,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
-                st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
                 
                 st.markdown("---")
                 
@@ -388,7 +409,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                                   color_continuous_scale="Greens")
                 
                 fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
-                st.plotly_chart(fig_top5, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_top5, use_container_width=True, key=f"top5_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
                 
                 st.markdown("---")
                 st.markdown(f"#### 🗺️ Provincial Heatmap")
@@ -411,7 +432,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     mapbox_style="carto-positron", title=map_title
                 )
                 fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
-                st.plotly_chart(fig_map, use_container_width=True)
+                st.plotly_chart(fig_map, use_container_width=True, key=f"map_{safe_filename}_{year}")
                 
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
@@ -444,7 +465,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                     
                 fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40))
-                st.plotly_chart(fig_trend, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Trend_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Trend_{safe_filename}', 'scale': 4}})
 
             else:
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
@@ -468,7 +489,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 fig_drop.add_hline(y=10, line_dash="dash", line_color="red", annotation_text="Warning Threshold (10%)")
                 fig_drop.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Dropout Rate (%)", margin=dict(t=40))
                 
-                st.plotly_chart(fig_drop, use_container_width=True, config={'toImageButtonOptions': {'filename': f'Abra_Dropout_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_drop, use_container_width=True, key=f"drop_{safe_filename}_{year}", config={'toImageButtonOptions': {'filename': f'Abra_Dropout_{safe_filename}', 'scale': 4}})
             
         else:
             st.warning("Could not find graphing columns for the selected demographic.")
@@ -558,8 +579,17 @@ elif page == "📈 YoY Comparison":
             available_cols = []
             for base in base_mets:
                 for col in raw_df.columns:
-                    if base.lower() in col.lower() and col.endswith(f"_{gender_filter}"):
-                        if col not in available_cols:
+                    if base.lower() in col.lower():
+                        # Use the new dynamic gender selection logic for YoY too
+                        is_valid = False
+                        if gender_filter == "Total":
+                            if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                                is_valid = True
+                        else:
+                            if col.endswith(f"_{gender_filter}"):
+                                is_valid = True
+                        
+                        if is_valid and col not in available_cols:
                             available_cols.append(col)
 
             if available_cols:
@@ -584,7 +614,8 @@ elif page == "📈 YoY Comparison":
                     fig_yoy = px.bar(melted_yoy, x='Area', y='Doses', color='Year', barmode='group',
                                      title=f"Head-to-Head Comparison: {year_a} vs {year_b}", text_auto=True, color_discrete_sequence=["#1f77b4", "#ff7f0e"])
                     fig_yoy.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Doses", margin=dict(t=40))
-                    st.plotly_chart(fig_yoy, use_container_width=True)
+                    # --- Added keys to YoY charts just to be totally safe ---
+                    st.plotly_chart(fig_yoy, use_container_width=True, key=f"yoy_bar_{compare_col}_{year_a}_{year_b}")
 
                     st.markdown(f"#### 📈 Growth / Decline (Variance)")
                     merged['Color'] = np.where(merged['Variance'] >= 0, 'Growth (Positive)', 'Decline (Negative)')
@@ -592,7 +623,7 @@ elif page == "📈 YoY Comparison":
                                      color_discrete_map={'Growth (Positive)': 'green', 'Decline (Negative)': 'red'},
                                      title=f"Net Change in Doses ({year_b} minus {year_a})")
                     fig_var.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Difference in Doses", margin=dict(t=40))
-                    st.plotly_chart(fig_var, use_container_width=True)
+                    st.plotly_chart(fig_var, use_container_width=True, key=f"yoy_var_{compare_col}_{year_a}_{year_b}")
 
                     with st.expander("📄 View & Download YoY Data Table"):
                         st.dataframe(merged[['Area', f'{year_a}', f'{year_b}', 'Variance']], use_container_width=True, hide_index=True)
