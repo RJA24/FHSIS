@@ -165,6 +165,10 @@ def filter_data(df, start_month, end_month, gender):
         return filtered_df[cols_to_keep]
     return filtered_df
 
+@st.cache_data
+def convert_df_to_csv(df):
+    return df.to_csv(index=False).encode('utf-8')
+
 def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
@@ -179,6 +183,19 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         
         if cols_to_plot:
             agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
+            
+            # --- KPI SCORECARDS ---
+            st.markdown("#### 🏆 Province-Wide Summary")
+            kpi_cols = st.columns(len(cols_to_plot))
+            for i, col in enumerate(cols_to_plot):
+                total_val = int(agg_df[col].sum())
+                clean_name = col.replace(f"_{gender}", "")
+                with kpi_cols[i]:
+                    st.metric(label=f"Total {clean_name}", value=f"{total_val:,}")
+            
+            st.markdown("---")
+            
+            # --- PLOTLY CHART ---
             melted = agg_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
             melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
             
@@ -188,15 +205,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             
             fig.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+            fig.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=60))
             
-            fig.update_layout(
-                xaxis_title="Rural Health Unit (RHU)", 
-                yaxis_title="Number of Children", 
-                legend_title="Antigen",
-                margin=dict(t=60)
-            )
-            
-            # --- HIGH RESOLUTION EXPORT CONFIG ---
             safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
             config = {
                 'toImageButtonOptions': {
@@ -204,16 +214,24 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                     'filename': f'Abra_FHSIS_{safe_filename}',
                     'height': 600,
                     'width': 1200,
-                    'scale': 4 # Multiplies the resolution by 4x for high-quality export
+                    'scale': 4 
                 }
             }
-            
             st.plotly_chart(fig, use_container_width=True, config=config)
         else:
             st.warning("Could not find graphing columns for the selected demographic.")
             
-        with st.expander("📄 View Filtered Data Table"):
+        # --- DATA TABLE & CSV DOWNLOAD ---
+        with st.expander("📄 View & Download Filtered Data"):
             st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(
+                label="📥 Download Data as CSV",
+                data=csv_data,
+                file_name=f"Abra_{safe_filename}_Data_{start_m}_to_{end_m}.csv",
+                mime="text/csv"
+            )
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
@@ -233,23 +251,18 @@ if page == "📊 Dashboard":
     ])
     
     with tab1:
-        st.header("CPAB, BCG, and Hepa B")
         render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG (0-28 days)", "HepB, within 24 hours"], start_month, end_month, gender_filter)
 
     with tab2:
-        st.header("Pentavalent Vaccine (DPT-HiB-HepB)")
         render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3"], start_month, end_month, gender_filter)
 
     with tab3:
-        st.header("Polio Vaccines (OPV & IPV)")
         render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter)
 
     with tab4:
-        st.header("Pneumococcal Conjugate Vaccine (PCV)")
         render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter)
 
     with tab5:
-        st.header("Measles, FIC, and CIC")
         render_tab_content("MMR and FIC", "MMR", ["MMR 1", "MMR 2", "FIC"], start_month, end_month, gender_filter)
 
 # --- DATA UPLOADER PAGE ---
