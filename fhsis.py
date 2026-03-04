@@ -223,14 +223,12 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                         cols_to_plot.append(col)
         
         if cols_to_plot:
-            # Aggregate ALL columns first so background math doesn't break
             agg_dict = {col: 'sum' for col in cols_to_plot}
             for ec in elig_cols:
                 agg_dict[ec] = 'max' 
                 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            # --- NEW: INTERACTIVE MULTISELECT FOR INDICATORS ---
             selected_cols = st.multiselect(
                 "🎯 Select Indicators to Display",
                 options=cols_to_plot,
@@ -250,7 +248,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
                 st.markdown("#### 🏆 Province-Wide Summary")
-                # Create dynamic columns based on selection
                 kpi_cols = st.columns(len(selected_cols))
                 
                 for i, col in enumerate(selected_cols):
@@ -317,16 +314,51 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
+                
+                # --- NEW: MONTHLY TREND LINE CHART ---
+                st.markdown("---")
+                st.markdown(f"#### 📉 Monthly Trend Analysis")
+                
+                trend_agg = filtered_df.groupby('Month')[selected_cols].sum().reset_index()
+                months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
+                trend_agg = trend_agg.sort_values('Month')
+                
+                trend_chart_df = pd.DataFrame({'Month': trend_agg['Month']})
+                
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    for col in selected_cols:
+                        trend_chart_df[col] = [(v / provincial_elig * 100) if provincial_elig > 0 else 0 for v in trend_agg[col]]
+                        trend_chart_df[col] = trend_chart_df[col].round(1)
+                    y_trend_label = "Coverage (%)"
+                else:
+                    for col in selected_cols:
+                        trend_chart_df[col] = trend_agg[col]
+                    y_trend_label = "Number of Children"
+                
+                trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
+                trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+                
+                fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True,
+                                    title=f"Provincial Monthly Trend ({start_m} - {end_m})",
+                                    color_discrete_sequence=px.colors.qualitative.Pastel)
+                
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                    
+                fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40))
+                st.plotly_chart(fig_trend, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Trend_{safe_filename}', 'scale': 4}})
+
             else:
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
             
-            # --- DROPOUT RATE ANALYTICS (Always calculated based on full available columns so it doesn't break) ---
+            # --- DROPOUT RATE ANALYTICS ---
             dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
             dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and "MMR" in c), None))
 
             if dose_1_col and dose_last_col and tab_title != "Birth Doses":
                 st.markdown("---")
-                st.markdown(f"#### 📉 Dropout Analysis ({dose_1_col.replace(f'_{gender}', '')} to {dose_last_col.replace(f'_{gender}', '')})")
+                st.markdown(f"#### ⚠️ Dropout Analysis ({dose_1_col.replace(f'_{gender}', '')} to {dose_last_col.replace(f'_{gender}', '')})")
                 
                 drop_df = agg_df[['Area', dose_1_col, dose_last_col]].copy()
                 drop_df['Dropout Rate (%)'] = np.where(drop_df[dose_1_col] > 0, ((drop_df[dose_1_col] - drop_df[dose_last_col]) / drop_df[dose_1_col]) * 100, 0)
