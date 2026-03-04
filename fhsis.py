@@ -515,66 +515,70 @@ elif page == "📈 YoY Comparison":
     with col_y3:
         year_b = st.selectbox("Comparison Year (Year B)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=3)
 
-    dataset_keys = {
-        "Birth Doses": ("CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"]),
-        "Pentavalent": ("Penta", ["DPT", "Penta"]),
-        "Polio": ("Polio", ["OPV", "IPV"]),
-        "Pneumococcal (PCV)": ("PCV", ["PCV"]),
-        "MMR, FIC & CIC": ("MMR", ["MMR", "FIC", "CIC"])
-    }
-
-    df_key, base_mets = dataset_keys[yoy_dataset]
-
-    if df_key in st.session_state['fhsis_data']:
-        raw_df = st.session_state['fhsis_data'][df_key]
-
-        available_cols = []
-        for base in base_mets:
-            for col in raw_df.columns:
-                if base.lower() in col.lower() and col.endswith(f"_{gender_filter}"):
-                    if col not in available_cols:
-                        available_cols.append(col)
-
-        if available_cols:
-            compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols)
-
-            if 'Year' in raw_df.columns:
-                df_a = raw_df[raw_df['Year'] == year_a]
-                agg_a = df_a.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_a}'})
-
-                df_b = raw_df[raw_df['Year'] == year_b]
-                agg_b = df_b.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_b}'})
-
-                merged = pd.merge(pd.DataFrame({'Area': ABRA_RHUS}), agg_a, on='Area', how='left').fillna(0)
-                merged = pd.merge(merged, agg_b, on='Area', how='left').fillna(0)
-
-                merged['Variance'] = merged[f'{year_b}'] - merged[f'{year_a}']
-
-                st.markdown("---")
-                st.markdown(f"#### 📊 {compare_col.replace(f'_{gender_filter}', '')} : {year_a} vs {year_b}")
-
-                melted_yoy = merged.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Doses')
-                fig_yoy = px.bar(melted_yoy, x='Area', y='Doses', color='Year', barmode='group',
-                                 title=f"Head-to-Head Comparison: {year_a} vs {year_b}", text_auto=True, color_discrete_sequence=["#1f77b4", "#ff7f0e"])
-                fig_yoy.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Doses", margin=dict(t=40))
-                st.plotly_chart(fig_yoy, use_container_width=True)
-
-                st.markdown(f"#### 📈 Growth / Decline (Variance)")
-                merged['Color'] = np.where(merged['Variance'] >= 0, 'Growth (Positive)', 'Decline (Negative)')
-                fig_var = px.bar(merged, x='Area', y='Variance', color='Color', text_auto=True,
-                                 color_discrete_map={'Growth (Positive)': 'green', 'Decline (Negative)': 'red'},
-                                 title=f"Net Change in Doses ({year_b} minus {year_a})")
-                fig_var.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Difference in Doses", margin=dict(t=40))
-                st.plotly_chart(fig_var, use_container_width=True)
-
-                with st.expander("📄 View & Download YoY Data Table"):
-                    st.dataframe(merged[['Area', f'{year_a}', f'{year_b}', 'Variance']], use_container_width=True, hide_index=True)
-            else:
-                st.warning("Historical data missing 'Year' tags. Please re-upload your files and select the year.")
-        else:
-            st.warning("No indicator columns found for this category.")
+    # --- FIX: Added safety check to prevent KeyError if years are identical ---
+    if year_a == year_b:
+        st.warning("⚠️ Please select two different years to compare performance.")
     else:
-        st.info("No data available for this category yet. Go to Data Uploader to push your FHSIS files.")
+        dataset_keys = {
+            "Birth Doses": ("CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"]),
+            "Pentavalent": ("Penta", ["DPT", "Penta"]),
+            "Polio": ("Polio", ["OPV", "IPV"]),
+            "Pneumococcal (PCV)": ("PCV", ["PCV"]),
+            "MMR, FIC & CIC": ("MMR", ["MMR", "FIC", "CIC"])
+        }
+
+        df_key, base_mets = dataset_keys[yoy_dataset]
+
+        if df_key in st.session_state['fhsis_data']:
+            raw_df = st.session_state['fhsis_data'][df_key]
+
+            available_cols = []
+            for base in base_mets:
+                for col in raw_df.columns:
+                    if base.lower() in col.lower() and col.endswith(f"_{gender_filter}"):
+                        if col not in available_cols:
+                            available_cols.append(col)
+
+            if available_cols:
+                compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols)
+
+                if 'Year' in raw_df.columns:
+                    df_a = raw_df[raw_df['Year'] == year_a]
+                    agg_a = df_a.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_a}'})
+
+                    df_b = raw_df[raw_df['Year'] == year_b]
+                    agg_b = df_b.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_b}'})
+
+                    merged = pd.merge(pd.DataFrame({'Area': ABRA_RHUS}), agg_a, on='Area', how='left').fillna(0)
+                    merged = pd.merge(merged, agg_b, on='Area', how='left').fillna(0)
+
+                    merged['Variance'] = merged[f'{year_b}'] - merged[f'{year_a}']
+
+                    st.markdown("---")
+                    st.markdown(f"#### 📊 {compare_col.replace(f'_{gender_filter}', '')} : {year_a} vs {year_b}")
+
+                    melted_yoy = merged.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Doses')
+                    fig_yoy = px.bar(melted_yoy, x='Area', y='Doses', color='Year', barmode='group',
+                                     title=f"Head-to-Head Comparison: {year_a} vs {year_b}", text_auto=True, color_discrete_sequence=["#1f77b4", "#ff7f0e"])
+                    fig_yoy.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Doses", margin=dict(t=40))
+                    st.plotly_chart(fig_yoy, use_container_width=True)
+
+                    st.markdown(f"#### 📈 Growth / Decline (Variance)")
+                    merged['Color'] = np.where(merged['Variance'] >= 0, 'Growth (Positive)', 'Decline (Negative)')
+                    fig_var = px.bar(merged, x='Area', y='Variance', color='Color', text_auto=True,
+                                     color_discrete_map={'Growth (Positive)': 'green', 'Decline (Negative)': 'red'},
+                                     title=f"Net Change in Doses ({year_b} minus {year_a})")
+                    fig_var.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Difference in Doses", margin=dict(t=40))
+                    st.plotly_chart(fig_var, use_container_width=True)
+
+                    with st.expander("📄 View & Download YoY Data Table"):
+                        st.dataframe(merged[['Area', f'{year_a}', f'{year_b}', 'Variance']], use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Historical data missing 'Year' tags. Please re-upload your files and select the year.")
+            else:
+                st.warning("No indicator columns found for this category.")
+        else:
+            st.info("No data available for this category yet. Go to Data Uploader to push your FHSIS files.")
 
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
