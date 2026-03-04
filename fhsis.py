@@ -264,14 +264,30 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 key=f"toggle_view_{safe_filename}"
             )
             
-            # --- FIX: EXCLUDE "TOTAL" COLUMNS FROM DEFAULT LIST BUT KEEP THEM IN THE OPTIONS ---
+            # --- FIX: SMART PARENT/CHILD LOGIC TO HIDE AGGREGATE "TOTAL" COLUMNS BY DEFAULT ---
             default_cols = []
             for c in cols_to_plot:
-                clean_name = c.replace(f"_{gender}", "").lower() # Removes the demographic tag before checking
-                if "total" not in clean_name:
+                clean_lower = c.replace(f"_{gender}", "").strip().lower()
+                c_base = c.replace(f"_{gender}", "").strip()
+                
+                # 1. Hard-exclude specific unwanted sub-categories by default
+                if "(routine)" in clean_lower or "(catch-up)" in clean_lower:
+                    continue
+                    
+                # 2. Check if this column is a "Parent" summary to other more detailed columns
+                is_parent = False
+                for other_c in cols_to_plot:
+                    if other_c != c:
+                        other_base = other_c.replace(f"_{gender}", "").strip()
+                        # If another column starts with this column's name + a space or parenthesis (e.g. OPV 1 -> OPV 1 (0-12 mos))
+                        if other_base.startswith(c_base + " ") or other_base.startswith(c_base + "("):
+                            is_parent = True
+                            break
+                
+                if not is_parent:
                     default_cols.append(c)
             
-            # Fallback just in case everything is named Total
+            # Fallback just in case everything was somehow filtered out
             if not default_cols and len(cols_to_plot) > 0:
                 default_cols = [cols_to_plot[0]]
             
@@ -280,7 +296,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"indicator_picker_{safe_filename}", # NEW KEY: Breaks the internal memory so the default actually applies!
+                    key=f"ms_picker_final_{safe_filename}", # Changed ID to wipe Streamlit's old cache!
                     label_visibility="collapsed"
                 )
 
