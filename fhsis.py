@@ -170,7 +170,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_data(raw_df, start_m, end_m, gender)
         
-        # Identify columns to plot based on the metrics provided
+        # Identify columns to plot
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
@@ -179,20 +179,26 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                     break
         
         if cols_to_plot:
-            # Aggregate data by Area (summing across the selected months)
             agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
-            
-            # Melt dataframe for Plotly format
             melted = agg_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
-            
-            # Clean up legend labels
             melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
             
-            # Create Plotly Graph
+            # --- UPDATED PLOTLY GRAPH WITH DATA LABELS ---
             fig = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
                          title=f"{tab_title} Coverage by RHU ({start_m} - {end_m})",
+                         text_auto=True, # This turns on the data labels!
                          color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen")
+            
+            # Formatting the labels to sit cleanly outside the bars
+            fig.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+            
+            # Adjusting layout to give the labels room at the top
+            fig.update_layout(
+                xaxis_title="Rural Health Unit (RHU)", 
+                yaxis_title="Number of Children", 
+                legend_title="Antigen",
+                margin=dict(t=60) # Gives a little extra breathing room at the top
+            )
             
             st.plotly_chart(fig, use_container_width=True)
         else:
