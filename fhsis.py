@@ -24,7 +24,6 @@ def save_data_to_gsheets(new_data_dict):
         sheet_name = SHEET_MAPPING[app_key]
         if app_key in existing_data and not existing_data[app_key].empty:
             old_df = existing_data[app_key]
-            # Safely check for Year to prevent merging old corrupted data
             if 'Year' in old_df.columns and 'Year' in new_df.columns:
                 upload_years = new_df['Year'].unique()
                 old_df = old_df[~old_df['Year'].isin(upload_years)]
@@ -53,7 +52,7 @@ def load_data_from_gsheets():
 def nuke_cloud_database():
     """Wipes all data from the Google Sheets database to reset testing environments."""
     conn = st.connection("gsheets", type=GSheetsConnection)
-    empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) # Push an empty shell to overwrite
+    empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) 
     for app_key, sheet_name in SHEET_MAPPING.items():
         with st.spinner(f"Nuking {sheet_name}..."):
             conn.update(worksheet=sheet_name, data=empty_df)
@@ -93,15 +92,33 @@ def load_and_clean_fhsis_data(uploaded_file, year):
         else:
             xls = pd.ExcelFile(uploaded_file)
             sheets_to_process = {}
-            valid_months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             
+            valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+            invalid_keywords = ["-", "to", "q", "sem", "annual", "summary", "cons", "ytd"]
+            month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
+                         "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
+            
+            # --- FIX: HYPER-STRICT SHEET FILTERING ---
             for sheet in xls.sheet_names:
-                if any(month.lower() in sheet.lower() for month in valid_months) and "Q" not in sheet and "202" not in sheet:
-                    sheets_to_process[sheet] = pd.read_excel(xls, sheet_name=sheet, header=None)
+                sheet_lower = sheet.lower().strip()
+                
+                # Check how many month names appear in this sheet title
+                months_found = [m for m in valid_months if m in sheet_lower]
+                
+                # It MUST contain exactly ONE month name (to exclude "Jan-Dec" or "Summary")
+                if len(months_found) != 1:
+                    continue
+                    
+                # It MUST NOT contain any words implying a combined range or summary
+                if any(inv in sheet_lower for inv in invalid_keywords):
+                    continue
+                    
+                matched_month = month_map[months_found[0]]
+                sheets_to_process[matched_month] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
         
-        for sheet_name, df in sheets_to_process.items():
+        for month_val, df in sheets_to_process.items():
             area_row_idx = -1
             for idx, row in df.iterrows():
                 if any('Area' in str(val).strip() for val in row.values if pd.notna(val)):
@@ -168,21 +185,6 @@ def load_and_clean_fhsis_data(uploaded_file, year):
             df_clean['Area'] = df_clean['Area_Clean']
             df_clean.drop(columns=['Area_Clean'], inplace=True)
 
-            sheet_lower = sheet_name.lower()
-            if "jan" in sheet_lower: month_val = "Jan"
-            elif "feb" in sheet_lower: month_val = "Feb"
-            elif "mar" in sheet_lower: month_val = "Mar"
-            elif "apr" in sheet_lower: month_val = "Apr"
-            elif "may" in sheet_lower: month_val = "May"
-            elif "jun" in sheet_lower: month_val = "Jun"
-            elif "jul" in sheet_lower: month_val = "Jul"
-            elif "aug" in sheet_lower: month_val = "Aug"
-            elif "sep" in sheet_lower: month_val = "Sep"
-            elif "oct" in sheet_lower: month_val = "Oct"
-            elif "nov" in sheet_lower: month_val = "Nov"
-            elif "dec" in sheet_lower: month_val = "Dec"
-            else: month_val = "Unknown"
-            
             df_clean['Month'] = month_val
             df_clean['Year'] = year
             
@@ -196,7 +198,7 @@ def load_and_clean_fhsis_data(uploaded_file, year):
             all_months_data.append(df_clean)
         
         if not all_months_data:
-            raise ValueError("Could not find properly formatted monthly sheets in the file.")
+            raise ValueError("Could not find properly formatted monthly sheets in the file. Ensure the Excel file contains separate tabs named 'Jan', 'Feb', etc.")
 
         return pd.concat(all_months_data, ignore_index=True)
 
@@ -281,7 +283,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                             cols_to_plot.append(col)
         
         if cols_to_plot:
-            # Reverted back to strict Summation since we confirmed the data is Discrete!
             agg_dict = {col: 'sum' for col in cols_to_plot}
             for ec in elig_cols:
                 agg_dict[ec] = 'max' 
@@ -550,7 +551,6 @@ if page == "📊 Dashboard":
             p3_col = next((c for c in penta_df.columns if (" 3" in c or "3_" in c) and "%" not in c), None)
             
             if fic_col and elig_col:
-                # Reverted Executive Summary back to clean SUM logic
                 prov_fic = mmr_df[fic_col].sum()
                 prov_cic = mmr_df[cic_col].sum() if cic_col else 0
                 p1_tot = penta_df[p1_col].sum() if p1_col else 0
@@ -805,7 +805,6 @@ elif page == "📁 Data Uploader":
             st.warning("Current app data cleared. (Note: This does not delete the permanent data inside Google Sheets).")
             st.rerun()
 
-    # --- NEW: THE NUKE BUTTON ---
     st.markdown("---")
     with st.expander("⚠️ Database Management (Danger Zone)"):
         st.warning("Clicking this button will instantly delete all historical data inside your connected Google Sheet. Only use this to clear out old test data or fix a corrupted database.")
