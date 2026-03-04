@@ -299,44 +299,45 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
 
                 st.markdown("---")
                 
-                # --- NEW: RHU BREAKDOWN & TOP 5 LEADERBOARD ---
-                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown & Top 5")
+                # --- RHU BREAKDOWN CHART (Full Width) ---
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
                 
-                rhu_col1, rhu_col2 = st.columns([7, 3]) # 70% left, 30% right
+                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
+                melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 
-                with rhu_col1:
-                    melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
-                    melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
-                    
-                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
-                                 title=f"All RHUs ({start_m} - {end_m})",
-                                 text_auto=True,
-                                 color_discrete_sequence=px.colors.qualitative.Pastel)
-                    
-                    if view_mode == "Percentage (%) Coverage" and elig_cols:
-                        fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
-                        
-                    fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-                    fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
-                    st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
+                             title=f"RHU Breakdown ({start_m} - {end_m})",
+                             text_auto=True,
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
                 
-                with rhu_col2:
-                    # Calculate the Top 5 by taking the average of all selected columns for each RHU
-                    top5_df = chart_df.copy()
-                    top5_df['Rank_Metric'] = top5_df[selected_cols].mean(axis=1)
-                    # Sort ascending so the best RHU appears at the top of the horizontal bar chart
-                    top5_df = top5_df.sort_values(by='Rank_Metric', ascending=True).tail(5)
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                     
-                    fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h',
-                                      title="🏆 Top 5 Performing RHUs (Avg)",
-                                      text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True,
-                                      color='Rank_Metric',
-                                      color_continuous_scale="Greens")
-                    
-                    fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="", showlegend=False, margin=dict(t=60, l=0, r=0))
-                    st.plotly_chart(fig_top5, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
+                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
                 
                 st.markdown("---")
+                
+                # --- TOP 5 LEADERBOARD CHART (Full Width, directly below RHU Breakdown) ---
+                st.markdown(f"#### 🏆 Top 5 Performing RHUs (Average)")
+                
+                top5_df = chart_df.copy()
+                top5_df['Rank_Metric'] = top5_df[selected_cols].mean(axis=1)
+                top5_df = top5_df.sort_values(by='Rank_Metric', ascending=True).tail(5)
+                
+                fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h',
+                                  title=f"Top 5 RHUs ({start_m} - {end_m})",
+                                  text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True,
+                                  color='Rank_Metric',
+                                  color_continuous_scale="Greens")
+                
+                fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
+                st.plotly_chart(fig_top5, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
+                
+                st.markdown("---")
+                
+                # --- MONTHLY TREND LINE CHART ---
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
                 
                 trend_agg = filtered_df.groupby('Month')[selected_cols].sum().reset_index()
@@ -372,6 +373,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             else:
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
             
+            # --- DROPOUT RATE ANALYTICS ---
             dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
             dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and "MMR" in c), None))
 
