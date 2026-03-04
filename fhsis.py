@@ -191,7 +191,8 @@ with st.sidebar:
     
     if page in ["📊 Dashboard", "📈 YoY Comparison"]:
         st.subheader("Global Filters")
-        selected_year = st.selectbox("Select Year", options=[2025, 2026, 2027])
+        # --- NEW: Expanded years list ---
+        selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
 # --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
@@ -490,9 +491,11 @@ elif page == "📈 YoY Comparison":
     with col_y1:
         yoy_dataset = st.selectbox("Select Vaccine Category", ["Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC"])
     with col_y2:
-        year_a = st.selectbox("Baseline Year (Year A)", [2025, 2026, 2027], index=0)
+        # --- NEW: Expanded years list ---
+        year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2) # Default 2023
     with col_y3:
-        year_b = st.selectbox("Comparison Year (Year B)", [2025, 2026, 2027], index=1)
+        # --- NEW: Expanded years list ---
+        year_b = st.selectbox("Comparison Year (Year B)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=3) # Default 2024
 
     dataset_keys = {
         "Birth Doses": ("CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"]),
@@ -566,7 +569,8 @@ elif page == "📁 Data Uploader":
         
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     
-    upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2025, 2026, 2027])
+    # --- NEW: Expanded years list ---
+    upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
     
     col1, col2 = st.columns(2)
     with col1:
