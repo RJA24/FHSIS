@@ -219,15 +219,24 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         for base in base_metrics:
             for col in filtered_df.columns:
                 if base in col and col.endswith(f"_{gender}"):
-                    if col not in cols_to_plot:  # Prevents duplicates, but allows finding MULTIPLE matches!
+                    if col not in cols_to_plot:  
                         cols_to_plot.append(col)
         
         if cols_to_plot:
+            # Aggregate ALL columns first so background math doesn't break
             agg_dict = {col: 'sum' for col in cols_to_plot}
             for ec in elig_cols:
                 agg_dict[ec] = 'max' 
                 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            
+            # --- NEW: INTERACTIVE MULTISELECT FOR INDICATORS ---
+            selected_cols = st.multiselect(
+                "🎯 Select Indicators to Display",
+                options=cols_to_plot,
+                default=cols_to_plot,
+                key=f"ms_{safe_filename}"
+            )
             
             view_mode = st.radio(
                 "📊 Select Display Metric", 
@@ -235,78 +244,83 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                 horizontal=True, 
                 key=f"toggle_{safe_filename}"
             )
-            
-            provincial_antigens = {col: agg_df[col].sum() for col in cols_to_plot}
-            provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
-            
-            st.markdown("#### 🏆 Province-Wide Summary")
-            kpi_cols = st.columns(len(cols_to_plot))
-            
-            for i, col in enumerate(cols_to_plot):
-                total_val = provincial_antigens[col]
-                clean_name = col.replace(f"_{gender}", "")
+
+            if selected_cols:
+                provincial_antigens = {col: agg_df[col].sum() for col in selected_cols}
+                provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
+                
+                st.markdown("#### 🏆 Province-Wide Summary")
+                # Create dynamic columns based on selection
+                kpi_cols = st.columns(len(selected_cols))
+                
+                for i, col in enumerate(selected_cols):
+                    total_val = provincial_antigens[col]
+                    clean_name = col.replace(f"_{gender}", "")
+                    
+                    if view_mode == "Percentage (%) Coverage" and elig_cols:
+                        perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
+                        with kpi_cols[i]:
+                            st.metric(label=f"{clean_name} Target Achieved", value=f"{perc:.1f}%")
+                    else:
+                        with kpi_cols[i]:
+                            st.metric(label=f"Total {clean_name}", value=f"{int(total_val):,}")
+                
+                st.markdown("---")
+                
+                chart_df = agg_df[['Area'] + selected_cols + elig_cols].copy()
+                abra_total_df = pd.DataFrame()
+                abra_total_df['Vaccine/Antigen'] = selected_cols
                 
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
-                    perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
-                    with kpi_cols[i]:
-                        st.metric(label=f"{clean_name} Target Achieved", value=f"{perc:.1f}%")
+                    main_elig_col = elig_cols[0]
+                    for col in selected_cols:
+                        chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
+                        chart_df[col] = chart_df[col].round(1)
+                    
+                    prov_counts = [provincial_antigens[c] for c in selected_cols]
+                    abra_total_df['Count'] = [(c / provincial_elig * 100) if provincial_elig > 0 else 0 for c in prov_counts]
+                    abra_total_df['Count'] = abra_total_df['Count'].round(1)
+                    y_axis_label = "Coverage (%)"
                 else:
-                    with kpi_cols[i]:
-                        st.metric(label=f"Total {clean_name}", value=f"{int(total_val):,}")
-            
-            st.markdown("---")
-            
-            chart_df = agg_df.copy()
-            abra_total_df = pd.DataFrame()
-            abra_total_df['Vaccine/Antigen'] = cols_to_plot
-            
-            if view_mode == "Percentage (%) Coverage" and elig_cols:
-                main_elig_col = elig_cols[0]
-                for col in cols_to_plot:
-                    chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
-                    chart_df[col] = chart_df[col].round(1)
+                    abra_total_df['Count'] = [provincial_antigens[c] for c in selected_cols]
+                    y_axis_label = "Number of Children"
+
+                st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
+                abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 
-                prov_counts = [provincial_antigens[c] for c in cols_to_plot]
-                abra_total_df['Count'] = [(c / provincial_elig * 100) if provincial_elig > 0 else 0 for c in prov_counts]
-                abra_total_df['Count'] = abra_total_df['Count'].round(1)
-                y_axis_label = "Coverage (%)"
+                fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen',
+                                  title=f"Abra Province Total ({start_m} - {end_m})",
+                                  text_auto=True,
+                                  color_discrete_sequence=px.colors.qualitative.Pastel)
+                
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    fig_abra.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                    
+                fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
+                st.plotly_chart(fig_abra, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'scale': 4}})
+
+                st.markdown("---")
+                
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
+                melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+                
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
+                             title=f"RHU Breakdown ({start_m} - {end_m})",
+                             text_auto=True,
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                    
+                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
             else:
-                abra_total_df['Count'] = [provincial_antigens[c] for c in cols_to_plot]
-                y_axis_label = "Number of Children"
-
-            st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
-            abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
             
-            fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen',
-                              title=f"Abra Province Total ({start_m} - {end_m})",
-                              text_auto=True,
-                              color_discrete_sequence=px.colors.qualitative.Pastel)
-            
-            if view_mode == "Percentage (%) Coverage" and elig_cols:
-                fig_abra.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
-                
-            fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
-            fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
-            st.plotly_chart(fig_abra, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'scale': 4}})
-
-            st.markdown("---")
-            
-            st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-            melted = chart_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
-            melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
-            
-            fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
-                         title=f"RHU Breakdown ({start_m} - {end_m})",
-                         text_auto=True,
-                         color_discrete_sequence=px.colors.qualitative.Pastel)
-            
-            if view_mode == "Percentage (%) Coverage" and elig_cols:
-                fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
-                
-            fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
-            st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
-            
+            # --- DROPOUT RATE ANALYTICS (Always calculated based on full available columns so it doesn't break) ---
             dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
             dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and "MMR" in c), None))
 
@@ -366,7 +380,6 @@ if page == "📊 Dashboard":
         render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter)
 
     with tab5:
-        # ADDED "13-23" just in case the template names don't use standard spacing!
         render_tab_content("MMR, FIC and CIC", "MMR", ["MMR 1", "MMR 2", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter)
 
 # --- DATA UPLOADER PAGE ---
