@@ -631,7 +631,7 @@ if page == "📊 Dashboard":
                 rhu_sorted = rhu_fic.sort_values(by='Coverage', ascending=False)
                 
                 with col_lead1:
-                    st.markdown("#### 🌟 Top 3 RHUs (FIC)")
+                    st.markdown("#### 🌟 Top 3 RHUs (FIC) - Under debugging")
                     top3 = rhu_sorted.head(3)
                     fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
                     fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
