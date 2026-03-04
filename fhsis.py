@@ -194,11 +194,9 @@ def filter_data(df, start_month, end_month, gender):
     
     cols_to_keep = ['Area', 'Month']
     for col in filtered_df.columns:
-        # UPDATED: Now we also keep columns that contain "elig" or "pop" so we have our targets!
         if col.endswith(f"_{gender}") or col in ['Interpretation', 'Recommendation/Actions Taken'] or "%" in col or "elig" in col.lower() or "pop" in col.lower():
             cols_to_keep.append(col)
             
-    # Remove duplicates just in case
     cols_to_keep = list(dict.fromkeys(cols_to_keep))
     
     if len(cols_to_keep) > 2:
@@ -215,8 +213,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         filtered_df = filter_data(raw_df, start_m, end_m, gender)
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
-        
-        # Identify the Eligible Population Column
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
         
         cols_to_plot = []
@@ -227,15 +223,12 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                     break
         
         if cols_to_plot:
-            # --- AGGREGATION LOGIC ---
-            # Sum the vaccines, but take the MAX of the eligible population (since it's an annual static number)
             agg_dict = {col: 'sum' for col in cols_to_plot}
             for ec in elig_cols:
                 agg_dict[ec] = 'max' 
                 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            # --- UI TOGGLE ---
             view_mode = st.radio(
                 "📊 Select Display Metric", 
                 ["Raw Counts", "Percentage (%) Coverage"], 
@@ -243,11 +236,9 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                 key=f"toggle_{safe_filename}"
             )
             
-            # Calculate Provincial totals manually so percentages don't get skewed
             provincial_antigens = {col: agg_df[col].sum() for col in cols_to_plot}
             provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
             
-            # --- KPI SCORECARDS ---
             st.markdown("#### 🏆 Province-Wide Summary")
             kpi_cols = st.columns(len(cols_to_plot))
             
@@ -265,19 +256,16 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             
             st.markdown("---")
             
-            # --- PREPARE DATA FOR CHARTS ---
             chart_df = agg_df.copy()
             abra_total_df = pd.DataFrame()
             abra_total_df['Vaccine/Antigen'] = cols_to_plot
             
             if view_mode == "Percentage (%) Coverage" and elig_cols:
                 main_elig_col = elig_cols[0]
-                # Convert RHU dataframe to percentages
                 for col in cols_to_plot:
                     chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
                     chart_df[col] = chart_df[col].round(1)
                 
-                # Convert Provincial dataframe to percentages
                 prov_counts = [provincial_antigens[c] for c in cols_to_plot]
                 abra_total_df['Count'] = [(c / provincial_elig * 100) if provincial_elig > 0 else 0 for c in prov_counts]
                 abra_total_df['Count'] = abra_total_df['Count'].round(1)
@@ -285,10 +273,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             else:
                 abra_total_df['Count'] = [provincial_antigens[c] for c in cols_to_plot]
                 y_axis_label = "Number of Children"
-                if view_mode == "Percentage (%) Coverage" and not elig_cols:
-                    st.warning("⚠️ Could not locate the 'Eligible Population' data to calculate percentages. Showing Raw Counts instead.")
 
-            # --- 1. PROVINCE TOTAL CHART ---
             st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
             abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
             
@@ -297,15 +282,16 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                               text_auto=True,
                               color_discrete_sequence=px.colors.qualitative.Pastel)
             
+            # --- NEW: ADD DOH TARGET LINE ---
+            if view_mode == "Percentage (%) Coverage" and elig_cols:
+                fig_abra.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                
             fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
             fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
-            
-            config_abra = {'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'height': 600, 'width': 1000, 'scale': 4}}
-            st.plotly_chart(fig_abra, use_container_width=True, config=config_abra)
+            st.plotly_chart(fig_abra, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'scale': 4}})
 
             st.markdown("---")
             
-            # --- 2. RHU BREAKDOWN CHART ---
             st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
             melted = chart_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
             melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
@@ -315,11 +301,35 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                          text_auto=True,
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             
+            # --- NEW: ADD DOH TARGET LINE ---
+            if view_mode == "Percentage (%) Coverage" and elig_cols:
+                fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                
             fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
+            st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
             
-            config_rhu = {'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'height': 600, 'width': 1200, 'scale': 4}}
-            st.plotly_chart(fig_rhu, use_container_width=True, config=config_rhu)
+            # --- NEW: DROPOUT RATE ANALYTICS ---
+            dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
+            dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and "MMR" in c), None))
+
+            if dose_1_col and dose_last_col and tab_title != "Birth Doses":
+                st.markdown("---")
+                st.markdown(f"#### 📉 Dropout Analysis ({dose_1_col.replace(f'_{gender}', '')} to {dose_last_col.replace(f'_{gender}', '')})")
+                
+                drop_df = agg_df[['Area', dose_1_col, dose_last_col]].copy()
+                drop_df['Dropout Rate (%)'] = np.where(drop_df[dose_1_col] > 0, ((drop_df[dose_1_col] - drop_df[dose_last_col]) / drop_df[dose_1_col]) * 100, 0)
+                drop_df['Dropout Rate (%)'] = drop_df['Dropout Rate (%)'].round(1)
+                
+                fig_drop = px.bar(drop_df, x='Area', y='Dropout Rate (%)',
+                                  text_auto=True, color='Dropout Rate (%)',
+                                  color_continuous_scale=["lightgreen", "yellow", "red"],
+                                  title="Highlighting RHUs with high dropout rates from first to final dose.")
+                
+                fig_drop.add_hline(y=10, line_dash="dash", line_color="red", annotation_text="Warning Threshold (10%)")
+                fig_drop.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Dropout Rate (%)", margin=dict(t=40))
+                
+                st.plotly_chart(fig_drop, use_container_width=True, config={'toImageButtonOptions': {'filename': f'Abra_Dropout_{safe_filename}', 'scale': 4}})
             
         else:
             st.warning("Could not find graphing columns for the selected demographic.")
@@ -338,12 +348,13 @@ if page == "📊 Dashboard":
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_month, end_month = st.select_slider("Select Month Range", options=months, value=("Jan", "Dec"))
     
+    # --- ADDED CIC TO TAB 5 TITLE ---
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "👶 Birth Doses (BCG/HepB)", 
         "🛡️ Penta (DPT-HiB-HepB)", 
         "💧 Polio (OPV/IPV)", 
         "🫁 Pneumococcal (PCV)", 
-        "🎯 MMR & FIC"
+        "🎯 MMR, FIC & CIC"
     ])
     
     with tab1:
@@ -359,7 +370,8 @@ if page == "📊 Dashboard":
         render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter)
 
     with tab5:
-        render_tab_content("MMR and FIC", "MMR", ["MMR 1", "MMR 2", "FIC"], start_month, end_month, gender_filter)
+        # --- ADDED CIC TO METRICS ARRAY ---
+        render_tab_content("MMR, FIC and CIC", "MMR", ["MMR 1", "MMR 2", "FIC", "CIC"], start_month, end_month, gender_filter)
 
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
