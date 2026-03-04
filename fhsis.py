@@ -24,6 +24,7 @@ def save_data_to_gsheets(new_data_dict):
         sheet_name = SHEET_MAPPING[app_key]
         if app_key in existing_data and not existing_data[app_key].empty:
             old_df = existing_data[app_key]
+            # Safely check for Year to prevent merging old corrupted data
             if 'Year' in old_df.columns and 'Year' in new_df.columns:
                 upload_years = new_df['Year'].unique()
                 old_df = old_df[~old_df['Year'].isin(upload_years)]
@@ -48,6 +49,15 @@ def load_data_from_gsheets():
     except Exception as e:
         st.error("Google Sheets connection not fully configured yet. Please check your secrets.toml file.")
     return loaded_data
+
+def nuke_cloud_database():
+    """Wipes all data from the Google Sheets database to reset testing environments."""
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) # Push an empty shell to overwrite
+    for app_key, sheet_name in SHEET_MAPPING.items():
+        with st.spinner(f"Nuking {sheet_name}..."):
+            conn.update(worksheet=sheet_name, data=empty_df)
+    st.session_state['fhsis_data'] = {}
 
 def clear_session_data():
     st.session_state['fhsis_data'] = {}
@@ -204,8 +214,6 @@ with st.sidebar:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
-        # --- NEW: CUMULATIVE VS DISCRETE MASTER SWITCH ---
-        data_format = st.selectbox("Excel Data Format", ["Discrete (Monthly)", "Cumulative (Year-to-Date)"], index=1)
 
 # --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
 if 'fhsis_data' not in st.session_state:
@@ -273,9 +281,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                             cols_to_plot.append(col)
         
         if cols_to_plot:
-            # --- FIX: DYNAMIC AGGREGATION BASED ON DATA FORMAT ---
-            agg_func = 'max' if data_format == "Cumulative (Year-to-Date)" else 'sum'
-            agg_dict = {col: agg_func for col in cols_to_plot}
+            # Reverted back to strict Summation since we confirmed the data is Discrete!
+            agg_dict = {col: 'sum' for col in cols_to_plot}
             for ec in elig_cols:
                 agg_dict[ec] = 'max' 
                 
@@ -311,7 +318,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_picker_v2_{safe_filename}_{year}", 
+                    key=f"ms_picker_v3_{safe_filename}_{year}", 
                     label_visibility="collapsed"
                 )
 
@@ -431,7 +438,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
                 
-                # --- NOTE: Trend Chart always sums across areas for the specific month ---
                 trend_agg = filtered_df.groupby('Month')[selected_cols].sum().reset_index()
                 months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                 trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
@@ -544,22 +550,13 @@ if page == "📊 Dashboard":
             p3_col = next((c for c in penta_df.columns if (" 3" in c or "3_" in c) and "%" not in c), None)
             
             if fic_col and elig_col:
-                # --- FIX: DYNAMIC EXECUTIVE MATH ---
-                if data_format == "Cumulative (Year-to-Date)":
-                    prov_fic = mmr_df.groupby('Area')[fic_col].max().sum()
-                    prov_cic = mmr_df.groupby('Area')[cic_col].max().sum() if cic_col else 0
-                    p1_tot = penta_df.groupby('Area')[p1_col].max().sum() if p1_col else 0
-                    p3_tot = penta_df.groupby('Area')[p3_col].max().sum() if p3_col else 0
-                    
-                    rhu_fic = mmr_df.groupby('Area').agg({fic_col: 'max', elig_col: 'max'}).reset_index()
-                else:
-                    prov_fic = mmr_df[fic_col].sum()
-                    prov_cic = mmr_df[cic_col].sum() if cic_col else 0
-                    p1_tot = penta_df[p1_col].sum() if p1_col else 0
-                    p3_tot = penta_df[p3_col].sum() if p3_col else 0
-                    
-                    rhu_fic = mmr_df.groupby('Area').agg({fic_col: 'sum', elig_col: 'max'}).reset_index()
-
+                # Reverted Executive Summary back to clean SUM logic
+                prov_fic = mmr_df[fic_col].sum()
+                prov_cic = mmr_df[cic_col].sum() if cic_col else 0
+                p1_tot = penta_df[p1_col].sum() if p1_col else 0
+                p3_tot = penta_df[p3_col].sum() if p3_col else 0
+                
+                rhu_fic = mmr_df.groupby('Area').agg({fic_col: 'sum', elig_col: 'max'}).reset_index()
                 prov_elig = mmr_df.groupby('Area')[elig_col].max().sum() 
                 
                 curr_cov = (prov_fic / prov_elig * 100) if prov_elig > 0 else 0
@@ -716,13 +713,8 @@ elif page == "📈 YoY Comparison":
                     df_a = raw_df[raw_df['Year'] == year_a]
                     df_b = raw_df[raw_df['Year'] == year_b]
                     
-                    # --- FIX: DYNAMIC YOY MATH ---
-                    if data_format == "Cumulative (Year-to-Date)":
-                        agg_a = df_a.groupby('Area')[compare_col].max().reset_index().rename(columns={compare_col: f'{year_a}'})
-                        agg_b = df_b.groupby('Area')[compare_col].max().reset_index().rename(columns={compare_col: f'{year_b}'})
-                    else:
-                        agg_a = df_a.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_a}'})
-                        agg_b = df_b.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_b}'})
+                    agg_a = df_a.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_a}'})
+                    agg_b = df_b.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_b}'})
 
                     merged = pd.merge(pd.DataFrame({'Area': ABRA_RHUS}), agg_a, on='Area', how='left').fillna(0)
                     merged = pd.merge(merged, agg_b, on='Area', how='left').fillna(0)
@@ -811,4 +803,13 @@ elif page == "📁 Data Uploader":
         if st.button("🗑️ Clear Current Uploads", type="secondary", use_container_width=True):
             clear_session_data()
             st.warning("Current app data cleared. (Note: This does not delete the permanent data inside Google Sheets).")
+            st.rerun()
+
+    # --- NEW: THE NUKE BUTTON ---
+    st.markdown("---")
+    with st.expander("⚠️ Database Management (Danger Zone)"):
+        st.warning("Clicking this button will instantly delete all historical data inside your connected Google Sheet. Only use this to clear out old test data or fix a corrupted database.")
+        if st.button("🚨 Nuke Cloud Database", type="primary"):
+            nuke_cloud_database()
+            st.success("✅ Database completely wiped clean! Please re-upload your files.")
             st.rerun()
