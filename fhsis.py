@@ -52,7 +52,7 @@ ABRA_RHUS = [
 
 # --- DATA CLEANING FUNCTION ---
 @st.cache_data
-def load_and_clean_fhsis_data(uploaded_file):
+def load_and_clean_fhsis_data(uploaded_file, year):
     try:
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
@@ -151,9 +151,10 @@ def load_and_clean_fhsis_data(uploaded_file):
             else: month_val = "Unknown"
             
             df_clean['Month'] = month_val
+            df_clean['Year'] = year # --- NEW: Tags data with selected year ---
             
             for col in df_clean.columns:
-                if col not in ['Area', 'Month', 'Interpretation', 'Recommendation/Actions Taken']:
+                if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
                     if isinstance(df_clean[col], pd.DataFrame):
                         df_clean[col] = pd.to_numeric(df_clean[col].iloc[:, 0], errors='coerce').fillna(0)
                     else:
@@ -178,6 +179,7 @@ with st.sidebar:
     
     if page == "📊 Dashboard":
         st.subheader("Global Filters")
+        selected_year = st.selectbox("Select Year", options=[2025, 2026, 2027]) # NEW YEAR FILTER
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
 # --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
@@ -185,13 +187,17 @@ if 'fhsis_data' not in st.session_state:
     st.session_state['fhsis_data'] = load_data_from_gsheets()
 
 # --- HELPER FUNCTIONS ---
-def filter_data(df, start_month, end_month, gender):
+def filter_data(df, start_month, end_month, gender, year):
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
     end_idx = months_order.index(end_month)
     valid_months = months_order[start_idx:end_idx+1]
-    filtered_df = df[df['Month'].isin(valid_months)]
     
+    # Filter by Month and Year
+    filtered_df = df[df['Month'].isin(valid_months)]
+    if 'Year' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Year'] == year]
+        
     cols_to_keep = ['Area', 'Month']
     for col in filtered_df.columns:
         if col.endswith(f"_{gender}") or col in ['Interpretation', 'Recommendation/Actions Taken'] or "%" in col or "elig" in col.lower() or "pop" in col.lower():
@@ -207,10 +213,10 @@ def filter_data(df, start_month, end_month, gender):
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
-def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
+def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        filtered_df = filter_data(raw_df, start_m, end_m, gender)
+        filtered_df = filter_data(raw_df, start_m, end_m, gender, year)
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
@@ -299,14 +305,13 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
 
                 st.markdown("---")
                 
-                # --- RHU BREAKDOWN CHART (Full Width) ---
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
                 
                 melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
                 melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
-                             title=f"RHU Breakdown ({start_m} - {end_m})",
+                             title=f"All RHUs ({start_m} - {end_m})",
                              text_auto=True,
                              color_discrete_sequence=px.colors.qualitative.Pastel)
                 
@@ -319,7 +324,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                 
                 st.markdown("---")
                 
-                # --- TOP 5 LEADERBOARD CHART (Full Width, directly below RHU Breakdown) ---
                 st.markdown(f"#### 🏆 Top 5 Performing RHUs (Average)")
                 
                 top5_df = chart_df.copy()
@@ -336,8 +340,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                 st.plotly_chart(fig_top5, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
                 
                 st.markdown("---")
-                
-                # --- MONTHLY TREND LINE CHART ---
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
                 
                 trend_agg = filtered_df.groupby('Month')[selected_cols].sum().reset_index()
@@ -361,7 +363,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                 trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 
                 fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True,
-                                    title=f"Provincial Monthly Trend ({start_m} - {end_m})",
+                                    title=f"Provincial Trend ({start_m} - {end_m})",
                                     color_discrete_sequence=px.colors.qualitative.Pastel)
                 
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
@@ -373,7 +375,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             else:
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
             
-            # --- DROPOUT RATE ANALYTICS ---
             dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
             dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and "MMR" in c), None))
 
@@ -409,8 +410,20 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
 if page == "📊 Dashboard":
     st.title("💉 Child Immunization Dashboard - Abra Province")
     
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    start_month, end_month = st.select_slider("Select Month Range", options=months, value=("Jan", "Dec"))
+    # --- NEW: TIME AGGREGATION TOGGLE ---
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        time_view = st.radio("⏳ Time Aggregation", ["Monthly", "Quarterly"], horizontal=True)
+    with col_t2:
+        if time_view == "Monthly":
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"))
+        else:
+            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"))
+            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
+            start_month = q_map[start_q][0]
+            end_month = q_map[end_q][1]
     
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "👶 Birth Doses (BCG/HepB)", 
@@ -421,25 +434,24 @@ if page == "📊 Dashboard":
     ])
     
     with tab1:
-        render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"], start_month, end_month, gender_filter)
+        render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"], start_month, end_month, gender_filter, selected_year)
 
     with tab2:
-        render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3", "Penta 1", "Penta 2", "Penta 3"], start_month, end_month, gender_filter)
+        render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3", "Penta 1", "Penta 2", "Penta 3"], start_month, end_month, gender_filter, selected_year)
 
     with tab3:
-        render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter)
+        render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter, selected_year)
 
     with tab4:
-        render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter)
+        render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter, selected_year)
 
     with tab5:
-        render_tab_content("MMR, FIC and CIC", "MMR", ["MMR 1", "MMR 2", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter)
+        render_tab_content("MMR, FIC and CIC", "MMR", ["MMR 1", "MMR 2", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year)
 
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
     
-    # --- ADMIN SECURITY GATE ---
     admin_password = st.text_input("Enter Admin Password", type="password")
     if admin_password != st.secrets.get("admin_password", "AbraAdmin2026"):
         st.warning("🔒 This section is restricted. Please enter the password to unlock the uploader.")
@@ -447,32 +459,35 @@ elif page == "📁 Data Uploader":
         
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     
+    # --- NEW: YEAR TAGGER ---
+    upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2025, 2026, 2027])
+    
     col1, col2 = st.columns(2)
     with col1:
         file_cpab = st.file_uploader("Upload: 1 CPAB, BCG and Hepa B", type=["csv", "xlsx"])
         if file_cpab:
-            df = load_and_clean_fhsis_data(file_cpab)
+            df = load_and_clean_fhsis_data(file_cpab, upload_year)
             if df is not None: st.session_state['fhsis_data']["CPAB_BCG_HepB"] = df
             
         file_penta = st.file_uploader("Upload: 2 DPT-HiB-HepB", type=["csv", "xlsx"])
         if file_penta:
-            df = load_and_clean_fhsis_data(file_penta)
+            df = load_and_clean_fhsis_data(file_penta, upload_year)
             if df is not None: st.session_state['fhsis_data']["Penta"] = df
             
         file_polio = st.file_uploader("Upload: 3 OPV and IPV", type=["csv", "xlsx"])
         if file_polio:
-            df = load_and_clean_fhsis_data(file_polio)
+            df = load_and_clean_fhsis_data(file_polio, upload_year)
             if df is not None: st.session_state['fhsis_data']["Polio"] = df
             
     with col2:
         file_pcv = st.file_uploader("Upload: 4 PCV", type=["csv", "xlsx"])
         if file_pcv:
-            df = load_and_clean_fhsis_data(file_pcv)
+            df = load_and_clean_fhsis_data(file_pcv, upload_year)
             if df is not None: st.session_state['fhsis_data']["PCV"] = df
             
         file_mmr = st.file_uploader("Upload: 5 MMR, FIC and CIC", type=["csv", "xlsx"])
         if file_mmr:
-            df = load_and_clean_fhsis_data(file_mmr)
+            df = load_and_clean_fhsis_data(file_mmr, upload_year)
             if df is not None: st.session_state['fhsis_data']["MMR"] = df
             
     st.markdown("---")
@@ -482,7 +497,7 @@ elif page == "📁 Data Uploader":
         if st.button("☁️ Save Data to Google Sheets", type="primary", use_container_width=True):
             if st.session_state['fhsis_data']:
                 save_data_to_gsheets(st.session_state['fhsis_data'])
-                st.success("✅ Files processed and safely saved to Google Sheets! Head over to the Dashboard.")
+                st.success(f"✅ {upload_year} Files processed and safely saved to Google Sheets! Head over to the Dashboard.")
             else:
                 st.error("No data uploaded yet to save.")
                 
