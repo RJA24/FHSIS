@@ -219,8 +219,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         for base in base_metrics:
             for col in filtered_df.columns:
                 if base in col and col.endswith(f"_{gender}"):
-                    cols_to_plot.append(col)
-                    break
+                    if col not in cols_to_plot:  # Prevents duplicates, but allows finding MULTIPLE matches!
+                        cols_to_plot.append(col)
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
@@ -282,7 +282,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                               text_auto=True,
                               color_discrete_sequence=px.colors.qualitative.Pastel)
             
-            # --- NEW: ADD DOH TARGET LINE ---
             if view_mode == "Percentage (%) Coverage" and elig_cols:
                 fig_abra.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                 
@@ -301,7 +300,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                          text_auto=True,
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             
-            # --- NEW: ADD DOH TARGET LINE ---
             if view_mode == "Percentage (%) Coverage" and elig_cols:
                 fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                 
@@ -309,7 +307,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
             st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
             
-            # --- NEW: DROPOUT RATE ANALYTICS ---
             dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
             dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and "MMR" in c), None))
 
@@ -348,7 +345,6 @@ if page == "📊 Dashboard":
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_month, end_month = st.select_slider("Select Month Range", options=months, value=("Jan", "Dec"))
     
-    # --- ADDED CIC TO TAB 5 TITLE ---
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "👶 Birth Doses (BCG/HepB)", 
         "🛡️ Penta (DPT-HiB-HepB)", 
@@ -370,8 +366,8 @@ if page == "📊 Dashboard":
         render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter)
 
     with tab5:
-        # --- ADDED CIC TO METRICS ARRAY ---
-        render_tab_content("MMR, FIC and CIC", "MMR", ["MMR 1", "MMR 2", "FIC", "CIC"], start_month, end_month, gender_filter)
+        # ADDED "13-23" just in case the template names don't use standard spacing!
+        render_tab_content("MMR, FIC and CIC", "MMR", ["MMR 1", "MMR 2", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter)
 
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
