@@ -266,7 +266,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
         for base in base_metrics:
             for col in filtered_df.columns:
                 if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
-                    # --- FIX: EXPLICITLY REJECT ANY COLUMN WITH A PERCENTAGE SIGN ---
                     if "%" not in col:
                         if col not in cols_to_plot:  
                             cols_to_plot.append(col)
@@ -287,12 +286,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
             
             default_cols = []
             for c in cols_to_plot:
-                clean_lower = c.replace(f"_{gender}", "").strip().lower()
                 c_base = c.replace(f"_{gender}", "").strip()
                 
-                if "(routine)" in clean_lower or "(catch-up)" in clean_lower:
-                    continue
-                    
                 is_parent = False
                 for other_c in cols_to_plot:
                     if other_c != c:
@@ -312,7 +307,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_picker_no_percent_{safe_filename}_{year}",
+                    key=f"ms_picker_v2_{safe_filename}_{year}", # Updated key to force refresh
                     label_visibility="collapsed"
                 )
 
