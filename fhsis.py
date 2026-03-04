@@ -315,7 +315,7 @@ elif page == "📁 Data Uploader":
     
     # --- ADMIN SECURITY GATE ---
     admin_password = st.text_input("Enter Admin Password", type="password")
-    if admin_password != st.secrets.get("admin_password", "AbraAdmin2026"):
+    if admin_password != st.secrets.get("admin_password", "rjca@1204-AbraFHSIS"):
         st.warning("🔒 This section is restricted. Please enter the password to unlock the uploader.")
         st.stop() # This halts the script here, keeping the layout exactly as you wanted but hiding the uploader!
         
