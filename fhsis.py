@@ -170,7 +170,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_data(raw_df, start_m, end_m, gender)
         
-        # Identify columns to plot
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
@@ -183,24 +182,33 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             melted = agg_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
             melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
             
-            # --- UPDATED PLOTLY GRAPH WITH DATA LABELS ---
             fig = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
                          title=f"{tab_title} Coverage by RHU ({start_m} - {end_m})",
-                         text_auto=True, # This turns on the data labels!
+                         text_auto=True,
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             
-            # Formatting the labels to sit cleanly outside the bars
             fig.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             
-            # Adjusting layout to give the labels room at the top
             fig.update_layout(
                 xaxis_title="Rural Health Unit (RHU)", 
                 yaxis_title="Number of Children", 
                 legend_title="Antigen",
-                margin=dict(t=60) # Gives a little extra breathing room at the top
+                margin=dict(t=60)
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            # --- HIGH RESOLUTION EXPORT CONFIG ---
+            safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+            config = {
+                'toImageButtonOptions': {
+                    'format': 'png', 
+                    'filename': f'Abra_FHSIS_{safe_filename}',
+                    'height': 600,
+                    'width': 1200,
+                    'scale': 4 # Multiplies the resolution by 4x for high-quality export
+                }
+            }
+            
+            st.plotly_chart(fig, use_container_width=True, config=config)
         else:
             st.warning("Could not find graphing columns for the selected demographic.")
             
@@ -242,7 +250,7 @@ if page == "📊 Dashboard":
 
     with tab5:
         st.header("Measles, FIC, and CIC")
-        render_tab_content("MMR & Fully Immunized Children", "MMR", ["MMR 1", "MMR 2", "FIC"], start_month, end_month, gender_filter)
+        render_tab_content("MMR and FIC", "MMR", ["MMR 1", "MMR 2", "FIC"], start_month, end_month, gender_filter)
 
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
