@@ -17,31 +17,21 @@ SHEET_MAPPING = {
 }
 
 def save_data_to_gsheets(new_data_dict):
-    """Smart-merges new uploads with existing cloud data to build a historical database."""
     conn = st.connection("gsheets", type=GSheetsConnection)
-    
-    # 1. Pull the master database from the cloud first
     existing_data = load_data_from_gsheets()
     
     for app_key, new_df in new_data_dict.items():
         sheet_name = SHEET_MAPPING[app_key]
-        
-        # 2. Check if we already have historical data for this category in the cloud
         if app_key in existing_data and not existing_data[app_key].empty:
             old_df = existing_data[app_key]
-            
-            # 3. Prevent duplicates: Remove old rows that match the newly uploaded Year(s)
             if 'Year' in old_df.columns and 'Year' in new_df.columns:
                 upload_years = new_df['Year'].unique()
                 old_df = old_df[~old_df['Year'].isin(upload_years)]
-            
-            # 4. Merge historical data with the newly uploaded data
             combined_df = pd.concat([old_df, new_df], ignore_index=True)
         else:
             combined_df = new_df
             
         with st.spinner(f"Merging and saving {app_key} to cloud database..."):
-            # 5. Overwrite the cloud with the newly merged master dataset
             conn.update(worksheet=sheet_name, data=combined_df)
 
 def load_data_from_gsheets():
@@ -463,21 +453,27 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
 
 # --- MAIN DASHBOARD PAGE ---
 if page == "📊 Dashboard":
-    st.title("💉 Child Immunization Dashboard - Abra Province")
+    # --- NEW: POLISHED DASHBOARD HEADER ---
+    st.title("💉 Child Immunization Dashboard")
+    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown("---")
     
+    st.markdown("##### ⏳ Time Filter")
     col_t1, col_t2 = st.columns([1, 2])
     with col_t1:
-        time_view = st.radio("⏳ Time Aggregation", ["Monthly", "Quarterly"], horizontal=True)
+        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed")
     with col_t2:
         if time_view == "Monthly":
             months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"))
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed")
         else:
             quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
-            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"))
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed")
             q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
             start_month = q_map[start_q][0]
             end_month = q_map[end_q][1]
+            
+    st.markdown("<br>", unsafe_allow_html=True) # Adds vertical breathing room before the tabs
     
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "👶 Birth Doses (BCG/HepB)", 
@@ -515,7 +511,6 @@ elif page == "📈 YoY Comparison":
     with col_y3:
         year_b = st.selectbox("Comparison Year (Year B)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=3)
 
-    # --- FIX: Added safety check to prevent KeyError if years are identical ---
     if year_a == year_b:
         st.warning("⚠️ Please select two different years to compare performance.")
     else:
