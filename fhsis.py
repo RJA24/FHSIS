@@ -8,7 +8,6 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", layout="wide")
 
 # --- GSHEETS CONFIGURATION ---
-# We will create one worksheet per dataset inside your master Google Sheet
 SHEET_MAPPING = {
     "CPAB_BCG_HepB": "CPAB_Data",
     "Penta": "Penta_Data",
@@ -18,7 +17,6 @@ SHEET_MAPPING = {
 }
 
 def save_data_to_gsheets(data_dict):
-    """Pushes the uploaded FHSIS data permanently to Google Sheets."""
     conn = st.connection("gsheets", type=GSheetsConnection)
     for app_key, df in data_dict.items():
         sheet_name = SHEET_MAPPING[app_key]
@@ -26,13 +24,11 @@ def save_data_to_gsheets(data_dict):
             conn.update(worksheet=sheet_name, data=df)
 
 def load_data_from_gsheets():
-    """Pulls permanent data from Google Sheets."""
     loaded_data = {}
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         for app_key, sheet_name in SHEET_MAPPING.items():
             try:
-                # ttl=0 forces it to grab fresh data on refresh
                 df = conn.read(worksheet=sheet_name, ttl=0) 
                 if not df.empty and 'Area' in df.columns:
                     loaded_data[app_key] = df
@@ -43,7 +39,6 @@ def load_data_from_gsheets():
     return loaded_data
 
 def clear_session_data():
-    """Wipes the current session data (Note: Does not delete from GSheets)."""
     st.session_state['fhsis_data'] = {}
 
 # --- LIST OF 27 ABRA RHUs ---
@@ -199,9 +194,13 @@ def filter_data(df, start_month, end_month, gender):
     
     cols_to_keep = ['Area', 'Month']
     for col in filtered_df.columns:
-        if col.endswith(f"_{gender}") or col in ['Interpretation', 'Recommendation/Actions Taken'] or "%" in col:
+        # UPDATED: Now we also keep columns that contain "elig" or "pop" so we have our targets!
+        if col.endswith(f"_{gender}") or col in ['Interpretation', 'Recommendation/Actions Taken'] or "%" in col or "elig" in col.lower() or "pop" in col.lower():
             cols_to_keep.append(col)
             
+    # Remove duplicates just in case
+    cols_to_keep = list(dict.fromkeys(cols_to_keep))
+    
     if len(cols_to_keep) > 2:
         return filtered_df[cols_to_keep]
     return filtered_df
@@ -215,6 +214,11 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_data(raw_df, start_m, end_m, gender)
         
+        safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+        
+        # Identify the Eligible Population Column
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
+        
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
@@ -223,22 +227,69 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                     break
         
         if cols_to_plot:
-            agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
-            safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+            # --- AGGREGATION LOGIC ---
+            # Sum the vaccines, but take the MAX of the eligible population (since it's an annual static number)
+            agg_dict = {col: 'sum' for col in cols_to_plot}
+            for ec in elig_cols:
+                agg_dict[ec] = 'max' 
+                
+            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
+            # --- UI TOGGLE ---
+            view_mode = st.radio(
+                "📊 Select Display Metric", 
+                ["Raw Counts", "Percentage (%) Coverage"], 
+                horizontal=True, 
+                key=f"toggle_{safe_filename}"
+            )
+            
+            # Calculate Provincial totals manually so percentages don't get skewed
+            provincial_antigens = {col: agg_df[col].sum() for col in cols_to_plot}
+            provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
+            
+            # --- KPI SCORECARDS ---
             st.markdown("#### 🏆 Province-Wide Summary")
             kpi_cols = st.columns(len(cols_to_plot))
+            
             for i, col in enumerate(cols_to_plot):
-                total_val = int(agg_df[col].sum())
+                total_val = provincial_antigens[col]
                 clean_name = col.replace(f"_{gender}", "")
-                with kpi_cols[i]:
-                    st.metric(label=f"Total {clean_name}", value=f"{total_val:,}")
+                
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
+                    with kpi_cols[i]:
+                        st.metric(label=f"{clean_name} Target Achieved", value=f"{perc:.1f}%")
+                else:
+                    with kpi_cols[i]:
+                        st.metric(label=f"Total {clean_name}", value=f"{int(total_val):,}")
             
             st.markdown("---")
             
+            # --- PREPARE DATA FOR CHARTS ---
+            chart_df = agg_df.copy()
+            abra_total_df = pd.DataFrame()
+            abra_total_df['Vaccine/Antigen'] = cols_to_plot
+            
+            if view_mode == "Percentage (%) Coverage" and elig_cols:
+                main_elig_col = elig_cols[0]
+                # Convert RHU dataframe to percentages
+                for col in cols_to_plot:
+                    chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
+                    chart_df[col] = chart_df[col].round(1)
+                
+                # Convert Provincial dataframe to percentages
+                prov_counts = [provincial_antigens[c] for c in cols_to_plot]
+                abra_total_df['Count'] = [(c / provincial_elig * 100) if provincial_elig > 0 else 0 for c in prov_counts]
+                abra_total_df['Count'] = abra_total_df['Count'].round(1)
+                y_axis_label = "Coverage (%)"
+            else:
+                abra_total_df['Count'] = [provincial_antigens[c] for c in cols_to_plot]
+                y_axis_label = "Number of Children"
+                if view_mode == "Percentage (%) Coverage" and not elig_cols:
+                    st.warning("⚠️ Could not locate the 'Eligible Population' data to calculate percentages. Showing Raw Counts instead.")
+
+            # --- 1. PROVINCE TOTAL CHART ---
             st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
-            abra_total_df = agg_df[cols_to_plot].sum().reset_index()
-            abra_total_df.columns = ['Vaccine/Antigen', 'Count']
             abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
             
             fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen',
@@ -247,15 +298,16 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                               color_discrete_sequence=px.colors.qualitative.Pastel)
             
             fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
-            fig_abra.update_layout(xaxis_title="Antigen", yaxis_title="Number of Children", showlegend=False, margin=dict(t=60))
+            fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
             
             config_abra = {'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'height': 600, 'width': 1000, 'scale': 4}}
             st.plotly_chart(fig_abra, use_container_width=True, config=config_abra)
 
             st.markdown("---")
             
+            # --- 2. RHU BREAKDOWN CHART ---
             st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-            melted = agg_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
+            melted = chart_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
             melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
             
             fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
@@ -264,7 +316,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             
             fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=60))
+            fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
             
             config_rhu = {'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'height': 600, 'width': 1200, 'scale': 4}}
             st.plotly_chart(fig_rhu, use_container_width=True, config=config_rhu)
@@ -315,9 +367,9 @@ elif page == "📁 Data Uploader":
     
     # --- ADMIN SECURITY GATE ---
     admin_password = st.text_input("Enter Admin Password", type="password")
-    if admin_password != st.secrets.get("admin_password", "rjca@1204-AbraFHSIS"):
+    if admin_password != st.secrets.get("admin_password", "AbraAdmin2026"):
         st.warning("🔒 This section is restricted. Please enter the password to unlock the uploader.")
-        st.stop() # This halts the script here, keeping the layout exactly as you wanted but hiding the uploader!
+        st.stop()
         
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     
