@@ -11,11 +11,10 @@ st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", 
 def load_and_clean_fhsis_data(uploaded_file):
     """
     Cleans the FHSIS Excel/CSV files by dynamically searching for header rows 
-    to bypass formatting inconsistencies and blank rows.
+    to bypass formatting inconsistencies and forcing unique column names.
     """
     try:
         if uploaded_file.name.endswith('.csv'):
-            # Read blindly without headers first to search for them
             df_raw = pd.read_csv(uploaded_file, header=None)
             sheets_to_process = {"Jan": df_raw} 
         else:
@@ -38,7 +37,7 @@ def load_and_clean_fhsis_data(uploaded_file):
                     break
                     
             if area_row_idx == -1:
-                continue # Skip this sheet if no 'Area' column is found
+                continue 
                 
             # 2. Find row with "Male" or "Female" directly below "Area"
             sub_row_idx = -1
@@ -48,16 +47,13 @@ def load_and_clean_fhsis_data(uploaded_file):
                     sub_row_idx = idx
                     break
 
-            # 3. Extract Main Headers and forward-fill merged cells
+            # 3. Extract Headers
             main_headers = df.iloc[area_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], np.nan, regex=True).ffill()
-            
-            # Extract Sub Headers (Male/Female/Total/%)
             if sub_row_idx != -1:
                 sub_headers = df.iloc[sub_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True)
             else:
                 sub_headers = pd.Series([''] * len(main_headers))
 
-            # Combine top and bottom headers cleanly
             flat_cols = []
             for top, bot in zip(main_headers, sub_headers):
                 top_str = str(top).strip().replace('\n', ' ') if pd.notna(top) and str(top) != 'nan' else ""
@@ -70,32 +66,50 @@ def load_and_clean_fhsis_data(uploaded_file):
                 else:
                     flat_cols.append(bot_str)
 
-            # 4. Slice the actual data starting beneath the headers
+            # 4. Force UNIQUE columns to prevent the pandas DataFrame Series crash
+            seen = set()
+            unique_cols = []
+            for c in flat_cols:
+                if not c:
+                    unique_cols.append("")
+                    continue
+                new_c = c
+                counter = 1
+                while new_c in seen:
+                    new_c = f"{c}_{counter}"
+                    counter += 1
+                seen.add(new_c)
+                unique_cols.append(new_c)
+
+            # 5. Slice the actual data
             start_data_idx = sub_row_idx + 1 if sub_row_idx != -1 else area_row_idx + 1
             df_clean = df.iloc[start_data_idx:].copy()
-            df_clean.columns = flat_cols
+            df_clean.columns = unique_cols
             
-            # 5. Drop any empty or duplicated garbage columns
+            # Drop empty columns
             df_clean = df_clean.loc[:, df_clean.columns != '']
-            df_clean = df_clean.loc[:, ~df_clean.columns.duplicated()]
 
-            # Standardize 'Area' column name
+            # Standardize 'Area' column safely
             first_col = df_clean.columns[0]
-            df_clean.rename(columns={first_col: 'Area'}, inplace=True)
+            if first_col != 'Area':
+                if 'Area' in df_clean.columns:
+                    df_clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
+                df_clean.rename(columns={first_col: 'Area'}, inplace=True)
             
-            # Drop empty regions or repeated headers that snuck into the data
             df_clean.dropna(subset=['Area'], inplace=True)
             df_clean = df_clean[~df_clean['Area'].astype(str).str.contains('Area|Interpretation|Recommendation|NaN', na=False, case=False)]
             
-            # Attach the specific Month for the slider filter
             month_val = sheet_name[:3].capitalize()
             if month_val == "Sep": month_val = "Sep"
             df_clean['Month'] = month_val
             
-            # 6. Convert to pure numbers for graphing
+            # 6. Convert to numbers (Bulletproofed against DataFrames)
             for col in df_clean.columns:
                 if col not in ['Area', 'Month', 'Interpretation', 'Recommendation/Actions Taken']:
-                    df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
+                    if isinstance(df_clean[col], pd.DataFrame):
+                        df_clean[col] = pd.to_numeric(df_clean[col].iloc[:, 0], errors='coerce').fillna(0)
+                    else:
+                        df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
 
             all_months_data.append(df_clean)
         
