@@ -16,12 +16,33 @@ SHEET_MAPPING = {
     "MMR": "MMR_Data"
 }
 
-def save_data_to_gsheets(data_dict):
+def save_data_to_gsheets(new_data_dict):
+    """Smart-merges new uploads with existing cloud data to build a historical database."""
     conn = st.connection("gsheets", type=GSheetsConnection)
-    for app_key, df in data_dict.items():
+    
+    # 1. Pull the master database from the cloud first
+    existing_data = load_data_from_gsheets()
+    
+    for app_key, new_df in new_data_dict.items():
         sheet_name = SHEET_MAPPING[app_key]
-        with st.spinner(f"Saving {app_key} to cloud database..."):
-            conn.update(worksheet=sheet_name, data=df)
+        
+        # 2. Check if we already have historical data for this category in the cloud
+        if app_key in existing_data and not existing_data[app_key].empty:
+            old_df = existing_data[app_key]
+            
+            # 3. Prevent duplicates: Remove old rows that match the newly uploaded Year(s)
+            if 'Year' in old_df.columns and 'Year' in new_df.columns:
+                upload_years = new_df['Year'].unique()
+                old_df = old_df[~old_df['Year'].isin(upload_years)]
+            
+            # 4. Merge historical data with the newly uploaded data
+            combined_df = pd.concat([old_df, new_df], ignore_index=True)
+        else:
+            combined_df = new_df
+            
+        with st.spinner(f"Merging and saving {app_key} to cloud database..."):
+            # 5. Overwrite the cloud with the newly merged master dataset
+            conn.update(worksheet=sheet_name, data=combined_df)
 
 def load_data_from_gsheets():
     loaded_data = {}
@@ -191,7 +212,6 @@ with st.sidebar:
     
     if page in ["📊 Dashboard", "📈 YoY Comparison"]:
         st.subheader("Global Filters")
-        # --- NEW: Expanded years list ---
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
@@ -491,11 +511,9 @@ elif page == "📈 YoY Comparison":
     with col_y1:
         yoy_dataset = st.selectbox("Select Vaccine Category", ["Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC"])
     with col_y2:
-        # --- NEW: Expanded years list ---
-        year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2) # Default 2023
+        year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2)
     with col_y3:
-        # --- NEW: Expanded years list ---
-        year_b = st.selectbox("Comparison Year (Year B)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=3) # Default 2024
+        year_b = st.selectbox("Comparison Year (Year B)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=3)
 
     dataset_keys = {
         "Birth Doses": ("CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"]),
@@ -569,7 +587,6 @@ elif page == "📁 Data Uploader":
         
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     
-    # --- NEW: Expanded years list ---
     upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
     
     col1, col2 = st.columns(2)
@@ -607,7 +624,7 @@ elif page == "📁 Data Uploader":
         if st.button("☁️ Save Data to Google Sheets", type="primary", use_container_width=True):
             if st.session_state['fhsis_data']:
                 save_data_to_gsheets(st.session_state['fhsis_data'])
-                st.success(f"✅ {upload_year} Files processed and safely saved to Google Sheets! Head over to the Dashboard.")
+                st.success(f"✅ {upload_year} Files processed and safely merged into Google Sheets! Head over to the Dashboard.")
             else:
                 st.error("No data uploaded yet to save.")
                 
