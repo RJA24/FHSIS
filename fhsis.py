@@ -261,20 +261,26 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 "📊 Select Display Metric", 
                 ["Raw Counts", "Percentage (%) Coverage"], 
                 horizontal=True, 
-                key=f"toggle_{safe_filename}"
+                key=f"toggle_view_{safe_filename}"
             )
             
-            # --- NEW: Dynamically strip out actual "Total" columns from the default selection ---
-            default_cols = [c for c in cols_to_plot if "total" not in c.replace(f"_{gender}", "").strip().lower()]
-            if not default_cols: # Fallback just in case all columns are totals
-                default_cols = cols_to_plot
+            # --- FIX: EXCLUDE "TOTAL" COLUMNS FROM DEFAULT LIST BUT KEEP THEM IN THE OPTIONS ---
+            default_cols = []
+            for c in cols_to_plot:
+                clean_name = c.replace(f"_{gender}", "").lower() # Removes the demographic tag before checking
+                if "total" not in clean_name:
+                    default_cols.append(c)
+            
+            # Fallback just in case everything is named Total
+            if not default_cols and len(cols_to_plot) > 0:
+                default_cols = [cols_to_plot[0]]
             
             with st.expander("⚙️ Add / Remove Indicators"):
                 selected_cols = st.multiselect(
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_{safe_filename}",
+                    key=f"indicator_picker_{safe_filename}", # NEW KEY: Breaks the internal memory so the default actually applies!
                     label_visibility="collapsed"
                 )
 
