@@ -41,7 +41,7 @@ def load_data_from_gsheets():
 def clear_session_data():
     st.session_state['fhsis_data'] = {}
 
-# --- LIST OF 27 ABRA RHUs ---
+# --- LIST OF 27 ABRA RHUs & COORDINATES ---
 ABRA_RHUS = [
     "Bangued", "Boliney", "Bucay", "Bucloc", "Daguioman", "Danglas", 
     "Dolores", "La Paz", "Lacub", "Lagangilang", "Lagayan", "Langiden", 
@@ -49,6 +49,18 @@ ABRA_RHUS = [
     "Pilar", "Sallapadan", "San Isidro", "San Juan", "San Quintin", 
     "Tayum", "Tineg", "Tubo", "Villaviciosa"
 ]
+
+ABRA_COORDS = {
+    "Bangued": (17.595, 120.613), "Boliney": (17.394, 120.814), "Bucay": (17.541, 120.720),
+    "Bucloc": (17.433, 120.783), "Daguioman": (17.448, 120.822), "Danglas": (17.728, 120.655),
+    "Dolores": (17.647, 120.710), "La Paz": (17.668, 120.672), "Lacub": (17.669, 120.945),
+    "Lagangilang": (17.618, 120.735), "Lagayan": (17.734, 120.730), "Langiden": (17.579, 120.575),
+    "Licuan-Baay": (17.585, 120.884), "Luba": (17.324, 120.698), "Malibcong": (17.564, 120.988),
+    "Manabo": (17.434, 120.702), "Penarrubia": (17.563, 120.648), "Pidigan": (17.572, 120.589),
+    "Pilar": (17.421, 120.595), "Sallapadan": (17.456, 120.763), "San Isidro": (17.468, 120.606),
+    "San Juan": (17.683, 120.738), "San Quintin": (17.544, 120.521), "Tayum": (17.617, 120.665),
+    "Tineg": (17.785, 120.938), "Tubo": (17.234, 120.748), "Villaviciosa": (17.439, 120.632)
+}
 
 # --- DATA CLEANING FUNCTION ---
 @st.cache_data
@@ -151,7 +163,7 @@ def load_and_clean_fhsis_data(uploaded_file, year):
             else: month_val = "Unknown"
             
             df_clean['Month'] = month_val
-            df_clean['Year'] = year # --- NEW: Tags data with selected year ---
+            df_clean['Year'] = year
             
             for col in df_clean.columns:
                 if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
@@ -179,7 +191,7 @@ with st.sidebar:
     
     if page == "📊 Dashboard":
         st.subheader("Global Filters")
-        selected_year = st.selectbox("Select Year", options=[2025, 2026, 2027]) # NEW YEAR FILTER
+        selected_year = st.selectbox("Select Year", options=[2025, 2026, 2027])
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
 # --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
@@ -193,7 +205,6 @@ def filter_data(df, start_month, end_month, gender, year):
     end_idx = months_order.index(end_month)
     valid_months = months_order[start_idx:end_idx+1]
     
-    # Filter by Month and Year
     filtered_df = df[df['Month'].isin(valid_months)]
     if 'Year' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['Year'] == year]
@@ -339,6 +350,31 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
                 st.plotly_chart(fig_top5, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
                 
+                # --- NEW: GEOSPATIAL MAP ---
+                st.markdown("---")
+                st.markdown(f"#### 🗺️ Provincial Heatmap")
+                
+                map_df = chart_df.copy()
+                map_df['Rank_Metric'] = map_df[selected_cols].mean(axis=1)
+                map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
+                map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
+                map_df = map_df[map_df['Lat'] != 0] # Filter safety
+                
+                color_scale = "RdYlGn" if view_mode == "Percentage (%) Coverage" else "Blues"
+                map_title = f"Geospatial View: Average {y_axis_label}"
+                
+                fig_map = px.scatter_mapbox(
+                    map_df, lat="Lat", lon="Lon", hover_name="Area", 
+                    hover_data={"Lat": False, "Lon": False, "Rank_Metric": ':.1f'},
+                    color="Rank_Metric", size="Rank_Metric",
+                    color_continuous_scale=color_scale,
+                    size_max=20, zoom=8.5, center={"lat": 17.55, "lon": 120.75},
+                    mapbox_style="carto-positron", title=map_title
+                )
+                fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
+                st.plotly_chart(fig_map, use_container_width=True)
+                
+                # --- MONTHLY TREND LINE CHART ---
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
                 
@@ -363,7 +399,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 
                 fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True,
-                                    title=f"Provincial Trend ({start_m} - {end_m})",
+                                    title=f"Provincial Monthly Trend ({start_m} - {end_m})",
                                     color_discrete_sequence=px.colors.qualitative.Pastel)
                 
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
@@ -410,7 +446,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
 if page == "📊 Dashboard":
     st.title("💉 Child Immunization Dashboard - Abra Province")
     
-    # --- NEW: TIME AGGREGATION TOGGLE ---
     col_t1, col_t2 = st.columns([1, 2])
     with col_t1:
         time_view = st.radio("⏳ Time Aggregation", ["Monthly", "Quarterly"], horizontal=True)
@@ -459,7 +494,6 @@ elif page == "📁 Data Uploader":
         
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     
-    # --- NEW: YEAR TAGGER ---
     upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2025, 2026, 2027])
     
     col1, col2 = st.columns(2)
