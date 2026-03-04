@@ -2,36 +2,49 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import os
-import shutil
+from streamlit_gsheets import GSheetsConnection
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", layout="wide")
 
-# --- LOCAL STORAGE CONFIG ---
-SAVE_DIR = "saved_fhsis_data"
+# --- GSHEETS CONFIGURATION ---
+# We will create one worksheet per dataset inside your master Google Sheet
+SHEET_MAPPING = {
+    "CPAB_BCG_HepB": "CPAB_Data",
+    "Penta": "Penta_Data",
+    "Polio": "Polio_Data",
+    "PCV": "PCV_Data",
+    "MMR": "MMR_Data"
+}
 
-def save_data_to_disk(data_dict):
-    """Saves the dataframes to local disk so they survive a refresh."""
-    if not os.path.exists(SAVE_DIR):
-        os.makedirs(SAVE_DIR)
-    for key, df in data_dict.items():
-        df.to_pickle(os.path.join(SAVE_DIR, f"{key}.pkl"))
+def save_data_to_gsheets(data_dict):
+    """Pushes the uploaded FHSIS data permanently to Google Sheets."""
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    for app_key, df in data_dict.items():
+        sheet_name = SHEET_MAPPING[app_key]
+        with st.spinner(f"Saving {app_key} to cloud database..."):
+            conn.update(worksheet=sheet_name, data=df)
 
-def load_saved_data():
-    """Loads saved dataframes from the local disk if they exist."""
+def load_data_from_gsheets():
+    """Pulls permanent data from Google Sheets."""
     loaded_data = {}
-    if os.path.exists(SAVE_DIR):
-        for key in ["CPAB_BCG_HepB", "Penta", "Polio", "PCV", "MMR"]:
-            file_path = os.path.join(SAVE_DIR, f"{key}.pkl")
-            if os.path.exists(file_path):
-                loaded_data[key] = pd.read_pickle(file_path)
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        for app_key, sheet_name in SHEET_MAPPING.items():
+            try:
+                # ttl=0 forces it to grab fresh data on refresh
+                df = conn.read(worksheet=sheet_name, ttl=0) 
+                if not df.empty and 'Area' in df.columns:
+                    loaded_data[app_key] = df
+            except Exception:
+                pass 
+    except Exception as e:
+        st.error("Google Sheets connection not fully configured yet. Please check your secrets.toml file.")
     return loaded_data
 
-def clear_saved_data():
-    """Wipes the saved data folder."""
-    if os.path.exists(SAVE_DIR):
-        shutil.rmtree(SAVE_DIR)
+def clear_session_data():
+    """Wipes the current session data (Note: Does not delete from GSheets)."""
+    st.session_state['fhsis_data'] = {}
 
 # --- LIST OF 27 ABRA RHUs ---
 ABRA_RHUS = [
@@ -172,9 +185,9 @@ with st.sidebar:
         st.subheader("Global Filters")
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
-# --- INITIALIZE SESSION STATE FROM DISK ---
+# --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
 if 'fhsis_data' not in st.session_state:
-    st.session_state['fhsis_data'] = load_saved_data()
+    st.session_state['fhsis_data'] = load_data_from_gsheets()
 
 # --- HELPER FUNCTIONS ---
 def filter_data(df, start_month, end_month, gender):
@@ -251,98 +264,4 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             
             fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=60))
-            
-            config_rhu = {'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'height': 600, 'width': 1200, 'scale': 4}}
-            st.plotly_chart(fig_rhu, use_container_width=True, config=config_rhu)
-            
-        else:
-            st.warning("Could not find graphing columns for the selected demographic.")
-            
-        with st.expander("📄 View & Download Filtered Data"):
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-            csv_data = convert_df_to_csv(filtered_df)
-            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data_{start_m}_to_{end_m}.csv", mime="text/csv")
-    else:
-        st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
-
-# --- MAIN DASHBOARD PAGE ---
-if page == "📊 Dashboard":
-    st.title("💉 Child Immunization Dashboard - Abra Province")
-    
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    start_month, end_month = st.select_slider("Select Month Range", options=months, value=("Jan", "Dec"))
-    
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "👶 Birth Doses (BCG/HepB)", 
-        "🛡️ Penta (DPT-HiB-HepB)", 
-        "💧 Polio (OPV/IPV)", 
-        "🫁 Pneumococcal (PCV)", 
-        "🎯 MMR & FIC"
-    ])
-    
-    with tab1:
-        render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG (0-28 days)", "HepB, within 24 hours"], start_month, end_month, gender_filter)
-
-    with tab2:
-        render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3"], start_month, end_month, gender_filter)
-
-    with tab3:
-        render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter)
-
-    with tab4:
-        render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter)
-
-    with tab5:
-        render_tab_content("MMR and FIC", "MMR", ["MMR 1", "MMR 2", "FIC"], start_month, end_month, gender_filter)
-
-# --- DATA UPLOADER PAGE ---
-elif page == "📁 Data Uploader":
-    st.title("Secure Data Uploader")
-    st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them safely.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        file_cpab = st.file_uploader("Upload: 1 CPAB, BCG and Hepa B", type=["csv", "xlsx"])
-        if file_cpab:
-            df = load_and_clean_fhsis_data(file_cpab)
-            if df is not None: st.session_state['fhsis_data']["CPAB_BCG_HepB"] = df
-            
-        file_penta = st.file_uploader("Upload: 2 DPT-HiB-HepB", type=["csv", "xlsx"])
-        if file_penta:
-            df = load_and_clean_fhsis_data(file_penta)
-            if df is not None: st.session_state['fhsis_data']["Penta"] = df
-            
-        file_polio = st.file_uploader("Upload: 3 OPV and IPV", type=["csv", "xlsx"])
-        if file_polio:
-            df = load_and_clean_fhsis_data(file_polio)
-            if df is not None: st.session_state['fhsis_data']["Polio"] = df
-            
-    with col2:
-        file_pcv = st.file_uploader("Upload: 4 PCV", type=["csv", "xlsx"])
-        if file_pcv:
-            df = load_and_clean_fhsis_data(file_pcv)
-            if df is not None: st.session_state['fhsis_data']["PCV"] = df
-            
-        file_mmr = st.file_uploader("Upload: 5 MMR, FIC and CIC", type=["csv", "xlsx"])
-        if file_mmr:
-            df = load_and_clean_fhsis_data(file_mmr)
-            if df is not None: st.session_state['fhsis_data']["MMR"] = df
-            
-    st.markdown("---")
-    action_col1, action_col2 = st.columns(2)
-    
-    with action_col1:
-        if st.button("💾 Save Data & Go to Dashboard", type="primary", use_container_width=True):
-            if st.session_state['fhsis_data']:
-                save_data_to_disk(st.session_state['fhsis_data'])
-                st.success("✅ Files processed and safely saved! You can now freely refresh the app. Head over to the Dashboard.")
-            else:
-                st.error("No data uploaded yet to save.")
-                
-    with action_col2:
-        if st.button("🗑️ Clear Saved Data", type="secondary", use_container_width=True):
-            clear_saved_data()
-            st.session_state['fhsis_data'] = {}
-            st.warning("All saved data has been wiped. The dashboard is now clean.")
-            st.rerun()
+            fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=6
