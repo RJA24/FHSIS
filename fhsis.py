@@ -257,19 +257,22 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            selected_cols = st.multiselect(
-                "🎯 Select Indicators to Display",
-                options=cols_to_plot,
-                default=cols_to_plot,
-                key=f"ms_{safe_filename}"
-            )
-            
+            # --- FIX: Tucked the Multiselect inside an expander to save vertical space! ---
             view_mode = st.radio(
                 "📊 Select Display Metric", 
                 ["Raw Counts", "Percentage (%) Coverage"], 
                 horizontal=True, 
                 key=f"toggle_{safe_filename}"
             )
+            
+            with st.expander("⚙️ Add / Remove Indicators"):
+                selected_cols = st.multiselect(
+                    "Select specific indicators to include in the dashboard:",
+                    options=cols_to_plot,
+                    default=cols_to_plot,
+                    key=f"ms_{safe_filename}",
+                    label_visibility="collapsed"
+                )
 
             if selected_cols:
                 provincial_antigens = {col: agg_df[col].sum() for col in selected_cols}
@@ -453,7 +456,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
 
 # --- MAIN DASHBOARD PAGE ---
 if page == "📊 Dashboard":
-    # --- NEW: POLISHED DASHBOARD HEADER ---
     st.title("💉 Child Immunization Dashboard")
     st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
     st.markdown("---")
@@ -473,7 +475,7 @@ if page == "📊 Dashboard":
             start_month = q_map[start_q][0]
             end_month = q_map[end_q][1]
             
-    st.markdown("<br>", unsafe_allow_html=True) # Adds vertical breathing room before the tabs
+    st.markdown("<br>", unsafe_allow_html=True)
     
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "👶 Birth Doses (BCG/HepB)", 
