@@ -307,7 +307,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_picker_v2_{safe_filename}_{year}", 
+                    key=f"ms_picker_no_percent_{safe_filename}_{year}",
                     label_visibility="collapsed"
                 )
 
@@ -514,7 +514,6 @@ if page == "📊 Dashboard":
             
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # --- NEW: Added Executive Summary as the very first Tab! ---
     tab_exec, tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "⭐ Executive Summary",
         "👶 Birth Doses (BCG/HepB)", 
@@ -545,8 +544,8 @@ if page == "📊 Dashboard":
                 prov_cic = mmr_df[cic_col].sum() if cic_col else 0
                 
                 curr_cov = (prov_fic / prov_elig * 100) if prov_elig > 0 else 0
+                cic_cov = (prov_cic / prov_elig * 100) if prov_elig > 0 else 0
                 
-                # Forecasting Math
                 months_idx_start = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].index(start_month)
                 months_idx_end = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].index(end_month)
                 months_count = months_idx_end - months_idx_start + 1
@@ -559,20 +558,46 @@ if page == "📊 Dashboard":
                     p1_tot = penta_df[p1_col].sum()
                     p3_tot = penta_df[p3_col].sum()
                     prov_drop = ((p1_tot - p3_tot) / p1_tot * 100) if p1_tot > 0 else 0
+                
+                # --- NEW: DATA QUALITY AUDIT ENGINE ---
+                dq_warnings = []
+                fic_label = "Fully Immunized Child (FIC)"
+                cic_label = "Completely Immunized (CIC)"
+                drop_label = "Provincial Dropout (Penta 1-3)"
+                
+                if curr_cov > 110:
+                    fic_label += " ⚠️"
+                    dq_warnings.append(f"**FIC Coverage ({curr_cov:.1f}%) exceeds 110%:** Usually indicates an outdated eligible population denominator or out-of-catchment patients being counted.")
+                
+                if prov_fic == prov_cic and prov_fic > 0:
+                    cic_label += " ⚠️"
+                    dq_warnings.append(f"**FIC and CIC counts match exactly ({prov_fic:,.0f}):** Highly improbable. Check if an RHU accidentally duplicated the FIC column into the CIC column on the Excel sheet.")
+                elif cic_cov > 110:
+                    cic_label += " ⚠️"
+                    dq_warnings.append(f"**CIC Coverage ({cic_cov:.1f}%) exceeds 110%.**")
                     
+                if prov_drop < 0:
+                    drop_label += " ⚠️"
+                    dq_warnings.append(f"**Negative Penta Dropout ({prov_drop:.1f}%):** More Penta 3 doses given than Penta 1. Verify if this is an expected catch-up surge or a data entry error.")
+
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
-                col_e1.metric("Fully Immunized Child (FIC)", f"{prov_fic:,.0f}", f"Current Cov: {curr_cov:.1f}%")
+                col_e1.metric(fic_label, f"{prov_fic:,.0f}", f"Current Cov: {curr_cov:.1f}%")
                 
                 proj_delta = projected_cov - curr_cov
                 col_e2.metric("End-of-Year FIC Forecast", f"{projected_cov:.1f}%", f"{proj_delta:+.1f}% vs Current", delta_color="normal" if projected_cov >= 95 else "off")
                 
                 if cic_col:
-                    cic_cov = (prov_cic / prov_elig * 100) if prov_elig > 0 else 0
-                    col_e3.metric("Completely Immunized (CIC)", f"{prov_cic:,.0f}", f"Current Cov: {cic_cov:.1f}%")
+                    col_e3.metric(cic_label, f"{prov_cic:,.0f}", f"Current Cov: {cic_cov:.1f}%")
                 else:
                     col_e3.metric("Completely Immunized (CIC)", "N/A")
                     
-                col_e4.metric("Provincial Dropout (Penta 1-3)", f"{prov_drop:.1f}%", "Target: < 10%", delta_color="inverse")
+                col_e4.metric(drop_label, f"{prov_drop:.1f}%", "Target: < 10%", delta_color="inverse")
+                
+                # --- WARNING BOX DISPLAY ---
+                if dq_warnings:
+                    st.warning("🕵️‍♂️ **Automated Data Quality Audit:** Potential anomalies detected in the aggregated data.")
+                    for w in dq_warnings:
+                        st.markdown(f"- {w}")
                 
                 st.markdown("---")
                 st.markdown("#### 🚀 Target Forecasting (FIC Coverage)")
