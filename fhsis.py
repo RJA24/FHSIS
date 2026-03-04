@@ -18,10 +18,6 @@ ABRA_RHUS = [
 # --- DATA CLEANING FUNCTION ---
 @st.cache_data
 def load_and_clean_fhsis_data(uploaded_file):
-    """
-    Cleans the FHSIS Excel files, extracts the 12 monthly sheets,
-    and strictly filters the data for the 27 RHUs of Abra.
-    """
     try:
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
@@ -32,14 +28,12 @@ def load_and_clean_fhsis_data(uploaded_file):
             valid_months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             
             for sheet in xls.sheet_names:
-                # Only load sheets representing months, ignore Quarters/Annuals
                 if any(month.lower() in sheet.lower() for month in valid_months) and "Q" not in sheet and "202" not in sheet:
                     sheets_to_process[sheet] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
         
         for sheet_name, df in sheets_to_process.items():
-            # 1. Dynamically find the row containing "Area"
             area_row_idx = -1
             for idx, row in df.iterrows():
                 if any('Area' in str(val).strip() for val in row.values if pd.notna(val)):
@@ -49,7 +43,6 @@ def load_and_clean_fhsis_data(uploaded_file):
             if area_row_idx == -1:
                 continue 
                 
-            # 2. Find row with "Male" or "Female" directly below "Area"
             sub_row_idx = -1
             for idx in range(area_row_idx + 1, min(area_row_idx + 5, len(df))):
                 row = df.iloc[idx]
@@ -57,7 +50,6 @@ def load_and_clean_fhsis_data(uploaded_file):
                     sub_row_idx = idx
                     break
 
-            # 3. Extract Headers
             main_headers = df.iloc[area_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], np.nan, regex=True).ffill()
             if sub_row_idx != -1:
                 sub_headers = df.iloc[sub_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True)
@@ -76,7 +68,6 @@ def load_and_clean_fhsis_data(uploaded_file):
                 else:
                     flat_cols.append(bot_str)
 
-            # 4. Force UNIQUE columns to prevent the pandas DataFrame Series crash
             seen = set()
             unique_cols = []
             for c in flat_cols:
@@ -91,15 +82,11 @@ def load_and_clean_fhsis_data(uploaded_file):
                 seen.add(new_c)
                 unique_cols.append(new_c)
 
-            # 5. Slice the actual data
             start_data_idx = sub_row_idx + 1 if sub_row_idx != -1 else area_row_idx + 1
             df_clean = df.iloc[start_data_idx:].copy()
             df_clean.columns = unique_cols
-            
-            # Drop empty columns
             df_clean = df_clean.loc[:, df_clean.columns != '']
 
-            # Standardize 'Area' column safely
             first_col = df_clean.columns[0]
             if first_col != 'Area':
                 if 'Area' in df_clean.columns:
@@ -108,19 +95,11 @@ def load_and_clean_fhsis_data(uploaded_file):
             
             df_clean.dropna(subset=['Area'], inplace=True)
             
-            # ---------------------------------------------------------
-            # STRICT FILTERING FOR ABRA'S 27 RHUs
-            # ---------------------------------------------------------
-            # Clean up trailing spaces in the raw data (e.g., "Boliney ")
             df_clean['Area_Clean'] = df_clean['Area'].astype(str).str.strip()
-            # Keep ONLY the rows that match our exact Abra RHU list
             df_clean = df_clean[df_clean['Area_Clean'].isin(ABRA_RHUS)]
-            # Drop the temporary clean column, swap it into the main Area column
             df_clean['Area'] = df_clean['Area_Clean']
             df_clean.drop(columns=['Area_Clean'], inplace=True)
-            # ---------------------------------------------------------
 
-            # Robustly attach the specific Month
             sheet_lower = sheet_name.lower()
             if "jan" in sheet_lower: month_val = "Jan"
             elif "feb" in sheet_lower: month_val = "Feb"
@@ -138,7 +117,6 @@ def load_and_clean_fhsis_data(uploaded_file):
             
             df_clean['Month'] = month_val
             
-            # 6. Convert to numbers
             for col in df_clean.columns:
                 if col not in ['Area', 'Month', 'Interpretation', 'Recommendation/Actions Taken']:
                     if isinstance(df_clean[col], pd.DataFrame):
@@ -151,8 +129,7 @@ def load_and_clean_fhsis_data(uploaded_file):
         if not all_months_data:
             raise ValueError("Could not find properly formatted monthly sheets in the file.")
 
-        final_df = pd.concat(all_months_data, ignore_index=True)
-        return final_df
+        return pd.concat(all_months_data, ignore_index=True)
 
     except Exception as e:
         st.error(f"Error processing {uploaded_file.name}: {e}")
@@ -162,33 +139,23 @@ def load_and_clean_fhsis_data(uploaded_file):
 with st.sidebar:
     st.title("FHSIS App")
     page = st.radio("Navigation", ["📊 Dashboard", "📁 Data Uploader"])
-    
     st.markdown("---")
     
     if page == "📊 Dashboard":
         st.subheader("Global Filters")
-        gender_filter = st.selectbox(
-            "Select Demographic",
-            options=["Total", "Male", "Female"],
-            help="This selection isolates columns ending in Total, Male, or Female."
-        )
+        gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
-# --- SESSION STATE TO STORE UPLOADED DATA ---
 if 'fhsis_data' not in st.session_state:
     st.session_state['fhsis_data'] = {}
 
-# --- HELPER FUNCTION TO FILTER DATA ---
+# --- HELPER FUNCTIONS ---
 def filter_data(df, start_month, end_month, gender):
-    """Filters the dataframe based on the selected month range and gender."""
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    
-    # Filter by Month
     start_idx = months_order.index(start_month)
     end_idx = months_order.index(end_month)
     valid_months = months_order[start_idx:end_idx+1]
     filtered_df = df[df['Month'].isin(valid_months)]
     
-    # Filter columns by Gender
     cols_to_keep = ['Area', 'Month']
     for col in filtered_df.columns:
         if col.endswith(f"_{gender}") or col in ['Interpretation', 'Recommendation/Actions Taken'] or "%" in col:
@@ -198,10 +165,47 @@ def filter_data(df, start_month, end_month, gender):
         return filtered_df[cols_to_keep]
     return filtered_df
 
+def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        filtered_df = filter_data(raw_df, start_m, end_m, gender)
+        
+        # Identify columns to plot based on the metrics provided
+        cols_to_plot = []
+        for base in base_metrics:
+            for col in filtered_df.columns:
+                if base in col and col.endswith(f"_{gender}"):
+                    cols_to_plot.append(col)
+                    break
+        
+        if cols_to_plot:
+            # Aggregate data by Area (summing across the selected months)
+            agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
+            
+            # Melt dataframe for Plotly format
+            melted = agg_df.melt(id_vars='Area', value_vars=cols_to_plot, var_name='Vaccine/Antigen', value_name='Count')
+            
+            # Clean up legend labels
+            melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+            
+            # Create Plotly Graph
+            fig = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group',
+                         title=f"{tab_title} Coverage by RHU ({start_m} - {end_m})",
+                         color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen")
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Could not find graphing columns for the selected demographic.")
+            
+        with st.expander("📄 View Filtered Data Table"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
+
 # --- MAIN DASHBOARD PAGE ---
 if page == "📊 Dashboard":
     st.title("💉 Child Immunization Dashboard - Abra Province")
-    st.markdown(f"Monitoring health outcomes across the **27 RHUs** of Abra.")
     
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_month, end_month = st.select_slider("Select Month Range", options=months, value=("Jan", "Dec"))
@@ -215,54 +219,31 @@ if page == "📊 Dashboard":
     ])
     
     with tab1:
-        st.header("CPAB, BCG, and Hepa B Coverage")
-        if "CPAB_BCG_HepB" in st.session_state['fhsis_data']:
-            raw_df = st.session_state['fhsis_data']["CPAB_BCG_HepB"]
-            filtered_df = filter_data(raw_df, start_month, end_month, gender_filter)
-            st.success(f"Displaying data for {start_month}-{end_month} ({gender_filter})")
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
+        st.header("CPAB, BCG, and Hepa B")
+        render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG (0-28 days)", "HepB, within 24 hours"], start_month, end_month, gender_filter)
 
     with tab2:
         st.header("Pentavalent Vaccine (DPT-HiB-HepB)")
-        if "Penta" in st.session_state['fhsis_data']:
-            raw_df = st.session_state['fhsis_data']["Penta"]
-            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter), use_container_width=True, hide_index=True)
-        else:
-            st.info("No data uploaded yet.")
+        render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3"], start_month, end_month, gender_filter)
 
     with tab3:
         st.header("Polio Vaccines (OPV & IPV)")
-        if "Polio" in st.session_state['fhsis_data']:
-            raw_df = st.session_state['fhsis_data']["Polio"]
-            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter), use_container_width=True, hide_index=True)
-        else:
-            st.info("No data uploaded yet.")
+        render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter)
 
     with tab4:
         st.header("Pneumococcal Conjugate Vaccine (PCV)")
-        if "PCV" in st.session_state['fhsis_data']:
-            raw_df = st.session_state['fhsis_data']["PCV"]
-            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter), use_container_width=True, hide_index=True)
-        else:
-            st.info("No data uploaded yet.")
+        render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter)
 
     with tab5:
         st.header("Measles, FIC, and CIC")
-        if "MMR" in st.session_state['fhsis_data']:
-            raw_df = st.session_state['fhsis_data']["MMR"]
-            st.dataframe(filter_data(raw_df, start_month, end_month, gender_filter), use_container_width=True, hide_index=True)
-        else:
-            st.info("No data uploaded yet.")
+        render_tab_content("MMR & Fully Immunized Children", "MMR", ["MMR 1", "MMR 2", "FIC"], start_month, end_month, gender_filter)
 
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
-    st.markdown("Upload your FHSIS Excel files here to populate the dashboard. The app will automatically extract the 12 monthly sheets and isolate data for Abra's 27 RHUs.")
+    st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets and filters for Abra's 27 RHUs automatically.")
     
     col1, col2 = st.columns(2)
-    
     with col1:
         file_cpab = st.file_uploader("Upload: 1 CPAB, BCG and Hepa B", type=["csv", "xlsx"])
         if file_cpab:
