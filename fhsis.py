@@ -5,7 +5,7 @@ import plotly.express as px
 from streamlit_gsheets import GSheetsConnection
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", layout="wide")
+st.set_page_config(page_title="Abra FHSIS Dashboard", page_icon="💉", layout="wide")
 
 # --- LIST OF 27 ABRA RHUs ---
 ABRA_RHUS = [
@@ -17,7 +17,6 @@ ABRA_RHUS = [
 ]
 
 # --- GSHEETS CONFIGURATION ---
-# We will create one worksheet per dataset inside your master Google Sheet
 SHEET_MAPPING = {
     "CPAB_BCG_HepB": "CPAB_Data",
     "Penta": "Penta_Data",
@@ -32,15 +31,15 @@ def load_data_from_gsheets():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         for app_key, sheet_name in SHEET_MAPPING.items():
-            # Read data, gracefully ignore if the sheet is empty or missing
             try:
-                df = conn.read(worksheet=sheet_name, ttl=600) # Caches for 10 minutes
+                # ttl=0 forces fresh data on refresh
+                df = conn.read(worksheet=sheet_name, ttl=0) 
                 if not df.empty and 'Area' in df.columns:
                     loaded_data[app_key] = df
             except Exception:
                 pass 
     except Exception as e:
-        st.error("Google Sheets connection not fully configured yet. Please check your secrets.toml file.")
+        st.error("Google Sheets connection not fully configured yet. Please check your secrets.")
     return loaded_data
 
 def save_data_to_gsheets(data_dict):
@@ -65,20 +64,17 @@ def load_and_clean_fhsis_data(uploaded_file):
             
             for sheet in xls.sheet_names:
                 clean_sheet_name = sheet.lower().strip()
-                # Intelligent month matching (ignores random text/years added to the tab name)
                 for month in valid_months:
                     if month in clean_sheet_name and "q" not in clean_sheet_name and "annual" not in clean_sheet_name:
                         sheets_to_process[month.capitalize()] = pd.read_excel(xls, sheet_name=sheet, header=None)
                         break
 
         all_months_data = []
-        # Dynamic keywords to find the data anchor in future templates
         anchor_keywords = ['area', 'municipality', 'city/municipality', 'city / municipality', 'rhu', 'lgu']
         
         for month_val, df in sheets_to_process.items():
             area_row_idx = -1
             
-            # 1. Fuzzy Anchor Search
             for idx, row in df.iterrows():
                 row_str = " ".join(str(val).lower().strip() for val in row.values if pd.notna(val))
                 if any(keyword in row_str for keyword in anchor_keywords):
@@ -167,6 +163,10 @@ def load_and_clean_fhsis_data(uploaded_file):
         st.error(f"Error processing file: {e}")
         return None
 
+# --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
+if 'fhsis_data' not in st.session_state:
+    st.session_state['fhsis_data'] = load_data_from_gsheets()
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("FHSIS App")
@@ -176,10 +176,8 @@ with st.sidebar:
     if page == "📊 Dashboard":
         st.subheader("Global Filters")
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
-
-# --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
-if 'fhsis_data' not in st.session_state:
-    st.session_state['fhsis_data'] = load_data_from_gsheets()
+    else:
+        gender_filter = "Total" # Fallback for uploader page
 
 # --- HELPER FUNCTIONS ---
 def filter_data(df, start_month, end_month, gender):
@@ -207,6 +205,9 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_data(raw_df, start_m, end_m, gender)
         
+        # --- FIX: safe_filename moved up so it's globally available ---
+        safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+        
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
@@ -216,7 +217,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         
         if cols_to_plot:
             agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
-            safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
             
             st.markdown("#### 🏆 Province-Wide Summary")
             kpi_cols = st.columns(len(cols_to_plot))
