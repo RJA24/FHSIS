@@ -264,4 +264,97 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             
             fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=6
+            fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Children", legend_title="Antigen", margin=dict(t=60))
+            
+            config_rhu = {'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'height': 600, 'width': 1200, 'scale': 4}}
+            st.plotly_chart(fig_rhu, use_container_width=True, config=config_rhu)
+            
+        else:
+            st.warning("Could not find graphing columns for the selected demographic.")
+            
+        with st.expander("📄 View & Download Filtered Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data_{start_m}_to_{end_m}.csv", mime="text/csv")
+    else:
+        st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
+
+# --- MAIN DASHBOARD PAGE ---
+if page == "📊 Dashboard":
+    st.title("💉 Child Immunization Dashboard - Abra Province")
+    
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    start_month, end_month = st.select_slider("Select Month Range", options=months, value=("Jan", "Dec"))
+    
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "👶 Birth Doses (BCG/HepB)", 
+        "🛡️ Penta (DPT-HiB-HepB)", 
+        "💧 Polio (OPV/IPV)", 
+        "🫁 Pneumococcal (PCV)", 
+        "🎯 MMR & FIC"
+    ])
+    
+    with tab1:
+        render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG (0-28 days)", "HepB, within 24 hours"], start_month, end_month, gender_filter)
+
+    with tab2:
+        render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3"], start_month, end_month, gender_filter)
+
+    with tab3:
+        render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter)
+
+    with tab4:
+        render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter)
+
+    with tab5:
+        render_tab_content("MMR and FIC", "MMR", ["MMR 1", "MMR 2", "FIC"], start_month, end_month, gender_filter)
+
+# --- DATA UPLOADER PAGE ---
+elif page == "📁 Data Uploader":
+    st.title("Secure Data Uploader")
+    st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        file_cpab = st.file_uploader("Upload: 1 CPAB, BCG and Hepa B", type=["csv", "xlsx"])
+        if file_cpab:
+            df = load_and_clean_fhsis_data(file_cpab)
+            if df is not None: st.session_state['fhsis_data']["CPAB_BCG_HepB"] = df
+            
+        file_penta = st.file_uploader("Upload: 2 DPT-HiB-HepB", type=["csv", "xlsx"])
+        if file_penta:
+            df = load_and_clean_fhsis_data(file_penta)
+            if df is not None: st.session_state['fhsis_data']["Penta"] = df
+            
+        file_polio = st.file_uploader("Upload: 3 OPV and IPV", type=["csv", "xlsx"])
+        if file_polio:
+            df = load_and_clean_fhsis_data(file_polio)
+            if df is not None: st.session_state['fhsis_data']["Polio"] = df
+            
+    with col2:
+        file_pcv = st.file_uploader("Upload: 4 PCV", type=["csv", "xlsx"])
+        if file_pcv:
+            df = load_and_clean_fhsis_data(file_pcv)
+            if df is not None: st.session_state['fhsis_data']["PCV"] = df
+            
+        file_mmr = st.file_uploader("Upload: 5 MMR, FIC and CIC", type=["csv", "xlsx"])
+        if file_mmr:
+            df = load_and_clean_fhsis_data(file_mmr)
+            if df is not None: st.session_state['fhsis_data']["MMR"] = df
+            
+    st.markdown("---")
+    action_col1, action_col2 = st.columns(2)
+    
+    with action_col1:
+        if st.button("☁️ Save Data to Google Sheets", type="primary", use_container_width=True):
+            if st.session_state['fhsis_data']:
+                save_data_to_gsheets(st.session_state['fhsis_data'])
+                st.success("✅ Files processed and safely saved to Google Sheets! Head over to the Dashboard.")
+            else:
+                st.error("No data uploaded yet to save.")
+                
+    with action_col2:
+        if st.button("🗑️ Clear Current Uploads", type="secondary", use_container_width=True):
+            clear_session_data()
+            st.warning("Current app data cleared. (Note: This does not delete the permanent data inside Google Sheets).")
+            st.rerun()
