@@ -257,7 +257,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            # --- FIX: Tucked the Multiselect inside an expander to save vertical space! ---
             view_mode = st.radio(
                 "📊 Select Display Metric", 
                 ["Raw Counts", "Percentage (%) Coverage"], 
@@ -265,11 +264,16 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 key=f"toggle_{safe_filename}"
             )
             
+            # --- NEW: Dynamically strip out actual "Total" columns from the default selection ---
+            default_cols = [c for c in cols_to_plot if "total" not in c.replace(f"_{gender}", "").strip().lower()]
+            if not default_cols: # Fallback just in case all columns are totals
+                default_cols = cols_to_plot
+            
             with st.expander("⚙️ Add / Remove Indicators"):
                 selected_cols = st.multiselect(
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
-                    default=cols_to_plot,
+                    default=default_cols,
                     key=f"ms_{safe_filename}",
                     label_visibility="collapsed"
                 )
