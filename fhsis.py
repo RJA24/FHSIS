@@ -218,7 +218,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
-                if base in col and col.endswith(f"_{gender}"):
+                # FIX: Made the search case-insensitive with .lower() so it catches all variations
+                if base.lower() in col.lower() and col.endswith(f"_{gender}"):
                     if col not in cols_to_plot:  
                         cols_to_plot.append(col)
         
@@ -315,7 +316,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
                 
-                # --- NEW: MONTHLY TREND LINE CHART ---
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
                 
@@ -352,7 +352,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             else:
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
             
-            # --- DROPOUT RATE ANALYTICS ---
             dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
             dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and "MMR" in c), None))
 
@@ -399,11 +398,12 @@ if page == "📊 Dashboard":
         "🎯 MMR, FIC & CIC"
     ])
     
+    # FIX: Broadened and simplified Tab 1 base metrics
     with tab1:
-        render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG (0-28 days)", "HepB, within 24 hours"], start_month, end_month, gender_filter)
+        render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"], start_month, end_month, gender_filter)
 
     with tab2:
-        render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3"], start_month, end_month, gender_filter)
+        render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3", "Penta 1", "Penta 2", "Penta 3"], start_month, end_month, gender_filter)
 
     with tab3:
         render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter)
