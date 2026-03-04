@@ -2,36 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import os
-import shutil
+from streamlit_gsheets import GSheetsConnection
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", layout="wide")
-
-# --- LOCAL STORAGE CONFIG ---
-SAVE_DIR = "saved_fhsis_data"
-
-def save_data_to_disk(data_dict):
-    """Saves the dataframes to local disk so they survive a refresh."""
-    if not os.path.exists(SAVE_DIR):
-        os.makedirs(SAVE_DIR)
-    for key, df in data_dict.items():
-        df.to_pickle(os.path.join(SAVE_DIR, f"{key}.pkl"))
-
-def load_saved_data():
-    """Loads saved dataframes from the local disk if they exist."""
-    loaded_data = {}
-    if os.path.exists(SAVE_DIR):
-        for key in ["CPAB_BCG_HepB", "Penta", "Polio", "PCV", "MMR"]:
-            file_path = os.path.join(SAVE_DIR, f"{key}.pkl")
-            if os.path.exists(file_path):
-                loaded_data[key] = pd.read_pickle(file_path)
-    return loaded_data
-
-def clear_saved_data():
-    """Wipes the saved data folder."""
-    if os.path.exists(SAVE_DIR):
-        shutil.rmtree(SAVE_DIR)
 
 # --- LIST OF 27 ABRA RHUs ---
 ABRA_RHUS = [
@@ -42,7 +16,42 @@ ABRA_RHUS = [
     "Tayum", "Tineg", "Tubo", "Villaviciosa"
 ]
 
-# --- DATA CLEANING FUNCTION ---
+# --- GSHEETS CONFIGURATION ---
+# We will create one worksheet per dataset inside your master Google Sheet
+SHEET_MAPPING = {
+    "CPAB_BCG_HepB": "CPAB_Data",
+    "Penta": "Penta_Data",
+    "Polio": "Polio_Data",
+    "PCV": "PCV_Data",
+    "MMR": "MMR_Data"
+}
+
+def load_data_from_gsheets():
+    """Pulls permanent data from Google Sheets."""
+    loaded_data = {}
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        for app_key, sheet_name in SHEET_MAPPING.items():
+            # Read data, gracefully ignore if the sheet is empty or missing
+            try:
+                df = conn.read(worksheet=sheet_name, ttl=600) # Caches for 10 minutes
+                if not df.empty and 'Area' in df.columns:
+                    loaded_data[app_key] = df
+            except Exception:
+                pass 
+    except Exception as e:
+        st.error("Google Sheets connection not fully configured yet. Please check your secrets.toml file.")
+    return loaded_data
+
+def save_data_to_gsheets(data_dict):
+    """Pushes the uploaded FHSIS data permanently to Google Sheets."""
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    for app_key, df in data_dict.items():
+        sheet_name = SHEET_MAPPING[app_key]
+        with st.spinner(f"Saving {app_key} to cloud database..."):
+            conn.update(worksheet=sheet_name, data=df)
+
+# --- SUPER INTELLIGENT DATA PARSER (2026 READY) ---
 @st.cache_data
 def load_and_clean_fhsis_data(uploaded_file):
     try:
@@ -52,18 +61,27 @@ def load_and_clean_fhsis_data(uploaded_file):
         else:
             xls = pd.ExcelFile(uploaded_file)
             sheets_to_process = {}
-            valid_months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
             
             for sheet in xls.sheet_names:
-                if any(month.lower() in sheet.lower() for month in valid_months) and "Q" not in sheet and "202" not in sheet:
-                    sheets_to_process[sheet] = pd.read_excel(xls, sheet_name=sheet, header=None)
+                clean_sheet_name = sheet.lower().strip()
+                # Intelligent month matching (ignores random text/years added to the tab name)
+                for month in valid_months:
+                    if month in clean_sheet_name and "q" not in clean_sheet_name and "annual" not in clean_sheet_name:
+                        sheets_to_process[month.capitalize()] = pd.read_excel(xls, sheet_name=sheet, header=None)
+                        break
 
         all_months_data = []
+        # Dynamic keywords to find the data anchor in future templates
+        anchor_keywords = ['area', 'municipality', 'city/municipality', 'city / municipality', 'rhu', 'lgu']
         
-        for sheet_name, df in sheets_to_process.items():
+        for month_val, df in sheets_to_process.items():
             area_row_idx = -1
+            
+            # 1. Fuzzy Anchor Search
             for idx, row in df.iterrows():
-                if any('Area' in str(val).strip() for val in row.values if pd.notna(val)):
+                row_str = " ".join(str(val).lower().strip() for val in row.values if pd.notna(val))
+                if any(keyword in row_str for keyword in anchor_keywords):
                     area_row_idx = idx
                     break
                     
@@ -71,9 +89,9 @@ def load_and_clean_fhsis_data(uploaded_file):
                 continue 
                 
             sub_row_idx = -1
-            for idx in range(area_row_idx + 1, min(area_row_idx + 5, len(df))):
-                row = df.iloc[idx]
-                if any(str(val).strip() in ['Male', 'Female'] for val in row.values if pd.notna(val)):
+            for idx in range(area_row_idx + 1, min(area_row_idx + 6, len(df))):
+                row_str = " ".join(str(val).lower().strip() for val in row.values if pd.notna(val))
+                if 'male' in row_str or 'female' in row_str:
                     sub_row_idx = idx
                     break
 
@@ -115,9 +133,11 @@ def load_and_clean_fhsis_data(uploaded_file):
             df_clean = df_clean.loc[:, df_clean.columns != '']
 
             first_col = df_clean.columns[0]
-            if first_col != 'Area':
+            if first_col.lower() not in anchor_keywords:
                 if 'Area' in df_clean.columns:
                     df_clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
+                df_clean.rename(columns={first_col: 'Area'}, inplace=True)
+            else:
                 df_clean.rename(columns={first_col: 'Area'}, inplace=True)
             
             df_clean.dropna(subset=['Area'], inplace=True)
@@ -127,21 +147,6 @@ def load_and_clean_fhsis_data(uploaded_file):
             df_clean['Area'] = df_clean['Area_Clean']
             df_clean.drop(columns=['Area_Clean'], inplace=True)
 
-            sheet_lower = sheet_name.lower()
-            if "jan" in sheet_lower: month_val = "Jan"
-            elif "feb" in sheet_lower: month_val = "Feb"
-            elif "mar" in sheet_lower: month_val = "Mar"
-            elif "apr" in sheet_lower: month_val = "Apr"
-            elif "may" in sheet_lower: month_val = "May"
-            elif "jun" in sheet_lower: month_val = "Jun"
-            elif "jul" in sheet_lower: month_val = "Jul"
-            elif "aug" in sheet_lower: month_val = "Aug"
-            elif "sep" in sheet_lower: month_val = "Sep"
-            elif "oct" in sheet_lower: month_val = "Oct"
-            elif "nov" in sheet_lower: month_val = "Nov"
-            elif "dec" in sheet_lower: month_val = "Dec"
-            else: month_val = "Unknown"
-            
             df_clean['Month'] = month_val
             
             for col in df_clean.columns:
@@ -154,12 +159,12 @@ def load_and_clean_fhsis_data(uploaded_file):
             all_months_data.append(df_clean)
         
         if not all_months_data:
-            raise ValueError("Could not find properly formatted monthly sheets in the file.")
+            raise ValueError("Could not extract data. The template format may have changed too drastically.")
 
         return pd.concat(all_months_data, ignore_index=True)
 
     except Exception as e:
-        st.error(f"Error processing {uploaded_file.name}: {e}")
+        st.error(f"Error processing file: {e}")
         return None
 
 # --- SIDEBAR ---
@@ -172,9 +177,9 @@ with st.sidebar:
         st.subheader("Global Filters")
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
-# --- INITIALIZE SESSION STATE FROM DISK ---
+# --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
 if 'fhsis_data' not in st.session_state:
-    st.session_state['fhsis_data'] = load_saved_data()
+    st.session_state['fhsis_data'] = load_data_from_gsheets()
 
 # --- HELPER FUNCTIONS ---
 def filter_data(df, start_month, end_month, gender):
@@ -264,7 +269,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender):
             csv_data = convert_df_to_csv(filtered_df)
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data_{start_m}_to_{end_m}.csv", mime="text/csv")
     else:
-        st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
+        st.info("No data available. Please go to the Data Uploader page to add files.")
 
 # --- MAIN DASHBOARD PAGE ---
 if page == "📊 Dashboard":
@@ -299,7 +304,7 @@ if page == "📊 Dashboard":
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
-    st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them safely.")
+    st.markdown("Upload FHSIS Excel files. The intelligent parser will clean the data and sync it directly to Google Sheets.")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -330,19 +335,10 @@ elif page == "📁 Data Uploader":
             if df is not None: st.session_state['fhsis_data']["MMR"] = df
             
     st.markdown("---")
-    action_col1, action_col2 = st.columns(2)
     
-    with action_col1:
-        if st.button("💾 Save Data & Go to Dashboard", type="primary", use_container_width=True):
-            if st.session_state['fhsis_data']:
-                save_data_to_disk(st.session_state['fhsis_data'])
-                st.success("✅ Files processed and safely saved! You can now freely refresh the app. Head over to the Dashboard.")
-            else:
-                st.error("No data uploaded yet to save.")
-                
-    with action_col2:
-        if st.button("🗑️ Clear Saved Data", type="secondary", use_container_width=True):
-            clear_saved_data()
-            st.session_state['fhsis_data'] = {}
-            st.warning("All saved data has been wiped. The dashboard is now clean.")
-            st.rerun()
+    if st.button("☁️ Sync Data to Google Sheets", type="primary", use_container_width=True):
+        if st.session_state['fhsis_data']:
+            save_data_to_gsheets(st.session_state['fhsis_data'])
+            st.success("✅ Files successfully synced to Google Sheets! The dashboard is now permanently updated.")
+        else:
+            st.error("No data uploaded yet to save.")
