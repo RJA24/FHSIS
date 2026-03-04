@@ -186,10 +186,10 @@ def load_and_clean_fhsis_data(uploaded_file, year):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("FHSIS App")
-    page = st.radio("Navigation", ["📊 Dashboard", "📁 Data Uploader"])
+    page = st.radio("Navigation", ["📊 Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
     st.markdown("---")
     
-    if page == "📊 Dashboard":
+    if page in ["📊 Dashboard", "📈 YoY Comparison"]:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2025, 2026, 2027])
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
@@ -350,7 +350,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
                 st.plotly_chart(fig_top5, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
                 
-                # --- NEW: GEOSPATIAL MAP ---
                 st.markdown("---")
                 st.markdown(f"#### 🗺️ Provincial Heatmap")
                 
@@ -358,7 +357,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 map_df['Rank_Metric'] = map_df[selected_cols].mean(axis=1)
                 map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
                 map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
-                map_df = map_df[map_df['Lat'] != 0] # Filter safety
+                map_df = map_df[map_df['Lat'] != 0] 
                 
                 color_scale = "RdYlGn" if view_mode == "Percentage (%) Coverage" else "Blues"
                 map_title = f"Geospatial View: Average {y_axis_label}"
@@ -374,7 +373,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
                 st.plotly_chart(fig_map, use_container_width=True)
                 
-                # --- MONTHLY TREND LINE CHART ---
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
                 
@@ -399,7 +397,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 
                 fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True,
-                                    title=f"Provincial Monthly Trend ({start_m} - {end_m})",
+                                    title=f"Provincial Trend ({start_m} - {end_m})",
                                     color_discrete_sequence=px.colors.qualitative.Pastel)
                 
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
@@ -482,6 +480,80 @@ if page == "📊 Dashboard":
 
     with tab5:
         render_tab_content("MMR, FIC and CIC", "MMR", ["MMR 1", "MMR 2", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year)
+
+# --- YOY COMPARISON PAGE ---
+elif page == "📈 YoY Comparison":
+    st.title("⚖️ Year-Over-Year (YoY) Performance")
+    st.markdown("Compare immunization performance between two different years to instantly track regional growth or decline.")
+
+    col_y1, col_y2, col_y3 = st.columns(3)
+    with col_y1:
+        yoy_dataset = st.selectbox("Select Vaccine Category", ["Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC"])
+    with col_y2:
+        year_a = st.selectbox("Baseline Year (Year A)", [2025, 2026, 2027], index=0)
+    with col_y3:
+        year_b = st.selectbox("Comparison Year (Year B)", [2025, 2026, 2027], index=1)
+
+    dataset_keys = {
+        "Birth Doses": ("CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"]),
+        "Pentavalent": ("Penta", ["DPT", "Penta"]),
+        "Polio": ("Polio", ["OPV", "IPV"]),
+        "Pneumococcal (PCV)": ("PCV", ["PCV"]),
+        "MMR, FIC & CIC": ("MMR", ["MMR", "FIC", "CIC"])
+    }
+
+    df_key, base_mets = dataset_keys[yoy_dataset]
+
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+
+        available_cols = []
+        for base in base_mets:
+            for col in raw_df.columns:
+                if base.lower() in col.lower() and col.endswith(f"_{gender_filter}"):
+                    if col not in available_cols:
+                        available_cols.append(col)
+
+        if available_cols:
+            compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols)
+
+            if 'Year' in raw_df.columns:
+                df_a = raw_df[raw_df['Year'] == year_a]
+                agg_a = df_a.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_a}'})
+
+                df_b = raw_df[raw_df['Year'] == year_b]
+                agg_b = df_b.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_b}'})
+
+                merged = pd.merge(pd.DataFrame({'Area': ABRA_RHUS}), agg_a, on='Area', how='left').fillna(0)
+                merged = pd.merge(merged, agg_b, on='Area', how='left').fillna(0)
+
+                merged['Variance'] = merged[f'{year_b}'] - merged[f'{year_a}']
+
+                st.markdown("---")
+                st.markdown(f"#### 📊 {compare_col.replace(f'_{gender_filter}', '')} : {year_a} vs {year_b}")
+
+                melted_yoy = merged.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Doses')
+                fig_yoy = px.bar(melted_yoy, x='Area', y='Doses', color='Year', barmode='group',
+                                 title=f"Head-to-Head Comparison: {year_a} vs {year_b}", text_auto=True, color_discrete_sequence=["#1f77b4", "#ff7f0e"])
+                fig_yoy.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Doses", margin=dict(t=40))
+                st.plotly_chart(fig_yoy, use_container_width=True)
+
+                st.markdown(f"#### 📈 Growth / Decline (Variance)")
+                merged['Color'] = np.where(merged['Variance'] >= 0, 'Growth (Positive)', 'Decline (Negative)')
+                fig_var = px.bar(merged, x='Area', y='Variance', color='Color', text_auto=True,
+                                 color_discrete_map={'Growth (Positive)': 'green', 'Decline (Negative)': 'red'},
+                                 title=f"Net Change in Doses ({year_b} minus {year_a})")
+                fig_var.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Difference in Doses", margin=dict(t=40))
+                st.plotly_chart(fig_var, use_container_width=True)
+
+                with st.expander("📄 View & Download YoY Data Table"):
+                    st.dataframe(merged[['Area', f'{year_a}', f'{year_b}', 'Variance']], use_container_width=True, hide_index=True)
+            else:
+                st.warning("Historical data missing 'Year' tags. Please re-upload your files and select the year.")
+        else:
+            st.warning("No indicator columns found for this category.")
+    else:
+        st.info("No data available for this category yet. Go to Data Uploader to push your FHSIS files.")
 
 # --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
