@@ -204,6 +204,8 @@ with st.sidebar:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
+        # --- NEW: CUMULATIVE VS DISCRETE MASTER SWITCH ---
+        data_format = st.selectbox("Excel Data Format", ["Discrete (Monthly)", "Cumulative (Year-to-Date)"], index=1)
 
 # --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
 if 'fhsis_data' not in st.session_state:
@@ -271,7 +273,9 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                             cols_to_plot.append(col)
         
         if cols_to_plot:
-            agg_dict = {col: 'sum' for col in cols_to_plot}
+            # --- FIX: DYNAMIC AGGREGATION BASED ON DATA FORMAT ---
+            agg_func = 'max' if data_format == "Cumulative (Year-to-Date)" else 'sum'
+            agg_dict = {col: agg_func for col in cols_to_plot}
             for ec in elig_cols:
                 agg_dict[ec] = 'max' 
                 
@@ -307,7 +311,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_picker_no_percent_{safe_filename}_{year}",
+                    key=f"ms_picker_v2_{safe_filename}_{year}", 
                     label_visibility="collapsed"
                 )
 
@@ -427,6 +431,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
                 
+                # --- NOTE: Trend Chart always sums across areas for the specific month ---
                 trend_agg = filtered_df.groupby('Month')[selected_cols].sum().reset_index()
                 months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                 trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
@@ -539,9 +544,23 @@ if page == "📊 Dashboard":
             p3_col = next((c for c in penta_df.columns if (" 3" in c or "3_" in c) and "%" not in c), None)
             
             if fic_col and elig_col:
-                prov_fic = mmr_df[fic_col].sum()
+                # --- FIX: DYNAMIC EXECUTIVE MATH ---
+                if data_format == "Cumulative (Year-to-Date)":
+                    prov_fic = mmr_df.groupby('Area')[fic_col].max().sum()
+                    prov_cic = mmr_df.groupby('Area')[cic_col].max().sum() if cic_col else 0
+                    p1_tot = penta_df.groupby('Area')[p1_col].max().sum() if p1_col else 0
+                    p3_tot = penta_df.groupby('Area')[p3_col].max().sum() if p3_col else 0
+                    
+                    rhu_fic = mmr_df.groupby('Area').agg({fic_col: 'max', elig_col: 'max'}).reset_index()
+                else:
+                    prov_fic = mmr_df[fic_col].sum()
+                    prov_cic = mmr_df[cic_col].sum() if cic_col else 0
+                    p1_tot = penta_df[p1_col].sum() if p1_col else 0
+                    p3_tot = penta_df[p3_col].sum() if p3_col else 0
+                    
+                    rhu_fic = mmr_df.groupby('Area').agg({fic_col: 'sum', elig_col: 'max'}).reset_index()
+
                 prov_elig = mmr_df.groupby('Area')[elig_col].max().sum() 
-                prov_cic = mmr_df[cic_col].sum() if cic_col else 0
                 
                 curr_cov = (prov_fic / prov_elig * 100) if prov_elig > 0 else 0
                 cic_cov = (prov_cic / prov_elig * 100) if prov_elig > 0 else 0
@@ -555,11 +574,8 @@ if page == "📊 Dashboard":
                 
                 prov_drop = 0
                 if p1_col and p3_col:
-                    p1_tot = penta_df[p1_col].sum()
-                    p3_tot = penta_df[p3_col].sum()
                     prov_drop = ((p1_tot - p3_tot) / p1_tot * 100) if p1_tot > 0 else 0
                 
-                # --- NEW: DATA QUALITY AUDIT ENGINE ---
                 dq_warnings = []
                 fic_label = "Fully Immunized Child (FIC)"
                 cic_label = "Completely Immunized (CIC)"
@@ -593,7 +609,6 @@ if page == "📊 Dashboard":
                     
                 col_e4.metric(drop_label, f"{prov_drop:.1f}%", "Target: < 10%", delta_color="inverse")
                 
-                # --- WARNING BOX DISPLAY ---
                 if dq_warnings:
                     st.warning("🕵️‍♂️ **Automated Data Quality Audit:** Potential anomalies detected in the aggregated data.")
                     for w in dq_warnings:
@@ -615,7 +630,6 @@ if page == "📊 Dashboard":
                 st.markdown("---")
                 col_lead1, col_lead2 = st.columns(2)
                 
-                rhu_fic = mmr_df.groupby('Area').agg({fic_col: 'sum', elig_col: 'max'}).reset_index()
                 rhu_fic['Coverage'] = (rhu_fic[fic_col] / rhu_fic[elig_col] * 100).fillna(0)
                 rhu_sorted = rhu_fic.sort_values(by='Coverage', ascending=False)
                 
@@ -700,10 +714,15 @@ elif page == "📈 YoY Comparison":
 
                 if 'Year' in raw_df.columns:
                     df_a = raw_df[raw_df['Year'] == year_a]
-                    agg_a = df_a.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_a}'})
-
                     df_b = raw_df[raw_df['Year'] == year_b]
-                    agg_b = df_b.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_b}'})
+                    
+                    # --- FIX: DYNAMIC YOY MATH ---
+                    if data_format == "Cumulative (Year-to-Date)":
+                        agg_a = df_a.groupby('Area')[compare_col].max().reset_index().rename(columns={compare_col: f'{year_a}'})
+                        agg_b = df_b.groupby('Area')[compare_col].max().reset_index().rename(columns={compare_col: f'{year_b}'})
+                    else:
+                        agg_a = df_a.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_a}'})
+                        agg_b = df_b.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_b}'})
 
                     merged = pd.merge(pd.DataFrame({'Area': ABRA_RHUS}), agg_a, on='Area', how='left').fillna(0)
                     merged = pd.merge(merged, agg_b, on='Area', how='left').fillna(0)
