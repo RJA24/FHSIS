@@ -307,7 +307,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_picker_v2_{safe_filename}_{year}", # Updated key to force refresh
+                    key=f"ms_picker_v2_{safe_filename}_{year}", 
                     label_visibility="collapsed"
                 )
 
@@ -514,7 +514,9 @@ if page == "📊 Dashboard":
             
     st.markdown("<br>", unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    # --- NEW: Added Executive Summary as the very first Tab! ---
+    tab_exec, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "⭐ Executive Summary",
         "👶 Birth Doses (BCG/HepB)", 
         "🛡️ Penta (DPT-HiB-HepB)", 
         "💧 Polio (OPV/IPV)", 
@@ -522,6 +524,93 @@ if page == "📊 Dashboard":
         "🎯 MMR, FIC & CIC"
     ])
     
+    with tab_exec:
+        st.markdown("### 🏆 Provincial Executive Overview")
+        st.markdown("High-level snapshot of critical DOH performance metrics and forecasting.")
+        
+        if "MMR" in st.session_state['fhsis_data'] and "Penta" in st.session_state['fhsis_data']:
+            mmr_df = filter_data(st.session_state['fhsis_data']["MMR"], start_month, end_month, gender_filter, selected_year)
+            penta_df = filter_data(st.session_state['fhsis_data']["Penta"], start_month, end_month, gender_filter, selected_year)
+            
+            fic_col = next((c for c in mmr_df.columns if "FIC" in c and "%" not in c), None)
+            cic_col = next((c for c in mmr_df.columns if "CIC" in c and "%" not in c), None)
+            elig_col = next((c for c in mmr_df.columns if 'elig' in c.lower() or 'pop' in c.lower()), None)
+            
+            p1_col = next((c for c in penta_df.columns if (" 1" in c or "1_" in c) and "%" not in c), None)
+            p3_col = next((c for c in penta_df.columns if (" 3" in c or "3_" in c) and "%" not in c), None)
+            
+            if fic_col and elig_col:
+                prov_fic = mmr_df[fic_col].sum()
+                prov_elig = mmr_df.groupby('Area')[elig_col].max().sum() 
+                prov_cic = mmr_df[cic_col].sum() if cic_col else 0
+                
+                curr_cov = (prov_fic / prov_elig * 100) if prov_elig > 0 else 0
+                
+                # Forecasting Math
+                months_idx_start = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].index(start_month)
+                months_idx_end = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].index(end_month)
+                months_count = months_idx_end - months_idx_start + 1
+                
+                projected_fic = (prov_fic / months_count) * 12 if months_count > 0 else 0
+                projected_cov = min((projected_fic / prov_elig * 100), 100) if prov_elig > 0 else 0
+                
+                prov_drop = 0
+                if p1_col and p3_col:
+                    p1_tot = penta_df[p1_col].sum()
+                    p3_tot = penta_df[p3_col].sum()
+                    prov_drop = ((p1_tot - p3_tot) / p1_tot * 100) if p1_tot > 0 else 0
+                    
+                col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+                col_e1.metric("Fully Immunized Child (FIC)", f"{prov_fic:,.0f}", f"Current Cov: {curr_cov:.1f}%")
+                
+                proj_delta = projected_cov - curr_cov
+                col_e2.metric("End-of-Year FIC Forecast", f"{projected_cov:.1f}%", f"{proj_delta:+.1f}% vs Current", delta_color="normal" if projected_cov >= 95 else "off")
+                
+                if cic_col:
+                    cic_cov = (prov_cic / prov_elig * 100) if prov_elig > 0 else 0
+                    col_e3.metric("Completely Immunized (CIC)", f"{prov_cic:,.0f}", f"Current Cov: {cic_cov:.1f}%")
+                else:
+                    col_e3.metric("Completely Immunized (CIC)", "N/A")
+                    
+                col_e4.metric("Provincial Dropout (Penta 1-3)", f"{prov_drop:.1f}%", "Target: < 10%", delta_color="inverse")
+                
+                st.markdown("---")
+                st.markdown("#### 🚀 Target Forecasting (FIC Coverage)")
+                forecast_df = pd.DataFrame({
+                    "Metric": ["Current Coverage", "Projected Year-End", "DOH Target"],
+                    "Coverage (%)": [curr_cov, projected_cov, 95]
+                })
+                fig_forecast = px.bar(forecast_df, x="Coverage (%)", y="Metric", orientation='h', 
+                                      color="Metric", text_auto=".1f",
+                                      color_discrete_map={"Current Coverage": "#1f77b4", "Projected Year-End": "#ff7f0e", "DOH Target": "red"})
+                fig_forecast.add_vline(x=95, line_dash="dash", line_color="red", annotation_text="95% Target")
+                fig_forecast.update_layout(showlegend=False, xaxis_range=[0, max(100, projected_cov + 5)])
+                st.plotly_chart(fig_forecast, use_container_width=True, key=f"forecast_exec_{selected_year}")
+                
+                st.markdown("---")
+                col_lead1, col_lead2 = st.columns(2)
+                
+                rhu_fic = mmr_df.groupby('Area').agg({fic_col: 'sum', elig_col: 'max'}).reset_index()
+                rhu_fic['Coverage'] = (rhu_fic[fic_col] / rhu_fic[elig_col] * 100).fillna(0)
+                rhu_sorted = rhu_fic.sort_values(by='Coverage', ascending=False)
+                
+                with col_lead1:
+                    st.markdown("#### 🌟 Top 3 RHUs (FIC)")
+                    top3 = rhu_sorted.head(3)
+                    fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
+                    fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
+                    st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
+                    
+                with col_lead2:
+                    st.markdown("#### ⚠️ Bottom 3 RHUs (FIC)")
+                    bot3 = rhu_sorted.tail(3).sort_values(by='Coverage', ascending=True)
+                    fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
+                    fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
+                    st.plotly_chart(fig_bot3, use_container_width=True, key=f"bot3_exec_fic_{selected_year}")
+
+        else:
+            st.info("Upload both 'Pentavalent' and 'MMR/FIC' data via the Data Uploader to unlock the Executive Summary.")
+
     with tab1:
         render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"], start_month, end_month, gender_filter, selected_year)
 
