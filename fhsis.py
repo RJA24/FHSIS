@@ -631,14 +631,14 @@ if page == "📊 Dashboard":
                 rhu_sorted = rhu_fic.sort_values(by='Coverage', ascending=False)
                 
                 with col_lead1:
-                    st.markdown("#### 🌟 Top 3 RHUs (FIC) - Under debugging")
+                    st.markdown("#### 🌟 Top 3 RHUs (FIC) - This section is undergoing maintenance. Thanks for your patience.")
                     top3 = rhu_sorted.head(3)
                     fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
                     fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
                     st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
                     
                 with col_lead2:
-                    st.markdown("#### ⚠️ Bottom 3 RHUs (FIC)")
+                    st.markdown("#### ⚠️ Bottom 3 RHUs (FIC) - This section is undergoing maintenance. Thanks for your patience.")
                     bot3 = rhu_sorted.tail(3).sort_values(by='Coverage', ascending=True)
                     fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
                     fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
