@@ -278,7 +278,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
         for base in base_metrics:
             for col in filtered_df.columns:
                 if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
-                    if "%" not in col:
+                    # --- FIX: BAN THE WORD DEFICIT FROM GRABBING ANY DATA ---
+                    if "%" not in col and "deficit" not in col.lower():
                         if col not in cols_to_plot:  
                             cols_to_plot.append(col)
         
@@ -543,8 +544,9 @@ if page == "📊 Dashboard":
             mmr_df = filter_data(st.session_state['fhsis_data']["MMR"], start_month, end_month, gender_filter, selected_year)
             penta_df = filter_data(st.session_state['fhsis_data']["Penta"], start_month, end_month, gender_filter, selected_year)
             
-            fic_col = next((c for c in mmr_df.columns if "FIC" in c and "%" not in c), None)
-            cic_col = next((c for c in mmr_df.columns if "CIC" in c and "%" not in c), None)
+            # --- FIX: BAN THE WORD DEFICIT FROM HIJACKING THE EXECUTIVE SUMMARY ---
+            fic_col = next((c for c in mmr_df.columns if "FIC" in c and "DEFICIT" not in c.upper() and "%" not in c), None)
+            cic_col = next((c for c in mmr_df.columns if "CIC" in c and "DEFICIT" not in c.upper() and "%" not in c), None)
             elig_col = next((c for c in mmr_df.columns if 'elig' in c.lower() or 'pop' in c.lower()), None)
             
             p1_col = next((c for c in penta_df.columns if (" 1" in c or "1_" in c) and "%" not in c), None)
@@ -694,7 +696,8 @@ elif page == "📈 YoY Comparison":
             available_cols = []
             for base in base_mets:
                 for col in raw_df.columns:
-                    if base.lower() in col.lower() and "%" not in col:
+                    # --- FIX: BAN DEFICIT FROM YOY OPTIONS ---
+                    if base.lower() in col.lower() and "%" not in col and "deficit" not in col.lower():
                         is_valid = False
                         if gender_filter == "Total":
                             if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
