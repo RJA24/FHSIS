@@ -57,10 +57,10 @@ def save_data_to_gsheets(new_data_dict):
                         padding = pd.DataFrame([[""] * len(combined_df.columns)] * diff, columns=combined_df.columns)
                         write_df = pd.concat([combined_df, padding], ignore_index=True)
                         conn.update(worksheet=sheet_name, data=write_df)
-                        time.sleep(2.5) # FIX: API Rate Limiter
+                        time.sleep(2.5) 
                         continue
                 conn.update(worksheet=sheet_name, data=combined_df)
-                time.sleep(2.5) # FIX: API Rate Limiter
+                time.sleep(2.5) 
             except Exception as e:
                 st.error(f"❌ Failed to save {sheet_name}. Verify the tab exists in Google Sheets and is named exactly correct.")
 
@@ -92,11 +92,11 @@ def nuke_cloud_database():
                     cols = existing_data[app_key].columns
                     blank_df = pd.DataFrame([[""] * len(cols)] * (old_len + 5), columns=cols)
                     conn.update(worksheet=sheet_name, data=blank_df)
-                    time.sleep(2.5) # FIX: API Rate Limiter
+                    time.sleep(2.5) 
                     
                 empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) 
                 conn.update(worksheet=sheet_name, data=empty_df)
-                time.sleep(2.5) # FIX: API Rate Limiter
+                time.sleep(2.5) 
             except Exception as e:
                 st.warning(f"⚠️ Skipped {sheet_name} (Tab might not exist yet or API limit reached).")
             
@@ -127,7 +127,7 @@ ABRA_COORDS = {
     "Tineg": (17.785, 120.938), "Tubo": (17.234, 120.748), "Villaviciosa": (17.439, 120.632)
 }
 
-# --- UNTOUCHED IMMUNIZATION CLEANER (FIXED OCTOBER BUG) ---
+# --- UNTOUCHED IMMUNIZATION CLEANER ---
 @st.cache_data
 def load_and_clean_fhsis_data(uploaded_file, year):
     try:
@@ -138,7 +138,6 @@ def load_and_clean_fhsis_data(uploaded_file, year):
             xls = pd.ExcelFile(uploaded_file)
             sheets_to_process = {}
             valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-            
             invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem"]
             month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                          "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
@@ -342,6 +341,7 @@ def filter_data(df, start_month, end_month, gender, year, is_cancer=False):
         clean_col = col.lower()
         is_valid_gender = False
         
+        # Cancer is Female only, bypassing the dropdown logic
         if is_cancer:
             is_valid_gender = True
         else:
@@ -421,7 +421,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
             for ec in elig_cols: agg_dict[ec] = 'max' 
                 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
-            view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_{safe_filename}")
+            # FIX: Bind gender to key to prevent state crashes
+            view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_{safe_filename}_{year}_{gender}")
             
             default_cols = []
             for c in cols_to_plot:
@@ -436,15 +437,19 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
             if not default_cols and len(cols_to_plot) > 0: default_cols = [cols_to_plot[0]]
             
             with st.expander("⚙️ Add / Remove Indicators"):
-                selected_cols = st.multiselect("Select specific indicators to include in the dashboard:", options=cols_to_plot, default=default_cols, key=f"ms_picker_v3_{safe_filename}_{year}", label_visibility="collapsed")
+                # FIX: Bind gender to key to prevent state crashes
+                selected_cols = st.multiselect("Select specific indicators to include in the dashboard:", options=cols_to_plot, default=default_cols, key=f"ms_picker_{safe_filename}_{year}_{gender}", label_visibility="collapsed")
 
-            if selected_cols:
-                provincial_antigens = {col: agg_df[col].sum() for col in selected_cols}
+            # Double safety lock against old Streamlit state
+            valid_selected = [c for c in selected_cols if c in agg_df.columns]
+            
+            if valid_selected:
+                provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
                 st.markdown("#### 🏆 Province-Wide Summary")
-                kpi_cols = st.columns(len(selected_cols))
-                for i, col in enumerate(selected_cols):
+                kpi_cols = st.columns(len(valid_selected))
+                for i, col in enumerate(valid_selected):
                     total_val = provincial_antigens[col]
                     clean_name = col.replace(f"_{gender}", "")
                     if view_mode == "Percentage (%) Coverage" and elig_cols:
@@ -454,26 +459,26 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                         kpi_cols[i].metric(label=f"Total {clean_name}", value=f"{int(total_val):,}")
                 
                 st.markdown("---")
-                chart_df = agg_df[['Area'] + selected_cols + elig_cols].copy()
+                chart_df = agg_df[['Area'] + valid_selected + elig_cols].copy()
                 abra_total_df = pd.DataFrame()
-                abra_total_df['Vaccine/Antigen'] = selected_cols
+                abra_total_df['Vaccine/Antigen'] = valid_selected
                 
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
                     main_elig_col = elig_cols[0]
-                    for col in selected_cols:
+                    for col in valid_selected:
                         chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
                         chart_df[col] = chart_df[col].round(1)
-                    prov_counts = [provincial_antigens[c] for c in selected_cols]
+                    prov_counts = [provincial_antigens[c] for c in valid_selected]
                     abra_total_df['Count'] = [(c / provincial_elig * 100) if provincial_elig > 0 else 0 for c in prov_counts]
                     abra_total_df['Count'] = abra_total_df['Count'].round(1)
                     y_axis_label = "Coverage (%)"
                 else:
-                    abra_total_df['Count'] = [provincial_antigens[c] for c in selected_cols]
+                    abra_total_df['Count'] = [provincial_antigens[c] for c in valid_selected]
                     y_axis_label = "Number of Children"
 
                 st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
                 abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
-                uid = f"{safe_filename}_{year}_{int(time.time())}"
+                uid = f"{safe_filename}_{year}_{gender}_{int(time.time())}"
                 fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen', title=f"Abra Province Total ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
                     fig_abra.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
@@ -483,7 +488,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
 
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
+                melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
                 melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
@@ -495,7 +500,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.markdown("---")
                 st.markdown(f"#### 🏆 Top 5 Performing RHUs (Average)")
                 top5_df = chart_df.copy()
-                top5_df['Rank_Metric'] = top5_df[selected_cols].mean(axis=1)
+                top5_df['Rank_Metric'] = top5_df[valid_selected].mean(axis=1)
                 top5_df = top5_df.sort_values(by='Rank_Metric', ascending=True).tail(5)
                 fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h', title=f"Top 5 RHUs ({start_m} - {end_m})", text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True, color='Rank_Metric', color_continuous_scale="Greens")
                 fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
@@ -504,7 +509,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.markdown("---")
                 st.markdown(f"#### 🗺️ Provincial Heatmap")
                 map_df = chart_df.copy()
-                map_df['Rank_Metric'] = map_df[selected_cols].mean(axis=1)
+                map_df['Rank_Metric'] = map_df[valid_selected].mean(axis=1)
                 map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
                 map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
                 map_df = map_df[map_df['Lat'] != 0] 
@@ -516,20 +521,20 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
-                trend_agg = filtered_df.groupby('Month')[selected_cols].sum().reset_index()
+                trend_agg = filtered_df.groupby('Month')[valid_selected].sum().reset_index()
                 months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                 trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
                 trend_agg = trend_agg.sort_values('Month')
                 trend_chart_df = pd.DataFrame({'Month': trend_agg['Month']})
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
-                    for col in selected_cols:
+                    for col in valid_selected:
                         trend_chart_df[col] = [(v / provincial_elig * 100) if provincial_elig > 0 else 0 for v in trend_agg[col]]
                         trend_chart_df[col] = trend_chart_df[col].round(1)
                     y_trend_label = "Coverage (%)"
                 else:
-                    for col in selected_cols: trend_chart_df[col] = trend_agg[col]
+                    for col in valid_selected: trend_chart_df[col] = trend_agg[col]
                     y_trend_label = "Number of Children"
-                trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=selected_cols, var_name='Vaccine/Antigen', value_name='Count')
+                trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
                 trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True, title=f"Provincial Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols: fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
@@ -563,9 +568,15 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
 
 # --- NEW: MATHEMATICAL NCD RENDERER ---
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
+    is_cancer = "Cancer" in df_key
+    
+    # FIX: Smart Domain Logic - Disables Cancer charts if Male is selected
+    if is_cancer and gender == "Male":
+        st.info(f"🎗️ **{tab_title}** data is exclusively tracked for the Female demographic. Please switch the Global Filter above to 'Female' or 'Total'.")
+        return
+        
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        is_cancer = "Cancer" in df_key
         filtered_df = filter_data(raw_df, start_m, end_m, gender, year, is_cancer=is_cancer)
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
@@ -593,18 +604,23 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
             for ec in elig_cols: agg_dict[ec] = 'max' 
                 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
-            view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_ncd_{safe_filename}")
+            # FIX: Bind gender to key to prevent state crashes
+            view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_ncd_{safe_filename}_{year}_{gender}")
             
             with st.expander("⚙️ Add / Remove NCD Indicators"):
-                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot[:3], key=f"ms_ncd_{safe_filename}_{year}", format_func=get_clean_ncd_name)
+                # FIX: Bind gender to key to prevent state crashes
+                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot[:3], key=f"ms_ncd_{safe_filename}_{year}_{gender}", format_func=get_clean_ncd_name)
 
-            if selected_cols:
-                provincial_antigens = {col: agg_df[col].sum() for col in selected_cols}
+            # Double safety lock against old Streamlit state
+            valid_selected = [c for c in selected_cols if c in agg_df.columns]
+
+            if valid_selected:
+                provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
                 st.markdown("#### 🏆 Provincial NCD Summary")
-                kpi_cols = st.columns(len(selected_cols))
-                for i, col in enumerate(selected_cols):
+                kpi_cols = st.columns(len(valid_selected))
+                for i, col in enumerate(valid_selected):
                     total_val = provincial_antigens[col]
                     short_name = get_clean_ncd_name(col)
                     
@@ -615,25 +631,25 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                         kpi_cols[i].metric(label=short_name, value=f"{int(total_val):,}")
                 
                 st.markdown("---")
-                chart_df = agg_df[['Area'] + selected_cols + elig_cols].copy()
+                chart_df = agg_df[['Area'] + valid_selected + elig_cols].copy()
                 abra_total_df = pd.DataFrame()
-                abra_total_df['Indicator'] = [get_clean_ncd_name(c) for c in selected_cols]
+                abra_total_df['Indicator'] = [get_clean_ncd_name(c) for c in valid_selected]
                 
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
                     main_elig_col = elig_cols[0]
-                    for col in selected_cols:
+                    for col in valid_selected:
                         chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
                         chart_df[col] = chart_df[col].round(1)
-                    prov_counts = [provincial_antigens[c] for c in selected_cols]
+                    prov_counts = [provincial_antigens[c] for c in valid_selected]
                     abra_total_df['Count'] = [(c / provincial_elig * 100) if provincial_elig > 0 else 0 for c in prov_counts]
                     abra_total_df['Count'] = abra_total_df['Count'].round(1)
                     y_axis_label = "Coverage (%)"
                 else:
-                    abra_total_df['Count'] = [provincial_antigens[c] for c in selected_cols]
+                    abra_total_df['Count'] = [provincial_antigens[c] for c in valid_selected]
                     y_axis_label = "Count"
 
                 st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
-                uid = f"ncd_{safe_filename}_{year}_{int(time.time())}"
+                uid = f"ncd_{safe_filename}_{year}_{gender}_{int(time.time())}"
                 fig_abra = px.bar(abra_total_df, x='Indicator', y='Count', color='Indicator', title=f"Provincial Total ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
                 fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_abra.update_layout(xaxis_title="Indicator", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
@@ -641,7 +657,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
 
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator_Raw', value_name='Count')
+                melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_ncd_name)
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
@@ -651,7 +667,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 st.markdown("---")
                 st.markdown(f"#### 🗺️ Geospatial View: NCD Hotspots")
                 map_df = chart_df.copy()
-                map_df['Rank_Metric'] = map_df[selected_cols].mean(axis=1)
+                map_df['Rank_Metric'] = map_df[valid_selected].mean(axis=1)
                 map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
                 map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
                 map_df = map_df[map_df['Lat'] != 0] 
@@ -887,7 +903,7 @@ elif page == "👶 Immunization Dashboard":
     with tab4: render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter, selected_year)
     with tab5: render_tab_content("MMR/MCV, FIC and CIC", "MMR", ["MMR", "MCV", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year)
 
-# --- NEW: NCD DASHBOARD ---
+# --- NCD DASHBOARD ---
 elif page == "🩺 NCD Dashboard":
     st.title("🩺 Non-Communicable Disease (NCD) Dashboard")
     st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
@@ -954,8 +970,11 @@ elif page == "📈 YoY Comparison":
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
+        is_cancer_dataset = "Cancer" in yoy_dataset
 
-        if df_key in st.session_state['fhsis_data']:
+        if is_cancer_dataset and gender_filter == "Male":
+            st.info("🎗️ Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
+        elif df_key in st.session_state['fhsis_data']:
             raw_df = st.session_state['fhsis_data'][df_key]
             available_cols = []
             
@@ -965,7 +984,22 @@ elif page == "📈 YoY Comparison":
                     for col in raw_df.columns:
                         clean_c = col.replace('\n', ' ')
                         if base.lower() in clean_c.lower() and "%" not in col and "deficit" not in clean_c.lower() and "previous" not in clean_c.lower():
-                            group_cols.append(col)
+                            
+                            # Filter based on Gender exactly like the main dashboard
+                            is_valid_gender = False
+                            if is_cancer_dataset:
+                                is_valid_gender = True
+                            else:
+                                if gender_filter == "Total":
+                                    if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                                        is_valid_gender = True
+                                else:
+                                    if col.endswith(f"_{gender_filter}"):
+                                        is_valid_gender = True
+                                        
+                            if is_valid_gender:
+                                group_cols.append(col)
+                                
                     if group_cols:
                         total_cols = [c for c in group_cols if "total" in c.lower()]
                         if total_cols: available_cols.append(total_cols[0])
@@ -985,7 +1019,8 @@ elif page == "📈 YoY Comparison":
                                 available_cols.append(col)
 
             if available_cols:
-                compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols, format_func=get_clean_ncd_name)
+                # FIX: Add dynamic key to YoY selectbox to prevent state caching
+                compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols, format_func=get_clean_ncd_name, key=f"yoy_select_{yoy_dataset}_{gender_filter}_{year_a}_{year_b}")
 
                 if 'Year' in raw_df.columns:
                     df_a = raw_df[raw_df['Year'] == year_a]
