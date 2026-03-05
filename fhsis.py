@@ -708,7 +708,6 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-
 # --- CUSTOM CERVICAL CANCER ENGINE ---
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
