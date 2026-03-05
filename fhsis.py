@@ -411,8 +411,9 @@ def get_ncd_col(df, include_words, exclude_words=None):
 def get_clean_ncd_name(col_name):
     c_low = col_name.lower().replace('\n', ' ')
     if "risk assessed" in c_low: return "Total Risk Assessed"
-    if "smoking" in c_low or "smoker" in c_low: return "History of Smoking"
+    if "smoking" in c_low or "smoker" in c_low: return "History of Smoking (Current Smoker)"
     if "alcohol" in c_low: return "Alcohol Binge Drinkers"
+    if "obese/ overweight" in c_low or "obese/overweight" in c_low: return "Obese / Overweight"
     if "overweight" in c_low: return "Overweight"
     if "obese" in c_low: return "Obese"
     if "physical activity" in c_low: return "Insufficient Physical Activity"
@@ -590,7 +591,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-# --- UPGRADED GENERIC NCD RENDERER (ADULTS & SENIORS) ---
+# --- UPGRADED GENERIC NCD RENDERER (ADULTS & SENIORS WITH 2024 SUPPORT) ---
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
@@ -610,8 +611,11 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
             
             if group_cols:
                 total_cols = [c for c in group_cols if "total" in c.lower()]
-                if total_cols: cols_to_plot.append(total_cols[0])
-                else: cols_to_plot.append(max(group_cols, key=lambda c: pd.to_numeric(filtered_df[c], errors='coerce').sum()))
+                if total_cols: 
+                    if total_cols[0] not in cols_to_plot: cols_to_plot.append(total_cols[0])
+                else: 
+                    best_col = max(group_cols, key=lambda c: pd.to_numeric(filtered_df[c], errors='coerce').sum())
+                    if best_col not in cols_to_plot: cols_to_plot.append(best_col)
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
@@ -689,9 +693,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - Raw RHU Breakdown")
                 
-                # --- FIXED: THIS IS THE MISSING LINE THAT WAS CAUSING THE NAME ERROR ---
                 chart_df = agg_df[['Area'] + valid_selected].copy()
-                # ----------------------------------------------------------------------
                 
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_ncd_name)
@@ -713,7 +715,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
 
-# --- CUSTOM CERVICAL CANCER ENGINE ---
+# --- CUSTOM CERVICAL CANCER ENGINE (WITH 2024 LEGACY MODE) ---
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
         st.info("🎗️ Cervical Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -723,31 +725,57 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
         
-        c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred"])
+        c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred", "suspect"])
         
-        c_susp_no = get_ncd_col(filtered_df, ["suspicious", "cancer", "no."], ["%", "linked", "treated", "referred", "total"])
-        if not c_susp_no: c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
-        
+        c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
         c_susp_link_tr = get_ncd_col(filtered_df, ["suspicious", "treated"], ["%"])
         c_susp_link_ref = get_ncd_col(filtered_df, ["suspicious", "referred"], ["%"])
         c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total", "linked"], ["%"])
-        if not c_susp_link_tot: c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total"], ["%", "screened", "positive", "lesion"])
         
-        c_pos_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "linked", "treated", "referred", "care"])
-        if not c_pos_tot: c_pos_tot = get_ncd_col(filtered_df, ["positive", "no."], ["%", "linked", "treated", "referred"])
-        
+        c_pos_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "linked", "treated", "referred", "care", "suspect"])
         c_pos_link_tr = get_ncd_col(filtered_df, ["positive", "treated"], ["%"])
         c_pos_link_ref = get_ncd_col(filtered_df, ["positive", "referred"], ["%"])
         c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total", "linked"], ["%"])
-        if not c_pos_link_tot: c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "screened", "suspicious"])
         
-        cols_to_agg = [c for c in [c_scr_tot, c_susp_no, c_susp_link_tr, c_susp_link_ref, c_susp_link_tot, c_pos_tot, c_pos_link_tr, c_pos_link_ref, c_pos_link_tot] if c]
+        # 2024 Legacy Format Finder
+        c_pos_suspect_tot = get_ncd_col(filtered_df, ["positive or suspect", "total"], ["%"])
+        
+        cols_to_agg = [c for c in [c_scr_tot, c_susp_no, c_susp_link_tr, c_susp_link_ref, c_susp_link_tot, c_pos_tot, c_pos_link_tr, c_pos_link_ref, c_pos_link_tot, c_pos_suspect_tot] if c]
         if not cols_to_agg:
             st.warning("Could not identify specific Cervical Cancer columns from the template. Ensure you are using the official DOH format.")
             return
             
         agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
+        is_2024 = c_pos_suspect_tot is not None
         
+        if is_2024:
+            st.info("📌 **2024 Legacy Format Detected:** Displaying simplified screening and suspect tracking.")
+            st.markdown("### 🎗️ Cervical Cancer Screening (2024)")
+            c1, c2 = st.columns(2)
+            if c_scr_tot: c1.metric("Total Women Screened", f"{int(agg_df[c_scr_tot].sum()):,}")
+            if c_pos_suspect_tot: c2.metric("Found Positive or Suspect", f"{int(agg_df[c_pos_suspect_tot].sum()):,}")
+            
+            if c_scr_tot:
+                st.markdown("---")
+                prov_tot = int(agg_df[c_scr_tot].sum())
+                fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title=f"Total Women Screened for Cervical Cancer (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"])
+                fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                st.plotly_chart(fig_scr, use_container_width=True, key=f"cerv_leg_1_{year}")
+                
+            if c_pos_suspect_tot:
+                st.markdown("---")
+                prov_tot = int(agg_df[c_pos_suspect_tot].sum())
+                fig_pos = px.bar(agg_df, x='Area', y=c_pos_suspect_tot, title=f"Found Positive or Suspect (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
+                fig_pos.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_pos.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                st.plotly_chart(fig_pos, use_container_width=True, key=f"cerv_leg_2_{year}")
+                
+            with st.expander("📄 View & Download Formatted Data"):
+                st.dataframe(agg_df, use_container_width=True, hide_index=True)
+            return
+
+        # --- 2025 LOGIC ---
         st.markdown("### 🎗️ Cervical Cancer Screening & Linkage to Care")
         st.markdown("##### Provincial Medical Totals")
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -817,7 +845,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     else:
         st.info("No Cervical Cancer data uploaded yet.")
 
-# --- CUSTOM BREAST CANCER ENGINE ---
+# --- CUSTOM BREAST CANCER ENGINE (WITH 2024 LEGACY MODE) ---
 def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
         st.info("🎀 Breast Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -827,40 +855,72 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
         
+        # Legacy 2024 Extractors (Breast Mass was inside Cervical File)
+        b_leg_scr = get_ncd_col(filtered_df, ["screened for breast mass"], ["%", "suspicious"])
+        b_leg_susp = get_ncd_col(filtered_df, ["suspicious breast mass"], ["%", "screened"])
+        
+        # 2025 High Risk Extractors
         b_hr_scr_cbe = get_ncd_col(filtered_df, ["high risk", "detection", "cbe"], ["%"])
         b_hr_scr_mam = get_ncd_col(filtered_df, ["high risk", "detection", "mammogram"], ["%"])
         b_hr_scr_tot = get_ncd_col(filtered_df, ["high risk", "detection", "total"], ["%"])
-        
         b_hr_rem_cbe = get_ncd_col(filtered_df, ["high risk", "remarkable", "cbe"], ["%", "linked"])
         b_hr_rem_mam = get_ncd_col(filtered_df, ["high risk", "remarkable", "mammogram"], ["%", "linked"])
         b_hr_rem_tot = get_ncd_col(filtered_df, ["high risk", "remarkable", "total"], ["%", "linked"])
-        
         b_hr_link_cbe = get_ncd_col(filtered_df, ["high risk", "linked", "cbe"], ["%"])
         b_hr_link_mam = get_ncd_col(filtered_df, ["high risk", "linked", "mammogram"], ["%"])
         b_hr_link_tot = get_ncd_col(filtered_df, ["high risk", "linked", "total"], ["%"])
         
+        # 2025 Asymptomatic Extractors
         b_as_scr_cbe = get_ncd_col(filtered_df, ["asymptomatic", "cbe"], ["%"])
         b_as_scr_mam = get_ncd_col(filtered_df, ["asymptomatic", "mammogram"], ["%"])
         b_as_scr_tot = get_ncd_col(filtered_df, ["asymptomatic", "total"], ["%"])
-        
         b_as_rem_cbe = get_ncd_col(filtered_df, ["50-69", "remarkable", "cbe"], ["%", "high risk", "linked"])
         b_as_rem_mam = get_ncd_col(filtered_df, ["50-69", "remarkable", "mammogram"], ["%", "high risk", "linked"])
         b_as_rem_tot = get_ncd_col(filtered_df, ["50-69", "remarkable", "total"], ["%", "high risk", "linked"])
-        
         b_as_link_cbe = get_ncd_col(filtered_df, ["50-69", "linked", "cbe"], ["%", "high risk"])
         b_as_link_mam = get_ncd_col(filtered_df, ["50-69", "linked", "mammogram"], ["%", "high risk"])
         b_as_link_tot = get_ncd_col(filtered_df, ["50-69", "linked", "total"], ["%", "high risk"])
         
-        all_cols = [b_hr_scr_cbe, b_hr_scr_mam, b_hr_scr_tot, b_hr_rem_cbe, b_hr_rem_mam, b_hr_rem_tot, b_hr_link_cbe, b_hr_link_mam, b_hr_link_tot,
+        all_cols = [b_leg_scr, b_leg_susp, b_hr_scr_cbe, b_hr_scr_mam, b_hr_scr_tot, b_hr_rem_cbe, b_hr_rem_mam, b_hr_rem_tot, b_hr_link_cbe, b_hr_link_mam, b_hr_link_tot,
                     b_as_scr_cbe, b_as_scr_mam, b_as_scr_tot, b_as_rem_cbe, b_as_rem_mam, b_as_rem_tot, b_as_link_cbe, b_as_link_mam, b_as_link_tot]
         cols_to_agg = [c for c in all_cols if c]
         
         if not cols_to_agg:
-            st.warning("Could not identify specific Breast Cancer columns from the template. Ensure you are using the official DOH format.")
+            st.warning("Could not identify specific Breast Cancer columns from the template.")
+            st.info("💡 **Tip:** If you are using the 2024 combined 'Cervical & Breast' template, make sure you uploaded that exact same file into BOTH the Cervical and Breast Cancer upload slots on the Data Uploader page!")
             return
             
         agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
+        is_2024 = b_leg_scr is not None or b_leg_susp is not None
         
+        if is_2024:
+            st.info("📌 **2024 Legacy Format Detected:** Displaying simplified Breast Mass screening data.")
+            st.markdown("### 🎀 Breast Cancer Screening (2024)")
+            c1, c2 = st.columns(2)
+            if b_leg_scr: c1.metric("Screened for Breast Mass", f"{int(agg_df[b_leg_scr].sum()):,}")
+            if b_leg_susp: c2.metric("With Suspicious Breast Mass", f"{int(agg_df[b_leg_susp].sum()):,}")
+            
+            if b_leg_scr:
+                st.markdown("---")
+                prov_tot = int(agg_df[b_leg_scr].sum())
+                fig_scr = px.bar(agg_df, x='Area', y=b_leg_scr, title=f"Screened for Breast Mass (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC"])
+                fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                st.plotly_chart(fig_scr, use_container_width=True, key=f"br_leg_1_{year}")
+                
+            if b_leg_susp:
+                st.markdown("---")
+                prov_tot = int(agg_df[b_leg_susp].sum())
+                fig_susp = px.bar(agg_df, x='Area', y=b_leg_susp, title=f"With Suspicious Breast Mass (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
+                fig_susp.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_susp.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                st.plotly_chart(fig_susp, use_container_width=True, key=f"br_leg_2_{year}")
+                
+            with st.expander("📄 View & Download Formatted Data"):
+                st.dataframe(agg_df, use_container_width=True, hide_index=True)
+            return
+
+        # --- 2025 LOGIC ---
         st.markdown("### 🎀 High Risk Women (30-69 y.o.)")
         hr_c1, hr_c2, hr_c3 = st.columns(3)
         if b_hr_scr_tot: hr_c1.metric("1. Screened / Early Detection (Total)", f"{int(agg_df[b_hr_scr_tot].sum()):,}")
@@ -1190,8 +1250,8 @@ elif page == "🩺 NCD Dashboard":
         "🎀 Breast Cancer"
     ])
     
-    with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["risk assessed", "history of smoking", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive adults", "adults with type 2 dm"], start_month, end_month, gender_filter, selected_year)
-    with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["risk assessed", "history of smoking", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive elderly", "elderly with type 2 dm"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive", "type 2 dm"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive", "type 2 dm"], start_month, end_month, gender_filter, selected_year)
     with ncd_tab3: render_cervical_cancer_tab("Cervical_Cancer", start_month, end_month, gender_filter, selected_year)
     with ncd_tab4: render_breast_cancer_tab("Breast_Cancer", start_month, end_month, gender_filter, selected_year)
 
@@ -1220,8 +1280,8 @@ elif page == "📈 YoY Comparison":
             "Polio": ("Polio", ["OPV", "IPV"]),
             "Pneumococcal (PCV)": ("PCV", ["PCV"]),
             "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"]),
-            "Adults Risk (20-59)": ("Adults_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive adults", "adults with type 2 dm"]),
-            "Seniors Risk (≥60)": ("Seniors_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive elderly", "elderly with type 2 dm"]),
+            "Adults Risk (20-59)": ("Adults_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "hypertensive", "type 2 dm"]),
+            "Seniors Risk (≥60)": ("Seniors_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "hypertensive", "type 2 dm"]),
             "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "positive", "lesions"]),
             "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"])
         }
@@ -1257,8 +1317,11 @@ elif page == "📈 YoY Comparison":
                                 
                     if group_cols:
                         total_cols = [c for c in group_cols if "total" in c.lower()]
-                        if total_cols: available_cols.append(total_cols[0])
-                        else: available_cols.append(max(group_cols, key=lambda c: pd.to_numeric(raw_df[c], errors='coerce').sum()))
+                        if total_cols: 
+                            if total_cols[0] not in available_cols: available_cols.append(total_cols[0])
+                        else: 
+                            best_c = max(group_cols, key=lambda c: pd.to_numeric(raw_df[c], errors='coerce').sum())
+                            if best_c not in available_cols: available_cols.append(best_c)
             else:
                 for base in base_mets:
                     for col in raw_df.columns:
@@ -1375,13 +1438,14 @@ elif page == "📁 Data Uploader":
                 
     with upload_tab_ncd:
         st.markdown("##### Upload NCD Excel Templates")
+        st.info("💡 **2024 Upload Tip:** If you are using the 2024 combined 'Cervical Cancer & Breast Mass' template, upload that exact same file into BOTH the Cervical and Breast Cancer upload slots below.")
         col3, col4 = st.columns(2)
         with col3:
             file_adults = st.file_uploader("Upload: 1 Adults Risk Assessed", type=["csv", "xlsx"])
             file_seniors = st.file_uploader("Upload: 2 Seniors Risk Assessed", type=["csv", "xlsx"])
         with col4:
-            file_cervical = st.file_uploader("Upload: 5 Cervical Cancer", type=["csv", "xlsx"])
-            file_breast = st.file_uploader("Upload: 6 Breast Cancer", type=["csv", "xlsx"])
+            file_cervical = st.file_uploader("Upload: 5 Cervical Cancer (or 24 Combined)", type=["csv", "xlsx"])
+            file_breast = st.file_uploader("Upload: 6 Breast Cancer (or 24 Combined)", type=["csv", "xlsx"])
             
         if st.button("☁️ Save NCD Data to Cloud", type="primary", use_container_width=True):
             upload_dict = {}
