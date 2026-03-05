@@ -634,7 +634,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-# --- NEW: CUSTOM INDIVIDUAL CERVICAL CANCER CHARTS ---
+# --- CUSTOM CERVICAL CANCER ENGINE ---
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
         st.info("🎗️ Cervical Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -644,15 +644,26 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
         
+        # 1. Total Screened
         c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked"])
-        c_susp_no = get_ncd_col(filtered_df, ["suspicious", "cancer", "no."], ["%", "linked"])
-        c_susp_link_tr = get_ncd_col(filtered_df, ["suspicious", "linked", "treated"], ["%"])
-        c_susp_link_ref = get_ncd_col(filtered_df, ["suspicious", "linked", "referred"], ["%"])
-        c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "linked", "total"], ["%"])
-        c_pos_tot = get_ncd_col(filtered_df, ["positive", "lesions", "total"], ["%", "linked"])
-        c_pos_link_tr = get_ncd_col(filtered_df, ["positive", "linked", "treated"], ["%"])
-        c_pos_link_ref = get_ncd_col(filtered_df, ["positive", "linked", "referred"], ["%"])
-        c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "linked", "total"], ["%"])
+        
+        # 2. Suspicious Found
+        c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
+        
+        # 3. Suspicious Linked (Treated, Referred, Total)
+        c_susp_link_tr = get_ncd_col(filtered_df, ["suspicious", "treated"], ["%"])
+        c_susp_link_ref = get_ncd_col(filtered_df, ["suspicious", "referred"], ["%"])
+        c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total", "linked"], ["%"])
+        if not c_susp_link_tot: c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total"], ["%", "screened", "positive", "lesion"])
+        
+        # 4. Positive Found
+        c_pos_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "linked", "treated", "referred", "care"])
+        
+        # 5. Positive Linked (Treated, Referred, Total)
+        c_pos_link_tr = get_ncd_col(filtered_df, ["positive", "treated"], ["%"])
+        c_pos_link_ref = get_ncd_col(filtered_df, ["positive", "referred"], ["%"])
+        c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total", "linked"], ["%"])
+        if not c_pos_link_tot: c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "screened", "suspicious"])
         
         cols_to_agg = [c for c in [c_scr_tot, c_susp_no, c_susp_link_tr, c_susp_link_ref, c_susp_link_tot, c_pos_tot, c_pos_link_tr, c_pos_link_ref, c_pos_link_tot] if c]
         if not cols_to_agg:
@@ -662,6 +673,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
         
         st.markdown("### 🎗️ Cervical Cancer Screening & Linkage to Care")
+        
         c1, c2, c3 = st.columns(3)
         if c_scr_tot: c1.metric("Total Women Screened/Assessed", f"{int(agg_df[c_scr_tot].sum()):,}")
         if c_susp_no: c2.metric("Total Found Suspicious", f"{int(agg_df[c_susp_no].sum()):,}")
@@ -670,14 +682,18 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         # CHART 1: Screened
         if c_scr_tot:
             st.markdown("---")
-            fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title="1. Total Women Screened or Assessed for Cervical Cancer (30-65 yrs old)", text_auto=True, color_discrete_sequence=["#66B2FF"])
+            prov_tot = int(agg_df[c_scr_tot].sum())
+            fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title=f"1. Total Women Screened/Assessed (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"])
+            fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
             fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=40))
             st.plotly_chart(fig_scr, use_container_width=True, key=f"cervical_c1_{year}")
             
         # CHART 2: Suspicious Found
         if c_susp_no:
             st.markdown("---")
-            fig_susp_found = px.bar(agg_df, x='Area', y=c_susp_no, title="2. Total Women Found Suspicious for Cervical Cancer", text_auto=True, color_discrete_sequence=["#FF9999"])
+            prov_tot = int(agg_df[c_susp_no].sum())
+            fig_susp_found = px.bar(agg_df, x='Area', y=c_susp_no, title=f"2. Total Women Found Suspicious (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF9999"])
+            fig_susp_found.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
             fig_susp_found.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=40))
             st.plotly_chart(fig_susp_found, use_container_width=True, key=f"cervical_c2_{year}")
 
@@ -685,16 +701,20 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         susp_link_cols = [c for c in [c_susp_link_tr, c_susp_link_ref, c_susp_link_tot] if c]
         if susp_link_cols:
             st.markdown("---")
+            prov_tot = int(agg_df[c_susp_link_tot].sum()) if c_susp_link_tot else 0
             melted_susp = agg_df[['Area'] + susp_link_cols].melt(id_vars='Area', value_vars=susp_link_cols, var_name='Metric', value_name='Patients')
             melted_susp['Metric'] = melted_susp['Metric'].apply(lambda x: "Treated" if x == c_susp_link_tr else "Referred" if x == c_susp_link_ref else "Total")
-            fig_susp_link = px.bar(melted_susp, x='Area', y='Patients', color='Metric', barmode='group', title="3. Suspicious Cases Linked to Care", text_auto=True, color_discrete_sequence=["#66B2FF", "#99FF99", "#FFCC99"])
+            fig_susp_link = px.bar(melted_susp, x='Area', y='Patients', color='Metric', barmode='group', title=f"3. Suspicious Cases Linked to Care (Provincial Total Linked: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#00CC96", "#FFA15A", "#EF553B"])
+            fig_susp_link.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig_susp_link.update_layout(xaxis_title="RHU", yaxis_title="Number of Patients", margin=dict(t=40))
             st.plotly_chart(fig_susp_link, use_container_width=True, key=f"cervical_c3_{year}")
 
         # CHART 4: Positive Found
         if c_pos_tot:
             st.markdown("---")
-            fig_pos_found = px.bar(agg_df, x='Area', y=c_pos_tot, title="4. Total Women Found Positive for Precancerous Lesions", text_auto=True, color_discrete_sequence=["#FF6666"])
+            prov_tot = int(agg_df[c_pos_tot].sum())
+            fig_pos_found = px.bar(agg_df, x='Area', y=c_pos_tot, title=f"4. Total Found Positive for Precancerous Lesions (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
+            fig_pos_found.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
             fig_pos_found.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=40))
             st.plotly_chart(fig_pos_found, use_container_width=True, key=f"cervical_c4_{year}")
 
@@ -702,9 +722,11 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         pos_link_cols = [c for c in [c_pos_link_tr, c_pos_link_ref, c_pos_link_tot] if c]
         if pos_link_cols:
             st.markdown("---")
+            prov_tot = int(agg_df[c_pos_link_tot].sum()) if c_pos_link_tot else 0
             melted_pos = agg_df[['Area'] + pos_link_cols].melt(id_vars='Area', value_vars=pos_link_cols, var_name='Metric', value_name='Patients')
             melted_pos['Metric'] = melted_pos['Metric'].apply(lambda x: "Treated" if x == c_pos_link_tr else "Referred" if x == c_pos_link_ref else "Total")
-            fig_pos_link = px.bar(melted_pos, x='Area', y='Patients', color='Metric', barmode='group', title="5. Positive Precancerous Lesions Linked to Care", text_auto=True, color_discrete_sequence=["#3399FF", "#66FF66", "#FFB266"])
+            fig_pos_link = px.bar(melted_pos, x='Area', y='Patients', color='Metric', barmode='group', title=f"5. Positive Precancerous Lesions Linked to Care (Provincial Total Linked: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#00CC96", "#FFA15A", "#EF553B"])
+            fig_pos_link.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig_pos_link.update_layout(xaxis_title="RHU", yaxis_title="Number of Patients", margin=dict(t=40))
             st.plotly_chart(fig_pos_link, use_container_width=True, key=f"cervical_c5_{year}")
 
@@ -722,7 +744,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     else:
         st.info("No Cervical Cancer data uploaded yet.")
 
-# --- NEW: CUSTOM INDIVIDUAL BREAST CANCER CHARTS ---
+# --- CUSTOM BREAST CANCER ENGINE ---
 def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
         st.info("🎀 Breast Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -776,9 +798,11 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         hr_scr_cols = [c for c in [b_hr_scr_cbe, b_hr_scr_mam, b_hr_scr_tot] if c]
         if hr_scr_cols:
             st.markdown("---")
+            prov_tot = int(agg_df[b_hr_scr_tot].sum()) if b_hr_scr_tot else 0
             m = agg_df[['Area'] + hr_scr_cols].melt(id_vars='Area')
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_scr_cbe else "Mammogram" if x == b_hr_scr_mam else "Total")
-            fig1 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title="1. High Risk Women Provided with Early Detection Services", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#666666"])
+            fig1 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"1. High Risk Women Provided with Early Detection (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#EF553B"])
+            fig1.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig1.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
             st.plotly_chart(fig1, use_container_width=True, key=f"breast_hr1_{year}")
             
@@ -786,9 +810,11 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         hr_rem_cols = [c for c in [b_hr_rem_cbe, b_hr_rem_mam, b_hr_rem_tot] if c]
         if hr_rem_cols:
             st.markdown("---")
+            prov_tot = int(agg_df[b_hr_rem_tot].sum()) if b_hr_rem_tot else 0
             m = agg_df[['Area'] + hr_rem_cols].melt(id_vars='Area')
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_rem_cbe else "Mammogram" if x == b_hr_rem_mam else "Total")
-            fig2 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title="2. High Risk Women Found with Remarkable/Significant Results", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#666666"])
+            fig2 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"2. High Risk Women Found with Remarkable Results (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#EF553B"])
+            fig2.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig2.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
             st.plotly_chart(fig2, use_container_width=True, key=f"breast_hr2_{year}")
 
@@ -796,9 +822,11 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         hr_link_cols = [c for c in [b_hr_link_cbe, b_hr_link_mam, b_hr_link_tot] if c]
         if hr_link_cols:
             st.markdown("---")
+            prov_tot = int(agg_df[b_hr_link_tot].sum()) if b_hr_link_tot else 0
             m = agg_df[['Area'] + hr_link_cols].melt(id_vars='Area')
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_link_cbe else "Mammogram" if x == b_hr_link_mam else "Total")
-            fig3 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title="3. High Risk Women Found Remarkable AND Linked to Care", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#666666"])
+            fig3 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"3. High Risk Women Found Remarkable AND Linked to Care (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#EF553B"])
+            fig3.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig3.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
             st.plotly_chart(fig3, use_container_width=True, key=f"breast_hr3_{year}")
 
@@ -814,9 +842,11 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         as_scr_cols = [c for c in [b_as_scr_cbe, b_as_scr_mam, b_as_scr_tot] if c]
         if as_scr_cols:
             st.markdown("---")
+            prov_tot = int(agg_df[b_as_scr_tot].sum()) if b_as_scr_tot else 0
             m = agg_df[['Area'] + as_scr_cols].melt(id_vars='Area')
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_scr_cbe else "Mammogram" if x == b_as_scr_mam else "Total")
-            fig4 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title="1. Asymptomatic Women Screened for Breast Cancer", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#999999"])
+            fig4 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"1. Asymptomatic Women Screened for Breast Cancer (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#EF553B"])
+            fig4.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig4.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
             st.plotly_chart(fig4, use_container_width=True, key=f"breast_as1_{year}")
             
@@ -824,9 +854,11 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         as_rem_cols = [c for c in [b_as_rem_cbe, b_as_rem_mam, b_as_rem_tot] if c]
         if as_rem_cols:
             st.markdown("---")
+            prov_tot = int(agg_df[b_as_rem_tot].sum()) if b_as_rem_tot else 0
             m = agg_df[['Area'] + as_rem_cols].melt(id_vars='Area')
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_rem_cbe else "Mammogram" if x == b_as_rem_mam else "Total")
-            fig5 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title="2. Asymptomatic Women Found with Remarkable/Significant Results", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#999999"])
+            fig5 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"2. Asymptomatic Women Found with Remarkable Results (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#EF553B"])
+            fig5.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig5.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
             st.plotly_chart(fig5, use_container_width=True, key=f"breast_as2_{year}")
 
@@ -834,9 +866,11 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         as_link_cols = [c for c in [b_as_link_cbe, b_as_link_mam, b_as_link_tot] if c]
         if as_link_cols:
             st.markdown("---")
+            prov_tot = int(agg_df[b_as_link_tot].sum()) if b_as_link_tot else 0
             m = agg_df[['Area'] + as_link_cols].melt(id_vars='Area')
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_link_cbe else "Mammogram" if x == b_as_link_mam else "Total")
-            fig6 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title="3. Asymptomatic Women Found Remarkable AND Linked to Care", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#999999"])
+            fig6 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"3. Asymptomatic Women Found Remarkable AND Linked to Care (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#EF553B"])
+            fig6.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig6.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
             st.plotly_chart(fig6, use_container_width=True, key=f"breast_as3_{year}")
 
