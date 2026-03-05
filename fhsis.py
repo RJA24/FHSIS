@@ -25,13 +25,11 @@ def load_data_from_gsheets():
             try:
                 df = conn.read(worksheet=sheet_name, ttl=0) 
                 if not df.empty and 'Area' in df.columns:
-                    # CRITICAL: Drops any invisible "ghost" rows left behind by old tests
-                    df = df.dropna(subset=['Area', 'Year'])
                     loaded_data[app_key] = df
             except Exception:
                 pass 
     except Exception as e:
-        st.error("Google Sheets connection not fully configured yet.")
+        st.error("Google Sheets connection not fully configured yet. Please check your secrets.toml file.")
     return loaded_data
 
 def save_data_to_gsheets(new_data_dict):
@@ -40,27 +38,54 @@ def save_data_to_gsheets(new_data_dict):
     
     for app_key, new_df in new_data_dict.items():
         sheet_name = SHEET_MAPPING[app_key]
+        combined_df = new_df.copy()
+        
         if app_key in existing_data and not existing_data[app_key].empty:
-            old_df = existing_data[app_key]
-            if 'Year' in old_df.columns and 'Year' in new_df.columns:
-                upload_years = new_df['Year'].unique()
-                old_df = old_df[~old_df['Year'].isin(upload_years)]
-            combined_df = pd.concat([old_df, new_df], ignore_index=True)
-        else:
-            combined_df = new_df
+            old_df = existing_data[app_key].copy()
+            # FIX: Strictly convert years to integers to guarantee accurate deduplication
+            old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
+            new_df['Year_Num'] = pd.to_numeric(new_df['Year'], errors='coerce').fillna(0).astype(int)
+            
+            upload_years = new_df['Year_Num'].unique()
+            old_df = old_df[~old_df['Year_Num'].isin(upload_years)]
+            
+            old_df = old_df.drop(columns=['Year_Num'])
+            new_df_clean = new_df.drop(columns=['Year_Num'])
+            
+            combined_df = pd.concat([old_df, new_df_clean], ignore_index=True)
             
         with st.spinner(f"Merging and saving {app_key} to cloud database..."):
+            # FIX: The "Ghost" Eradicator - pads the upload with empty rows to wipe out old leftover data in GSheets
+            if app_key in existing_data and not existing_data[app_key].empty:
+                old_len = len(existing_data[app_key])
+                new_len = len(combined_df)
+                if new_len < old_len:
+                    diff = old_len - new_len
+                    padding = pd.DataFrame([[""] * len(combined_df.columns)] * diff, columns=combined_df.columns)
+                    write_df = pd.concat([combined_df, padding], ignore_index=True)
+                    conn.update(worksheet=sheet_name, data=write_df)
+                    continue
             conn.update(worksheet=sheet_name, data=combined_df)
 
 def nuke_cloud_database():
-    """Wipes all data from the Google Sheets database to reset testing environments."""
+    """The Ultimate Reset: Wipes all data from the Google Sheets database to kill data ghosts."""
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # Pushes an empty shell to completely overwrite corrupted overlapping data
-    empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) 
+    existing_data = load_data_from_gsheets()
+    
     for app_key, sheet_name in SHEET_MAPPING.items():
         with st.spinner(f"Nuking {sheet_name}..."):
+            # Physically overwrite all existing rows with blanks before resetting the header
+            if app_key in existing_data and not existing_data[app_key].empty:
+                old_len = len(existing_data[app_key])
+                cols = existing_data[app_key].columns
+                blank_df = pd.DataFrame([[""] * len(cols)] * (old_len + 5), columns=cols)
+                conn.update(worksheet=sheet_name, data=blank_df)
+                
+            empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) 
             conn.update(worksheet=sheet_name, data=empty_df)
+            
     st.session_state['fhsis_data'] = {}
+    st.cache_data.clear()
 
 def clear_session_data():
     st.session_state['fhsis_data'] = {}
@@ -102,12 +127,15 @@ def load_and_clean_fhsis_data(uploaded_file, year):
             month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                          "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
             
-            # --- STRICT SHEET FILTERING: Ignores summary sheets that cause double counting ---
+            # --- HYPER-STRICT SHEET FILTERING ---
             for sheet in xls.sheet_names:
                 sheet_lower = sheet.lower().strip()
+                
                 months_found = [m for m in valid_months if m in sheet_lower]
+                
                 if len(months_found) != 1:
                     continue
+                    
                 if any(inv in sheet_lower for inv in invalid_keywords):
                     continue
                     
@@ -260,6 +288,22 @@ def filter_data(df, start_month, end_month, gender, year):
         return filtered_df[cols_to_keep]
     return filtered_df
 
+def find_metric_col(df, keyword):
+    """
+    FIX: Safely isolates the sub-header so 'MMR 1' isn't accidentally grabbed
+    by the 'FIC' filter just because 'FIC' is in the main merged header.
+    """
+    for c in df.columns:
+        if "DEFICIT" in c.upper() or "%" in c: continue
+        parts = [p.strip().upper() for p in c.split('_')]
+        # Only check the final pieces of the column name (the sub-header and demographic)
+        target_parts = parts[-2:] if len(parts) > 1 else parts
+        for p in target_parts:
+            # Look for exact matching words to prevent crosstalk
+            if keyword.upper() == p or f" {keyword.upper()}" in f" {p}" or f"{keyword.upper()} " in f"{p} ":
+                return c
+    return None
+
 @st.cache_data
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
@@ -276,7 +320,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
         for base in base_metrics:
             for col in filtered_df.columns:
                 if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
-                    # Banning the word deficit from ALL tabs to ensure no negative interference
                     if "%" not in col and "deficit" not in col.lower():
                         if col not in cols_to_plot:  
                             cols_to_plot.append(col)
@@ -318,7 +361,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     "Select specific indicators to include in the dashboard:",
                     options=cols_to_plot,
                     default=default_cols,
-                    key=f"ms_picker_v4_{safe_filename}_{year}", 
+                    key=f"ms_picker_v3_{safe_filename}_{year}", 
                     label_visibility="collapsed"
                 )
 
@@ -364,7 +407,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
                 abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 
-                # Added dynamic time unique keys to absolutely ensure no StreamlitDuplicateElementId errors
                 uid = f"{safe_filename}_{year}_{int(time.time())}"
                 
                 fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen',
@@ -545,13 +587,13 @@ if page == "📊 Dashboard":
             mmr_df = filter_data(st.session_state['fhsis_data']["MMR"], start_month, end_month, gender_filter, selected_year)
             penta_df = filter_data(st.session_state['fhsis_data']["Penta"], start_month, end_month, gender_filter, selected_year)
             
-            # --- FINAL FIX: EXPLICITLY BAN DEFICIT COLUMNS ---
-            fic_col = next((c for c in mmr_df.columns if "FIC" in c and "DEFICIT" not in c.upper() and "%" not in c), None)
-            cic_col = next((c for c in mmr_df.columns if "CIC" in c and "DEFICIT" not in c.upper() and "%" not in c), None)
+            # THE FIX: Uses the new strict selector so MMR 1 is ignored
+            fic_col = find_metric_col(mmr_df, "FIC")
+            cic_col = find_metric_col(mmr_df, "CIC")
             elig_col = next((c for c in mmr_df.columns if 'elig' in c.lower() or 'pop' in c.lower()), None)
             
-            p1_col = next((c for c in penta_df.columns if (" 1" in c or "1_" in c) and "DEFICIT" not in c.upper() and "%" not in c), None)
-            p3_col = next((c for c in penta_df.columns if (" 3" in c or "3_" in c) and "DEFICIT" not in c.upper() and "%" not in c), None)
+            p1_col = find_metric_col(penta_df, "1")
+            p3_col = find_metric_col(penta_df, "3")
             
             if fic_col and elig_col:
                 prov_fic = mmr_df[fic_col].sum()
