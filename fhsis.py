@@ -72,11 +72,10 @@ def load_data_from_gsheets():
             except Exception:
                 pass 
     except Exception as e:
-        st.error("Google Sheets connection not fully configured yet. Please check your secrets.toml file.")
+        st.error("Google Sheets connection not fully configured yet.")
     return loaded_data
 
 def nuke_cloud_database():
-    """Wipes all data from the Google Sheets database to reset testing environments."""
     conn = st.connection("gsheets", type=GSheetsConnection)
     existing_data = load_data_from_gsheets()
     
@@ -209,10 +208,9 @@ def load_and_clean_fhsis_data(uploaded_file, year):
         st.error(f"Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- NEW: ISOLATED NCD DATA CLEANER ---
+# --- ISOLATED NCD DATA CLEANER ---
 @st.cache_data
 def load_and_clean_ncd_data(uploaded_file, year):
-    """A hyper-robust cleaner built specifically to squash 3-level NCD header rows into flat data."""
     try:
         xls = pd.ExcelFile(uploaded_file)
         sheets_to_process = {}
@@ -233,7 +231,6 @@ def load_and_clean_ncd_data(uploaded_file, year):
             area_row_idx = -1
             data_start_idx = -1
             
-            # Find the header start and data start
             for idx, row in df.iterrows():
                 row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
                 if any('AREA' in v for v in row_str) and area_row_idx == -1:
@@ -245,7 +242,6 @@ def load_and_clean_ncd_data(uploaded_file, year):
                         
             if area_row_idx == -1 or data_start_idx == -1: continue
             
-            # Smash all header rows together safely
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
             headers_df.iloc[0] = headers_df.iloc[0].ffill() 
             if len(headers_df) > 1: headers_df.iloc[1] = headers_df.iloc[1].ffill() 
@@ -276,7 +272,6 @@ def load_and_clean_ncd_data(uploaded_file, year):
             clean = df.iloc[data_start_idx:].copy()
             clean.columns = unique_cols
             
-            # Lock onto the true Area column
             area_col = [c for c in unique_cols if "AREA" in c.upper()][0]
             if area_col != 'Area':
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
@@ -317,7 +312,7 @@ if 'fhsis_data' not in st.session_state:
     st.session_state['fhsis_data'] = load_data_from_gsheets()
 
 # --- HELPER FUNCTIONS ---
-def filter_data(df, start_month, end_month, gender, year):
+def filter_data(df, start_month, end_month, gender, year, is_cancer=False):
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
     end_idx = months_order.index(end_month)
@@ -335,12 +330,16 @@ def filter_data(df, start_month, end_month, gender, year):
         clean_col = col.lower()
         is_valid_gender = False
         
-        if gender == "Total":
-            if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
-                is_valid_gender = True
+        # FIX: Bypass the gender check entirely if it is a Cancer dataset (Female only)
+        if is_cancer:
+            is_valid_gender = True
         else:
-            if col.endswith(f"_{gender}"):
-                is_valid_gender = True
+            if gender == "Total":
+                if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                    is_valid_gender = True
+            else:
+                if col.endswith(f"_{gender}"):
+                    is_valid_gender = True
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
             if pd.api.types.is_numeric_dtype(filtered_df[col]):
@@ -370,7 +369,7 @@ def convert_df_to_csv(df):
 def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        filtered_df = filter_data(raw_df, start_m, end_m, gender, year)
+        filtered_df = filter_data(raw_df, start_m, end_m, gender, year, is_cancer=False)
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
@@ -527,11 +526,37 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-# --- NEW: NCD UI RENDERER ---
+def get_clean_ncd_name(col_name):
+    """Custom Label Formatter to make massive NCD Excel headers look clean and professional in the UI."""
+    c_low = col_name.lower()
+    if "risk assessed" in c_low: return "Total Risk Assessed"
+    if "smoking" in c_low or "smoker" in c_low: return "History of Smoking"
+    if "alcohol" in c_low: return "Alcohol Binge Drinkers"
+    if "overweight" in c_low: return "Overweight"
+    if "obese" in c_low: return "Obese"
+    if "physical activity" in c_low: return "Insufficient Physical Activity"
+    if "unhealthy diet" in c_low: return "Unhealthy Diet"
+    if "hypertensive" in c_low: return "Identified Hypertensive"
+    if "type 2 dm" in c_low or "diabetes" in c_low: return "Identified Type 2 DM"
+    if "cervical" in c_low and "screened" in c_low: return "Cervical Cancer Screened"
+    if "suspicious for cervical" in c_low: return "Suspicious for Cervical Cancer"
+    if "precancerous" in c_low: return "Positive for Precancerous Lesions"
+    if "breast cancer early detection" in c_low: return "Breast Cancer: High Risk Screened"
+    if "asymptomatic women screened" in c_low: return "Breast Cancer: Asymptomatic Screened"
+    if "remarkable" in c_low: return "Found w/ Remarkable Results"
+    
+    # Fallback to general cleaning
+    name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
+    if "_" in name: name = name.split("_")[0]
+    return name
+
+# --- NEW: NCD UI RENDERER (ISOLATED) ---
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        filtered_df = filter_data(raw_df, start_m, end_m, gender, year)
+        
+        is_cancer = "Cancer" in df_key
+        filtered_df = filter_data(raw_df, start_m, end_m, gender, year, is_cancer=is_cancer)
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
@@ -541,7 +566,12 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
             for col in filtered_df.columns:
                 if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
                     if "%" not in col and "deficit" not in col.lower():
-                        if col not in cols_to_plot:  cols_to_plot.append(col)
+                        # FIX: For Cancer data, strictly target '_Total' or '_No.' to prevent doubling individual sub-methods (like VIA/CBE)
+                        if is_cancer:
+                            if col.endswith("_Total") or col.endswith("_No.") or col.endswith("_Assessed Only"):
+                                if col not in cols_to_plot:  cols_to_plot.append(col)
+                        else:
+                            if col not in cols_to_plot:  cols_to_plot.append(col)
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
@@ -551,7 +581,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
             view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_ncd_{safe_filename}")
             
             with st.expander("⚙️ Add / Remove NCD Indicators"):
-                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot[:3], key=f"ms_ncd_{safe_filename}_{year}")
+                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot[:3], key=f"ms_ncd_{safe_filename}_{year}", format_func=get_clean_ncd_name)
 
             if selected_cols:
                 provincial_antigens = {col: agg_df[col].sum() for col in selected_cols}
@@ -561,9 +591,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 kpi_cols = st.columns(len(selected_cols))
                 for i, col in enumerate(selected_cols):
                     total_val = provincial_antigens[col]
-                    # Shorten super long NCD names for the UI widgets
-                    short_name = col.replace(f"_{gender}", "").split('(')[0].strip()
-                    if len(short_name) > 35: short_name = short_name[:32] + "..."
+                    short_name = get_clean_ncd_name(col)
                     
                     if view_mode == "Percentage (%) Coverage" and elig_cols:
                         perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
@@ -574,7 +602,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 st.markdown("---")
                 chart_df = agg_df[['Area'] + selected_cols + elig_cols].copy()
                 abra_total_df = pd.DataFrame()
-                abra_total_df['Indicator'] = [c.replace(f"_{gender}", "").split('(')[0].strip() for c in selected_cols]
+                abra_total_df['Indicator'] = [get_clean_ncd_name(c) for c in selected_cols]
                 
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
                     main_elig_col = elig_cols[0]
@@ -598,8 +626,8 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
 
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator', value_name='Count')
-                melted['Indicator'] = melted['Indicator'].str.replace(f"_{gender}", "").str.split('(').str[0].str.strip()
+                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator_Raw', value_name='Count')
+                melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_ncd_name)
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=60))
@@ -874,10 +902,11 @@ elif page == "🩺 NCD Dashboard":
         "🎀 Breast Cancer"
     ])
     
+    # FIX: Precise indicator mapping based on user screenshots
     with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["Risk assessed", "smoking", "Alcohol", "Overweight", "Obese", "physical activity", "unhealthy diet", "Hypertensive", "Type 2 DM"], start_month, end_month, gender_filter, selected_year)
     with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["Risk assessed", "smoking", "Alcohol", "Overweight", "Obese", "physical activity", "unhealthy diet", "Hypertensive", "Type 2 DM"], start_month, end_month, gender_filter, selected_year)
-    with ncd_tab3: render_ncd_tab_content("Cervical Cancer Screening", "Cervical_Cancer", ["screened", "suspicious", "precancerous"], start_month, end_month, gender_filter, selected_year)
-    with ncd_tab4: render_ncd_tab_content("Breast Cancer Screening", "Breast_Cancer", ["high risk women", "Remarkable", "asymptomatic"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab3: render_ncd_tab_content("Cervical Cancer Screening", "Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab4: render_ncd_tab_content("Breast Cancer Screening", "Breast_Cancer", ["high risk women", "asymptomatic women", "Remarkable"], start_month, end_month, gender_filter, selected_year)
 
 # --- YOY COMPARISON PAGE ---
 elif page == "📈 YoY Comparison":
@@ -886,7 +915,6 @@ elif page == "📈 YoY Comparison":
 
     col_y1, col_y2, col_y3 = st.columns(3)
     with col_y1:
-        # Added NCD Categories to the YoY dropdown
         yoy_dataset = st.selectbox("Select Data Category", [
             "Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC",
             "Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"
@@ -907,10 +935,11 @@ elif page == "📈 YoY Comparison":
             "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"]),
             "Adults Risk (20-59)": ("Adults_Risk", ["Risk assessed", "smoking", "Alcohol", "Hypertensive", "Type 2 DM"]),
             "Seniors Risk (≥60)": ("Seniors_Risk", ["Risk assessed", "smoking", "Alcohol", "Hypertensive", "Type 2 DM"]),
-            "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "precancerous"]),
-            "Breast Cancer": ("Breast_Cancer", ["high risk", "asymptomatic", "Remarkable"])
+            "Cervical Cancer": ("Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous"]),
+            "Breast Cancer": ("Breast_Cancer", ["high risk women", "asymptomatic women", "Remarkable"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
+        is_cancer_dataset = "Cancer" in yoy_dataset
 
         if df_key in st.session_state['fhsis_data']:
             raw_df = st.session_state['fhsis_data'][df_key]
@@ -919,17 +948,24 @@ elif page == "📈 YoY Comparison":
                 for col in raw_df.columns:
                     if base.lower() in col.lower() and "%" not in col and "deficit" not in col.lower() and "previous" not in col.lower():
                         is_valid = False
-                        if gender_filter == "Total":
-                            if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                        
+                        # FIX: Apply the Gender-Bypass to the YoY tab for Cancer metrics too
+                        if is_cancer_dataset:
+                            if col.endswith("_Total") or col.endswith("_No.") or col.endswith("_Assessed Only"):
                                 is_valid = True
                         else:
-                            if col.endswith(f"_{gender_filter}"):
-                                is_valid = True
+                            if gender_filter == "Total":
+                                if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                                    is_valid = True
+                            else:
+                                if col.endswith(f"_{gender_filter}"):
+                                    is_valid = True
+                                    
                         if is_valid and col not in available_cols:
                             available_cols.append(col)
 
             if available_cols:
-                compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols)
+                compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols, format_func=get_clean_ncd_name)
 
                 if 'Year' in raw_df.columns:
                     df_a = raw_df[raw_df['Year'] == year_a]
@@ -961,7 +997,7 @@ elif page == "📈 YoY Comparison":
                                 st.markdown(f"- **{row['Area']}:** {int(row['Variance'])} counts")
 
                     st.markdown("---")
-                    st.markdown(f"#### 📊 {compare_col.replace(f'_{gender_filter}', '').split('(')[0].strip()} : {year_a} vs {year_b}")
+                    st.markdown(f"#### 📊 {get_clean_ncd_name(compare_col)} : {year_a} vs {year_b}")
 
                     melted_yoy = merged.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Counts')
                     fig_yoy = px.bar(melted_yoy, x='Area', y='Counts', color='Year', barmode='group',
