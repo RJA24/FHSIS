@@ -324,7 +324,6 @@ if 'fhsis_data' not in st.session_state:
 
 # --- ISOLATED IMMUNIZATION FILTER ---
 def filter_data(df, start_month, end_month, gender, year):
-    """This function is hard-coded back to the exact state that worked perfectly for Immunization."""
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
     end_idx = months_order.index(end_month)
@@ -351,7 +350,6 @@ def filter_data(df, start_month, end_month, gender, year):
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
             if pd.api.types.is_numeric_dtype(filtered_df[col]):
-                # Safely drop empty ghost columns for Immunization
                 if filtered_df[col].sum() > 0: cols_to_keep.append(col)
             else:
                 cols_to_keep.append(col)
@@ -360,9 +358,8 @@ def filter_data(df, start_month, end_month, gender, year):
     if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
     return filtered_df
 
-# --- NEW ISOLATED NCD FILTER ---
+# --- ISOLATED NCD FILTER ---
 def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
-    """A completely separate filter engine for NCD that safely preserves Zero-value 'Treated' columns."""
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
     end_idx = months_order.index(end_month)
@@ -391,7 +388,7 @@ def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
                     is_valid_gender = True
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
-            # Preserves all columns, even if the sum is 0
+            # Safely preserves zero values so Treated=0 shows up perfectly
             cols_to_keep.append(col)
                 
     cols_to_keep = list(dict.fromkeys(cols_to_keep))
@@ -594,7 +591,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-# --- GENERIC NCD RENDERER (ADULTS & SENIORS) ---
+# --- UPGRADED GENERIC NCD RENDERER (ADULTS & SENIORS) ---
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
@@ -624,39 +621,81 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
             with st.expander("⚙️ Add / Remove NCD Indicators"):
-                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot[:3], key=f"ms_ncd_{safe_filename}_{year}_{gender}", format_func=get_clean_ncd_name)
+                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot, key=f"ms_ncd_{safe_filename}_{year}_{gender}", format_func=get_clean_ncd_name)
 
             valid_selected = [c for c in selected_cols if c in agg_df.columns]
+            uid = f"ncd_{safe_filename}_{year}_{gender}_{int(time.time())}"
 
             if valid_selected:
                 provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
                 
-                st.markdown("#### 🏆 Provincial NCD Summary")
-                kpi_cols = st.columns(len(valid_selected))
+                c_assessed = next((c for c in valid_selected if "risk assessed" in c.lower()), None)
+                c_hyper = next((c for c in valid_selected if "hypertensive" in c.lower()), None)
+                c_dm = next((c for c in valid_selected if "type 2 dm" in c.lower() or "diabetes" in c.lower()), None)
+                lifestyle_cols = [c for c in valid_selected if c not in [c_assessed, c_hyper, c_dm] and c not in elig_cols]
+                
+                st.markdown("#### 🏆 Provincial NCD Summary (With Prevalence Yield)")
+                
+                # Dynamic wrap for Metric Cards so they don't squish
+                cols_per_row = 5
+                rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
+                
                 for i, col in enumerate(valid_selected):
-                    kpi_cols[i].metric(label=get_clean_ncd_name(col), value=f"{int(provincial_antigens[col]):,}")
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
+                    total_val = provincial_antigens[col]
+                    short_name = get_clean_ncd_name(col)
+                    
+                    if c_assessed and col in [c_hyper, c_dm] and provincial_antigens[c_assessed] > 0:
+                        yield_pct = (total_val / provincial_antigens[c_assessed]) * 100
+                        rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}", delta=f"{yield_pct:.1f}% Screening Yield", delta_color="off")
+                    else:
+                        rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}")
                 
                 st.markdown("---")
-                chart_df = agg_df[['Area'] + valid_selected + elig_cols].copy()
-                abra_total_df = pd.DataFrame()
-                abra_total_df['Indicator'] = [get_clean_ncd_name(c) for c in valid_selected]
-                abra_total_df['Count'] = [provincial_antigens[c] for c in valid_selected]
-                y_axis_label = "Count"
-
-                st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
-                uid = f"ncd_{safe_filename}_{year}_{gender}_{int(time.time())}"
-                fig_abra = px.bar(abra_total_df, x='Indicator', y='Count', color='Indicator', title=f"Provincial Total ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
-                fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
-                fig_abra.update_layout(xaxis_title="Indicator", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
-                st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{uid}")
-
+                
+                # --- NEW EXECUTIVE VISUALIZATIONS ---
+                if c_assessed or lifestyle_cols:
+                    st.markdown(f"#### 🧬 {tab_title} : Provincial Health Footprint")
+                    v_col1, v_col2 = st.columns(2)
+                    
+                    with v_col1:
+                        if lifestyle_cols:
+                            radar_data = pd.DataFrame({
+                                'Risk Factor': [get_clean_ncd_name(c) for c in lifestyle_cols],
+                                'Count': [provincial_antigens[c] for c in lifestyle_cols]
+                            })
+                            fig_radar = px.line_polar(radar_data, r='Count', theta='Risk Factor', line_close=True, title="🕸️ Lifestyle Risk Profile (Radar)", markers=True, color_discrete_sequence=["#FF9933"])
+                            fig_radar.update_traces(fill='toself')
+                            st.plotly_chart(fig_radar, use_container_width=True, key=f"radar_{uid}")
+                        else:
+                            st.info("Select lifestyle indicators (Smoking, Alcohol, etc.) to view the Risk Profile.")
+                            
+                    with v_col2:
+                        if c_assessed and (c_hyper or c_dm):
+                            funnel_stages = ["Total Risk Assessed"]
+                            funnel_counts = [provincial_antigens[c_assessed]]
+                            if c_hyper: 
+                                funnel_stages.append("Identified Hypertensive")
+                                funnel_counts.append(provincial_antigens[c_hyper])
+                            if c_dm:
+                                funnel_stages.append("Identified Type 2 DM")
+                                funnel_counts.append(provincial_antigens[c_dm])
+                                
+                            funnel_df = pd.DataFrame({'Stage': funnel_stages, 'Count': funnel_counts})
+                            fig_funnel = px.funnel(funnel_df, x='Count', y='Stage', title="🌪️ Screening-to-Diagnosis Cascade", color_discrete_sequence=["#3366CC"])
+                            fig_funnel.update_traces(textposition="inside")
+                            st.plotly_chart(fig_funnel, use_container_width=True, key=f"funnel_{uid}")
+                        else:
+                            st.info("Select 'Risk Assessed' and at least one disease (Hypertension/DM) to view the Diagnostic Cascade.")
+                
                 st.markdown("---")
-                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                st.markdown(f"#### 📊 {tab_title} - Raw RHU Breakdown")
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_ncd_name)
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=60))
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Count", legend_title="Indicator", margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
                 
             else:
@@ -682,24 +721,19 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
         
-        # 1. Total Screened
         c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred"])
         
-        # 2. Suspicious Found
         c_susp_no = get_ncd_col(filtered_df, ["suspicious", "cancer", "no."], ["%", "linked", "treated", "referred", "total"])
         if not c_susp_no: c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
         
-        # 3. Suspicious Linked (Treated, Referred, Total)
         c_susp_link_tr = get_ncd_col(filtered_df, ["suspicious", "treated"], ["%"])
         c_susp_link_ref = get_ncd_col(filtered_df, ["suspicious", "referred"], ["%"])
         c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total", "linked"], ["%"])
         if not c_susp_link_tot: c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total"], ["%", "screened", "positive", "lesion"])
         
-        # 4. Positive Found
         c_pos_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "linked", "treated", "referred", "care"])
         if not c_pos_tot: c_pos_tot = get_ncd_col(filtered_df, ["positive", "no."], ["%", "linked", "treated", "referred"])
         
-        # 5. Positive Linked (Treated, Referred, Total)
         c_pos_link_tr = get_ncd_col(filtered_df, ["positive", "treated"], ["%"])
         c_pos_link_ref = get_ncd_col(filtered_df, ["positive", "referred"], ["%"])
         c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total", "linked"], ["%"])
@@ -1186,8 +1220,8 @@ elif page == "📈 YoY Comparison":
             "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"]),
             "Adults Risk (20-59)": ("Adults_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive adults", "adults with type 2 dm"]),
             "Seniors Risk (≥60)": ("Seniors_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive elderly", "elderly with type 2 dm"]),
-            "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "positive", "lesions"]),
-            "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"])
+            "Cervical Cancer": ("Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous lesions"]),
+            "Breast Cancer": ("Breast_Cancer", ["early detection services", "asymptomatic women screened", "women (50-69 y.o.) found with remarkable"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
