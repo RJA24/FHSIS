@@ -117,7 +117,7 @@ ABRA_COORDS = {
     "Tineg": (17.785, 120.938), "Tubo": (17.234, 120.748), "Villaviciosa": (17.439, 120.632)
 }
 
-# --- UNTOUCHED IMMUNIZATION CLEANER ---
+# --- UNTOUCHED IMMUNIZATION CLEANER (FIXED OCTOBER BUG) ---
 @st.cache_data
 def load_and_clean_fhsis_data(uploaded_file, year):
     try:
@@ -128,9 +128,12 @@ def load_and_clean_fhsis_data(uploaded_file, year):
             xls = pd.ExcelFile(uploaded_file)
             sheets_to_process = {}
             valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-            invalid_keywords = ["-", "to", "q", "sem", "annual", "summary", "cons", "ytd"]
+            
+            # Removed the word 'to' and 'q' from here because it was accidentally deleting October data!
+            invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem"]
             month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                          "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
+            
             for sheet in xls.sheet_names:
                 sheet_lower = sheet.lower().strip()
                 months_found = [m for m in valid_months if m in sheet_lower]
@@ -215,7 +218,8 @@ def load_and_clean_ncd_data(uploaded_file, year):
         xls = pd.ExcelFile(uploaded_file)
         sheets_to_process = {}
         valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-        invalid_keywords = ["-", "to", "q", "sem", "annual", "summary", "cons", "ytd", "quarter"]
+        # Same fix applied here to protect October data
+        invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem"]
         month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                      "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
         
@@ -330,7 +334,7 @@ def filter_data(df, start_month, end_month, gender, year, is_cancer=False):
         clean_col = col.lower()
         is_valid_gender = False
         
-        # FIX: Bypass the gender check entirely if it is a Cancer dataset (Female only)
+        # Cancer is Female only, bypassing the dropdown logic
         if is_cancer:
             is_valid_gender = True
         else:
@@ -351,15 +355,30 @@ def filter_data(df, start_month, end_month, gender, year, is_cancer=False):
     if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
     return filtered_df
 
-def find_metric_col(df, keyword):
-    for c in df.columns:
-        if "DEFICIT" in c.upper() or "%" in c: continue
-        parts = [p.strip().upper() for p in c.split('_')]
-        target_parts = parts[-2:] if len(parts) > 1 else parts
-        for p in target_parts:
-            if keyword.upper() == p or f" {keyword.upper()}" in f" {p}" or f"{keyword.upper()} " in f"{p} ":
-                return c
-    return None
+def get_clean_ncd_name(col_name):
+    """Beautifully formats the giant FHSIS headers for the UI"""
+    c_low = col_name.lower().replace('\n', ' ')
+    if "risk assessed" in c_low: return "Total Risk Assessed"
+    if "smoking" in c_low or "smoker" in c_low: return "History of Smoking"
+    if "alcohol" in c_low: return "Alcohol Binge Drinkers"
+    if "overweight" in c_low: return "Overweight"
+    if "obese" in c_low: return "Obese"
+    if "physical activity" in c_low: return "Insufficient Physical Activity"
+    if "unhealthy diet" in c_low: return "Unhealthy Diet"
+    if "hypertensive" in c_low: return "Identified Hypertensive"
+    if "type 2 dm" in c_low or "diabetes" in c_low: return "Identified Type 2 DM"
+    if "cervical" in c_low and "screened" in c_low: return "Cervical Cancer Screened"
+    if "suspicious for cervical" in c_low: return "Suspicious for Cervical Cancer"
+    if "precancerous" in c_low: return "Positive for Precancerous Lesions"
+    if "early detection" in c_low: return "Breast Cancer: Early Detection"
+    if "asymptomatic" in c_low: return "Breast Cancer: Asymptomatic Screened"
+    if "remarkable" in c_low: 
+        if "high risk" in c_low: return "High Risk w/ Remarkable Results"
+        return "Asymptomatic w/ Remarkable Results"
+    
+    name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
+    if "_" in name: name = name.split("_")[0]
+    return name
 
 @st.cache_data
 def convert_df_to_csv(df):
@@ -526,35 +545,10 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-def get_clean_ncd_name(col_name):
-    """Custom Label Formatter to make massive NCD Excel headers look clean and professional in the UI."""
-    c_low = col_name.lower()
-    if "risk assessed" in c_low: return "Total Risk Assessed"
-    if "smoking" in c_low or "smoker" in c_low: return "History of Smoking"
-    if "alcohol" in c_low: return "Alcohol Binge Drinkers"
-    if "overweight" in c_low: return "Overweight"
-    if "obese" in c_low: return "Obese"
-    if "physical activity" in c_low: return "Insufficient Physical Activity"
-    if "unhealthy diet" in c_low: return "Unhealthy Diet"
-    if "hypertensive" in c_low: return "Identified Hypertensive"
-    if "type 2 dm" in c_low or "diabetes" in c_low: return "Identified Type 2 DM"
-    if "cervical" in c_low and "screened" in c_low: return "Cervical Cancer Screened"
-    if "suspicious for cervical" in c_low: return "Suspicious for Cervical Cancer"
-    if "precancerous" in c_low: return "Positive for Precancerous Lesions"
-    if "breast cancer early detection" in c_low: return "Breast Cancer: High Risk Screened"
-    if "asymptomatic women screened" in c_low: return "Breast Cancer: Asymptomatic Screened"
-    if "remarkable" in c_low: return "Found w/ Remarkable Results"
-    
-    # Fallback to general cleaning
-    name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
-    if "_" in name: name = name.split("_")[0]
-    return name
-
-# --- NEW: NCD UI RENDERER (ISOLATED) ---
+# --- NEW: MATHEMATICAL NCD RENDERER ---
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        
         is_cancer = "Cancer" in df_key
         filtered_df = filter_data(raw_df, start_m, end_m, gender, year, is_cancer=is_cancer)
         
@@ -563,15 +557,21 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
         
         cols_to_plot = []
         for base in base_metrics:
+            group_cols = []
             for col in filtered_df.columns:
-                if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
-                    if "%" not in col and "deficit" not in col.lower():
-                        # FIX: For Cancer data, strictly target '_Total' or '_No.' to prevent doubling individual sub-methods (like VIA/CBE)
-                        if is_cancer:
-                            if col.endswith("_Total") or col.endswith("_No.") or col.endswith("_Assessed Only"):
-                                if col not in cols_to_plot:  cols_to_plot.append(col)
-                        else:
-                            if col not in cols_to_plot:  cols_to_plot.append(col)
+                clean_col_name = col.replace('\n', ' ')
+                if base.lower() in clean_col_name.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
+                    if "%" not in col and "deficit" not in clean_col_name.lower() and "previous" not in clean_col_name.lower():
+                        group_cols.append(col)
+            
+            if group_cols:
+                total_cols = [c for c in group_cols if "total" in c.lower()]
+                if total_cols:
+                    cols_to_plot.append(total_cols[0])
+                else:
+                    # THE HEURISTIC: If headers are blank (producing _1, _2), the Total is mathematically the column with the largest sum!
+                    max_col = max(group_cols, key=lambda c: pd.to_numeric(filtered_df[c], errors='coerce').sum())
+                    cols_to_plot.append(max_col)
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
@@ -902,11 +902,11 @@ elif page == "🩺 NCD Dashboard":
         "🎀 Breast Cancer"
     ])
     
-    # FIX: Precise indicator mapping based on user screenshots
-    with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["Risk assessed", "smoking", "Alcohol", "Overweight", "Obese", "physical activity", "unhealthy diet", "Hypertensive", "Type 2 DM"], start_month, end_month, gender_filter, selected_year)
-    with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["Risk assessed", "smoking", "Alcohol", "Overweight", "Obese", "physical activity", "unhealthy diet", "Hypertensive", "Type 2 DM"], start_month, end_month, gender_filter, selected_year)
-    with ncd_tab3: render_ncd_tab_content("Cervical Cancer Screening", "Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous"], start_month, end_month, gender_filter, selected_year)
-    with ncd_tab4: render_ncd_tab_content("Breast Cancer Screening", "Breast_Cancer", ["high risk women", "asymptomatic women", "Remarkable"], start_month, end_month, gender_filter, selected_year)
+    # Isolated Base Metrics for the "Highest Sum" Heuristic
+    with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["risk assessed", "history of smoking", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive adults", "adults with type 2 dm"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["risk assessed", "history of smoking", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive elderly", "elderly with type 2 dm"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab3: render_ncd_tab_content("Cervical Cancer Screening", "Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous lesions"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab4: render_ncd_tab_content("Breast Cancer Screening", "Breast_Cancer", ["early detection services", "high risk women (30-69 years old) found with remarkable", "asymptomatic women screened", "women (50-69 y.o.) found with remarkable"], start_month, end_month, gender_filter, selected_year)
 
 # --- YOY COMPARISON PAGE ---
 elif page == "📈 YoY Comparison":
@@ -933,36 +933,42 @@ elif page == "📈 YoY Comparison":
             "Polio": ("Polio", ["OPV", "IPV"]),
             "Pneumococcal (PCV)": ("PCV", ["PCV"]),
             "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"]),
-            "Adults Risk (20-59)": ("Adults_Risk", ["Risk assessed", "smoking", "Alcohol", "Hypertensive", "Type 2 DM"]),
-            "Seniors Risk (≥60)": ("Seniors_Risk", ["Risk assessed", "smoking", "Alcohol", "Hypertensive", "Type 2 DM"]),
-            "Cervical Cancer": ("Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous"]),
-            "Breast Cancer": ("Breast_Cancer", ["high risk women", "asymptomatic women", "Remarkable"])
+            "Adults Risk (20-59)": ("Adults_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive adults", "adults with type 2 dm"]),
+            "Seniors Risk (≥60)": ("Seniors_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive elderly", "elderly with type 2 dm"]),
+            "Cervical Cancer": ("Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous lesions"]),
+            "Breast Cancer": ("Breast_Cancer", ["early detection services", "asymptomatic women screened", "women (50-69 y.o.) found with remarkable"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
-        is_cancer_dataset = "Cancer" in yoy_dataset
+        is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
 
         if df_key in st.session_state['fhsis_data']:
             raw_df = st.session_state['fhsis_data'][df_key]
             available_cols = []
-            for base in base_mets:
-                for col in raw_df.columns:
-                    if base.lower() in col.lower() and "%" not in col and "deficit" not in col.lower() and "previous" not in col.lower():
-                        is_valid = False
-                        
-                        # FIX: Apply the Gender-Bypass to the YoY tab for Cancer metrics too
-                        if is_cancer_dataset:
-                            if col.endswith("_Total") or col.endswith("_No.") or col.endswith("_Assessed Only"):
-                                is_valid = True
-                        else:
+            
+            if is_ncd:
+                for base in base_mets:
+                    group_cols = []
+                    for col in raw_df.columns:
+                        clean_c = col.replace('\n', ' ')
+                        if base.lower() in clean_c.lower() and "%" not in col and "deficit" not in clean_c.lower() and "previous" not in clean_c.lower():
+                            group_cols.append(col)
+                    if group_cols:
+                        total_cols = [c for c in group_cols if "total" in c.lower()]
+                        if total_cols: available_cols.append(total_cols[0])
+                        else: available_cols.append(max(group_cols, key=lambda c: pd.to_numeric(raw_df[c], errors='coerce').sum()))
+            else:
+                for base in base_mets:
+                    for col in raw_df.columns:
+                        if base.lower() in col.lower() and "%" not in col and "deficit" not in col.lower() and "previous" not in col.lower():
+                            is_valid = False
                             if gender_filter == "Total":
                                 if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
                                     is_valid = True
                             else:
                                 if col.endswith(f"_{gender_filter}"):
                                     is_valid = True
-                                    
-                        if is_valid and col not in available_cols:
-                            available_cols.append(col)
+                            if is_valid and col not in available_cols:
+                                available_cols.append(col)
 
             if available_cols:
                 compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols, format_func=get_clean_ncd_name)
