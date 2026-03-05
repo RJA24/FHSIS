@@ -689,8 +689,9 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - Raw RHU Breakdown")
                 
-                # --- FIXED: RE-ADDED MISSING LINE ---
+                # --- FIXED: THIS IS THE MISSING LINE THAT WAS CAUSING THE NAME ERROR ---
                 chart_df = agg_df[['Area'] + valid_selected].copy()
+                # ----------------------------------------------------------------------
                 
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_ncd_name)
@@ -1221,8 +1222,8 @@ elif page == "📈 YoY Comparison":
             "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"]),
             "Adults Risk (20-59)": ("Adults_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive adults", "adults with type 2 dm"]),
             "Seniors Risk (≥60)": ("Seniors_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive elderly", "elderly with type 2 dm"]),
-            "Cervical Cancer": ("Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous lesions"]),
-            "Breast Cancer": ("Breast_Cancer", ["early detection services", "asymptomatic women screened", "women (50-69 y.o.) found with remarkable"])
+            "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "positive", "lesions"]),
+            "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
