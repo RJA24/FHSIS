@@ -48,16 +48,21 @@ def save_data_to_gsheets(new_data_dict):
             combined_df = pd.concat([old_df, new_df_clean], ignore_index=True)
             
         with st.spinner(f"Merging and saving {app_key} to cloud database..."):
-            if app_key in existing_data and not existing_data[app_key].empty:
-                old_len = len(existing_data[app_key])
-                new_len = len(combined_df)
-                if new_len < old_len:
-                    diff = old_len - new_len
-                    padding = pd.DataFrame([[""] * len(combined_df.columns)] * diff, columns=combined_df.columns)
-                    write_df = pd.concat([combined_df, padding], ignore_index=True)
-                    conn.update(worksheet=sheet_name, data=write_df)
-                    continue
-            conn.update(worksheet=sheet_name, data=combined_df)
+            try:
+                if app_key in existing_data and not existing_data[app_key].empty:
+                    old_len = len(existing_data[app_key])
+                    new_len = len(combined_df)
+                    if new_len < old_len:
+                        diff = old_len - new_len
+                        padding = pd.DataFrame([[""] * len(combined_df.columns)] * diff, columns=combined_df.columns)
+                        write_df = pd.concat([combined_df, padding], ignore_index=True)
+                        conn.update(worksheet=sheet_name, data=write_df)
+                        time.sleep(2.5) # FIX: API Rate Limiter
+                        continue
+                conn.update(worksheet=sheet_name, data=combined_df)
+                time.sleep(2.5) # FIX: API Rate Limiter
+            except Exception as e:
+                st.error(f"❌ Failed to save {sheet_name}. Verify the tab exists in Google Sheets and is named exactly correct.")
 
 def load_data_from_gsheets():
     loaded_data = {}
@@ -81,14 +86,19 @@ def nuke_cloud_database():
     
     for app_key, sheet_name in ALL_MAPPINGS.items():
         with st.spinner(f"Nuking {sheet_name}..."):
-            if app_key in existing_data and not existing_data[app_key].empty:
-                old_len = len(existing_data[app_key])
-                cols = existing_data[app_key].columns
-                blank_df = pd.DataFrame([[""] * len(cols)] * (old_len + 5), columns=cols)
-                conn.update(worksheet=sheet_name, data=blank_df)
-                
-            empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) 
-            conn.update(worksheet=sheet_name, data=empty_df)
+            try:
+                if app_key in existing_data and not existing_data[app_key].empty:
+                    old_len = len(existing_data[app_key])
+                    cols = existing_data[app_key].columns
+                    blank_df = pd.DataFrame([[""] * len(cols)] * (old_len + 5), columns=cols)
+                    conn.update(worksheet=sheet_name, data=blank_df)
+                    time.sleep(2.5) # FIX: API Rate Limiter
+                    
+                empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) 
+                conn.update(worksheet=sheet_name, data=empty_df)
+                time.sleep(2.5) # FIX: API Rate Limiter
+            except Exception as e:
+                st.warning(f"⚠️ Skipped {sheet_name} (Tab might not exist yet or API limit reached).")
             
     st.session_state['fhsis_data'] = {}
     st.cache_data.clear()
@@ -129,7 +139,6 @@ def load_and_clean_fhsis_data(uploaded_file, year):
             sheets_to_process = {}
             valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
             
-            # Removed the word 'to' and 'q' from here because it was accidentally deleting October data!
             invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem"]
             month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                          "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
@@ -218,7 +227,6 @@ def load_and_clean_ncd_data(uploaded_file, year):
         xls = pd.ExcelFile(uploaded_file)
         sheets_to_process = {}
         valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-        # Same fix applied here to protect October data
         invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem"]
         month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                      "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
@@ -334,7 +342,6 @@ def filter_data(df, start_month, end_month, gender, year, is_cancer=False):
         clean_col = col.lower()
         is_valid_gender = False
         
-        # Cancer is Female only, bypassing the dropdown logic
         if is_cancer:
             is_valid_gender = True
         else:
@@ -355,8 +362,17 @@ def filter_data(df, start_month, end_month, gender, year, is_cancer=False):
     if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
     return filtered_df
 
+def find_metric_col(df, keyword):
+    for c in df.columns:
+        if "DEFICIT" in c.upper() or "%" in c: continue
+        parts = [p.strip().upper() for p in c.split('_')]
+        target_parts = parts[-2:] if len(parts) > 1 else parts
+        for p in target_parts:
+            if keyword.upper() == p or f" {keyword.upper()}" in f" {p}" or f"{keyword.upper()} " in f"{p} ":
+                return c
+    return None
+
 def get_clean_ncd_name(col_name):
-    """Beautifully formats the giant FHSIS headers for the UI"""
     c_low = col_name.lower().replace('\n', ' ')
     if "risk assessed" in c_low: return "Total Risk Assessed"
     if "smoking" in c_low or "smoker" in c_low: return "History of Smoking"
@@ -569,7 +585,6 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 if total_cols:
                     cols_to_plot.append(total_cols[0])
                 else:
-                    # THE HEURISTIC: If headers are blank (producing _1, _2), the Total is mathematically the column with the largest sum!
                     max_col = max(group_cols, key=lambda c: pd.to_numeric(filtered_df[c], errors='coerce').sum())
                     cols_to_plot.append(max_col)
         
@@ -902,7 +917,6 @@ elif page == "🩺 NCD Dashboard":
         "🎀 Breast Cancer"
     ])
     
-    # Isolated Base Metrics for the "Highest Sum" Heuristic
     with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["risk assessed", "history of smoking", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive adults", "adults with type 2 dm"], start_month, end_month, gender_filter, selected_year)
     with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["risk assessed", "history of smoking", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive elderly", "elderly with type 2 dm"], start_month, end_month, gender_filter, selected_year)
     with ncd_tab3: render_ncd_tab_content("Cervical Cancer Screening", "Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous lesions"], start_month, end_month, gender_filter, selected_year)
