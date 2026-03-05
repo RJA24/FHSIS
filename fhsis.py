@@ -352,10 +352,8 @@ def filter_data(df, start_month, end_month, gender, year, is_cancer=False):
                     is_valid_gender = True
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
-            if pd.api.types.is_numeric_dtype(filtered_df[col]):
-                if filtered_df[col].sum() > 0: cols_to_keep.append(col)
-            else:
-                cols_to_keep.append(col)
+            # FIX: We now keep ALL valid columns, even if their sum is 0, so "Treated" won't vanish!
+            cols_to_keep.append(col)
                 
     cols_to_keep = list(dict.fromkeys(cols_to_keep))
     if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
@@ -634,6 +632,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
+
 # --- CUSTOM CERVICAL CANCER ENGINE ---
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
@@ -672,12 +671,15 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             
         agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
         
+        # --- NEW: METRIC CARDS AT THE TOP (At a Glance Totals) ---
         st.markdown("### 🎗️ Cervical Cancer Screening & Linkage to Care")
-        
-        c1, c2, c3 = st.columns(3)
-        if c_scr_tot: c1.metric("Total Women Screened/Assessed", f"{int(agg_df[c_scr_tot].sum()):,}")
-        if c_susp_no: c2.metric("Total Found Suspicious", f"{int(agg_df[c_susp_no].sum()):,}")
-        if c_pos_tot: c3.metric("Total Positive for Precancerous Lesions", f"{int(agg_df[c_pos_tot].sum()):,}")
+        st.markdown("##### Provincial Medical Totals")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        if c_scr_tot: c1.metric("1. Total Screened", f"{int(agg_df[c_scr_tot].sum()):,}")
+        if c_susp_no: c2.metric("2. Found Suspicious", f"{int(agg_df[c_susp_no].sum()):,}")
+        if c_susp_link_tot: c3.metric("3. Suspicious & Linked", f"{int(agg_df[c_susp_link_tot].sum()):,}")
+        if c_pos_tot: c4.metric("4. Found Positive", f"{int(agg_df[c_pos_tot].sum()):,}")
+        if c_pos_link_tot: c5.metric("5. Positive & Linked", f"{int(agg_df[c_pos_link_tot].sum()):,}")
         
         # CHART 1: Screened
         if c_scr_tot:
@@ -703,7 +705,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             st.markdown("---")
             prov_tot = int(agg_df[c_susp_link_tot].sum()) if c_susp_link_tot else 0
             melted_susp = agg_df[['Area'] + susp_link_cols].melt(id_vars='Area', value_vars=susp_link_cols, var_name='Metric', value_name='Patients')
-            melted_susp['Metric'] = melted_susp['Metric'].apply(lambda x: "Treated" if x == c_susp_link_tr else "Referred" if x == c_susp_link_ref else "Total")
+            melted_susp['Metric'] = melted_susp['Metric'].apply(lambda x: "Treated" if x == c_susp_link_tr else "Referred" if x == c_susp_link_ref else "Total Linked")
             fig_susp_link = px.bar(melted_susp, x='Area', y='Patients', color='Metric', barmode='group', title=f"3. Suspicious Cases Linked to Care (Provincial Total Linked: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#00CC96", "#FFA15A", "#EF553B"])
             fig_susp_link.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig_susp_link.update_layout(xaxis_title="RHU", yaxis_title="Number of Patients", margin=dict(t=40))
@@ -724,7 +726,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             st.markdown("---")
             prov_tot = int(agg_df[c_pos_link_tot].sum()) if c_pos_link_tot else 0
             melted_pos = agg_df[['Area'] + pos_link_cols].melt(id_vars='Area', value_vars=pos_link_cols, var_name='Metric', value_name='Patients')
-            melted_pos['Metric'] = melted_pos['Metric'].apply(lambda x: "Treated" if x == c_pos_link_tr else "Referred" if x == c_pos_link_ref else "Total")
+            melted_pos['Metric'] = melted_pos['Metric'].apply(lambda x: "Treated" if x == c_pos_link_tr else "Referred" if x == c_pos_link_ref else "Total Linked")
             fig_pos_link = px.bar(melted_pos, x='Area', y='Patients', color='Metric', barmode='group', title=f"5. Positive Precancerous Lesions Linked to Care (Provincial Total Linked: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#00CC96", "#FFA15A", "#EF553B"])
             fig_pos_link.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig_pos_link.update_layout(xaxis_title="RHU", yaxis_title="Number of Patients", margin=dict(t=40))
