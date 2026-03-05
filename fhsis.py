@@ -416,7 +416,9 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
             
             dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
-            dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and "MMR" in c), None))
+            # FIX: Adding MCV to the dropout catcher logic
+            dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and ("MMR" in c.upper() or "MCV" in c.upper())), None))
+            
             if dose_1_col and dose_last_col and tab_title != "Birth Doses":
                 st.markdown("---")
                 st.markdown(f"#### ⚠️ Dropout Analysis ({dose_1_col.replace(f'_{gender}', '')} to {dose_last_col.replace(f'_{gender}', '')})")
@@ -569,7 +571,6 @@ elif page == "📊 Dashboard":
                     for w in dq_warnings:
                         st.markdown(f"- {w}")
 
-                # --- NEW: MEETING-READY PRINTABLE REPORT ---
                 with st.expander("🖨️ Generate Printable PHO Report", expanded=False):
                     st.markdown(f"### Abra Provincial Health Office - Immunization Report")
                     st.markdown(f"**Reporting Period:** {start_month} to {end_month} {selected_year} | **Demographic:** {gender_filter}")
@@ -639,7 +640,8 @@ elif page == "📊 Dashboard":
     with tab2: render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3", "Penta 1", "Penta 2", "Penta 3"], start_month, end_month, gender_filter, selected_year)
     with tab3: render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter, selected_year)
     with tab4: render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter, selected_year)
-    with tab5: render_tab_content("MMR, FIC and CIC", "MMR", ["MMR 1", "MMR 2", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year)
+    # FIX: Adding MCV to the search parameters here for the historical tab
+    with tab5: render_tab_content("MMR/MCV, FIC and CIC", "MMR", ["MMR", "MCV", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year)
 
 # --- YOY COMPARISON PAGE ---
 elif page == "📈 YoY Comparison":
@@ -662,7 +664,8 @@ elif page == "📈 YoY Comparison":
             "Pentavalent": ("Penta", ["DPT", "Penta"]),
             "Polio": ("Polio", ["OPV", "IPV"]),
             "Pneumococcal (PCV)": ("PCV", ["PCV"]),
-            "MMR, FIC & CIC": ("MMR", ["MMR", "FIC", "CIC"])
+            # FIX: Adding MCV to the YoY Dropdown
+            "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
 
@@ -696,7 +699,6 @@ elif page == "📈 YoY Comparison":
                     merged = pd.merge(merged, agg_b, on='Area', how='left').fillna(0)
                     merged['Variance'] = merged[f'{year_b}'] - merged[f'{year_a}']
                     
-                    # --- NEW: UPGRADED YOY INSIGHTS ---
                     st.markdown("---")
                     st.markdown("#### 🏆 Performance Insights")
                     c_win, c_loss = st.columns(2)
@@ -732,7 +734,6 @@ elif page == "📈 YoY Comparison":
                     fig_var.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Difference in Doses", margin=dict(t=40))
                     st.plotly_chart(fig_var, use_container_width=True, key=f"yoy_var_{compare_col}_{year_a}_{year_b}")
 
-                    # --- NEW: CRASH-PROOF STYLED DATAFRAME WITH EMOJI TRENDS ---
                     with st.expander("📄 View Detailed YoY Data Table", expanded=True):
                         display_df = merged[['Area', f'{year_a}', f'{year_b}', 'Variance']].copy()
                         display_df['Trend'] = np.where(display_df['Variance'] > 0, '🟢 Improved', np.where(display_df['Variance'] < 0, '🔴 Declined', '⚫ Stable'))
