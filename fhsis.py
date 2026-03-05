@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from streamlit_gsheets import GSheetsConnection
+import time
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="FHSIS Immunization Dashboard", page_icon="💉", layout="wide")
@@ -292,6 +293,22 @@ def filter_data(df, start_month, end_month, gender, year):
         return filtered_df[cols_to_keep]
     return filtered_df
 
+def find_metric_col(df, keyword):
+    """
+    FIX: Safely isolates the sub-header so 'MMR 1' isn't accidentally grabbed
+    by the 'FIC' filter just because 'FIC' is in the main merged header.
+    """
+    for c in df.columns:
+        if "DEFICIT" in c.upper() or "%" in c: continue
+        parts = [p.strip().upper() for p in c.split('_')]
+        # Only check the final pieces of the column name (the sub-header and demographic)
+        target_parts = parts[-2:] if len(parts) > 1 else parts
+        for p in target_parts:
+            # Look for exact matching words to prevent crosstalk
+            if keyword.upper() == p or f" {keyword.upper()}" in f" {p}" or f"{keyword.upper()} " in f"{p} ":
+                return c
+    return None
+
 @st.cache_data
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
@@ -308,7 +325,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
         for base in base_metrics:
             for col in filtered_df.columns:
                 if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
-                    # FIX: Prevent the "Previous FIC" and "Deficit" columns from appearing in the charts
                     if "%" not in col and "deficit" not in col.lower() and "previous" not in col.lower():
                         if col not in cols_to_plot:  
                             cols_to_plot.append(col)
@@ -396,6 +412,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
                 abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 
+                uid = f"{safe_filename}_{year}_{int(time.time())}"
+                
                 fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen',
                                   title=f"Abra Province Total ({start_m} - {end_m})",
                                   text_auto=True,
@@ -406,7 +424,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     
                 fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
-                st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{uid}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Provincial_Total_{safe_filename}', 'scale': 4}})
 
                 st.markdown("---")
                 
@@ -425,7 +443,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
-                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_RHU_Breakdown_{safe_filename}', 'scale': 4}})
                 
                 st.markdown("---")
                 
@@ -442,7 +460,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                                   color_continuous_scale="Greens")
                 
                 fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
-                st.plotly_chart(fig_top5, use_container_width=True, key=f"top5_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_top5, use_container_width=True, key=f"top5_{uid}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Top5_RHUs_{safe_filename}', 'scale': 4}})
                 
                 st.markdown("---")
                 st.markdown(f"#### 🗺️ Provincial Heatmap")
@@ -465,7 +483,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     mapbox_style="carto-positron", title=map_title
                 )
                 fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
-                st.plotly_chart(fig_map, use_container_width=True, key=f"map_{safe_filename}_{year}")
+                st.plotly_chart(fig_map, use_container_width=True, key=f"map_{uid}")
                 
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
@@ -498,7 +516,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                     
                 fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40))
-                st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{safe_filename}_{year}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Trend_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}", config={'toImageButtonOptions': {'format': 'png', 'filename': f'Abra_Trend_{safe_filename}', 'scale': 4}})
 
             else:
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
@@ -522,7 +540,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 fig_drop.add_hline(y=10, line_dash="dash", line_color="red", annotation_text="Warning Threshold (10%)")
                 fig_drop.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Dropout Rate (%)", margin=dict(t=40))
                 
-                st.plotly_chart(fig_drop, use_container_width=True, key=f"drop_{safe_filename}_{year}", config={'toImageButtonOptions': {'filename': f'Abra_Dropout_{safe_filename}', 'scale': 4}})
+                st.plotly_chart(fig_drop, use_container_width=True, key=f"drop_{uid}", config={'toImageButtonOptions': {'filename': f'Abra_Dropout_{safe_filename}', 'scale': 4}})
             
         else:
             st.warning("Could not find graphing columns for the selected demographic.")
@@ -574,7 +592,6 @@ if page == "📊 Dashboard":
             mmr_df = filter_data(st.session_state['fhsis_data']["MMR"], start_month, end_month, gender_filter, selected_year)
             penta_df = filter_data(st.session_state['fhsis_data']["Penta"], start_month, end_month, gender_filter, selected_year)
             
-            # FIX: Explicitly prevents the "Previous FIC (2024)" and "Deficit" columns from crashing the math
             fic_col = next((c for c in mmr_df.columns if "FIC" in c and "%" not in c and "DEFICIT" not in c.upper() and "PREVIOUS" not in c.upper()), None)
             cic_col = next((c for c in mmr_df.columns if "CIC" in c and "%" not in c and "DEFICIT" not in c.upper() and "PREVIOUS" not in c.upper()), None)
             elig_col = next((c for c in mmr_df.columns if 'elig' in c.lower() or 'pop' in c.lower()), None)
@@ -644,19 +661,8 @@ if page == "📊 Dashboard":
                         st.markdown(f"- {w}")
                 
                 st.markdown("---")
-                st.markdown("#### 🚀 Target Forecasting (FIC Coverage)")
-                forecast_df = pd.DataFrame({
-                    "Metric": ["Current Coverage", "Projected Year-End", "DOH Target"],
-                    "Coverage (%)": [curr_cov, projected_cov, 95]
-                })
-                fig_forecast = px.bar(forecast_df, x="Coverage (%)", y="Metric", orientation='h', 
-                                      color="Metric", text_auto=".1f",
-                                      color_discrete_map={"Current Coverage": "#1f77b4", "Projected Year-End": "#ff7f0e", "DOH Target": "red"})
-                fig_forecast.add_vline(x=95, line_dash="dash", line_color="red", annotation_text="95% Target")
-                fig_forecast.update_layout(showlegend=False, xaxis_range=[0, max(100, projected_cov + 5)])
-                st.plotly_chart(fig_forecast, use_container_width=True, key=f"forecast_exec_{selected_year}")
                 
-                st.markdown("---")
+                # --- SWAPPED: Top 3 / Bottom 3 NOW APPEAR HERE ---
                 col_lead1, col_lead2 = st.columns(2)
                 
                 rhu_fic['Coverage'] = (rhu_fic[fic_col] / rhu_fic[elig_col] * 100).fillna(0)
@@ -675,6 +681,20 @@ if page == "📊 Dashboard":
                     fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
                     fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
                     st.plotly_chart(fig_bot3, use_container_width=True, key=f"bot3_exec_fic_{selected_year}")
+
+                # --- SWAPPED: Forecasting chart NOW APPEARS AT THE BOTTOM ---
+                st.markdown("---")
+                st.markdown("#### 🚀 Target Forecasting (FIC Coverage)")
+                forecast_df = pd.DataFrame({
+                    "Metric": ["Current Coverage", "Projected Year-End", "DOH Target"],
+                    "Coverage (%)": [curr_cov, projected_cov, 95]
+                })
+                fig_forecast = px.bar(forecast_df, x="Coverage (%)", y="Metric", orientation='h', 
+                                      color="Metric", text_auto=".1f",
+                                      color_discrete_map={"Current Coverage": "#1f77b4", "Projected Year-End": "#ff7f0e", "DOH Target": "red"})
+                fig_forecast.add_vline(x=95, line_dash="dash", line_color="red", annotation_text="95% Target")
+                fig_forecast.update_layout(showlegend=False, xaxis_range=[0, max(100, projected_cov + 5)])
+                st.plotly_chart(fig_forecast, use_container_width=True, key=f"forecast_exec_{selected_year}")
 
         else:
             st.info("Upload both 'Pentavalent' and 'MMR/FIC' data via the Data Uploader to unlock the Executive Summary.")
