@@ -388,7 +388,6 @@ def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
                     is_valid_gender = True
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
-            # Safely preserves zero values so Treated=0 shows up perfectly
             cols_to_keep.append(col)
                 
     cols_to_keep = list(dict.fromkeys(cols_to_keep))
@@ -636,7 +635,6 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 
                 st.markdown("#### 🏆 Provincial NCD Summary (With Prevalence Yield)")
                 
-                # Dynamic wrap for Metric Cards so they don't squish
                 cols_per_row = 5
                 rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
                 
@@ -654,7 +652,6 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 
                 st.markdown("---")
                 
-                # --- NEW EXECUTIVE VISUALIZATIONS ---
                 if c_assessed or lifestyle_cols:
                     st.markdown(f"#### 🧬 {tab_title} : Provincial Health Footprint")
                     v_col1, v_col2 = st.columns(2)
@@ -691,6 +688,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - Raw RHU Breakdown")
+                chart_df = agg_df[['Area'] + valid_selected].copy()
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_ncd_name)
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
