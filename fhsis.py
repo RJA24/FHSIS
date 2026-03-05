@@ -6,10 +6,10 @@ from streamlit_gsheets import GSheetsConnection
 import time
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Abra FHSIS Immunization Tracker", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="🛡️", layout="wide")
 
 # --- GSHEETS CONFIGURATION ---
-SHEET_MAPPING = {
+IMMUNIZATION_MAPPING = {
     "CPAB_BCG_HepB": "CPAB_Data",
     "Penta": "Penta_Data",
     "Polio": "Polio_Data",
@@ -17,12 +17,21 @@ SHEET_MAPPING = {
     "MMR": "MMR_Data"
 }
 
+NCD_MAPPING = {
+    "Adults_Risk": "Adults_NCD_Data",
+    "Seniors_Risk": "Seniors_NCD_Data",
+    "Cervical_Cancer": "Cervical_Cancer_Data",
+    "Breast_Cancer": "Breast_Cancer_Data"
+}
+
+ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING}
+
 def save_data_to_gsheets(new_data_dict):
     conn = st.connection("gsheets", type=GSheetsConnection)
     existing_data = load_data_from_gsheets()
     
     for app_key, new_df in new_data_dict.items():
-        sheet_name = SHEET_MAPPING[app_key]
+        sheet_name = ALL_MAPPINGS[app_key]
         combined_df = new_df.copy()
         
         if app_key in existing_data and not existing_data[app_key].empty:
@@ -54,7 +63,7 @@ def load_data_from_gsheets():
     loaded_data = {}
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        for app_key, sheet_name in SHEET_MAPPING.items():
+        for app_key, sheet_name in ALL_MAPPINGS.items():
             try:
                 df = conn.read(worksheet=sheet_name, ttl=0) 
                 if not df.empty and 'Area' in df.columns:
@@ -71,7 +80,7 @@ def nuke_cloud_database():
     conn = st.connection("gsheets", type=GSheetsConnection)
     existing_data = load_data_from_gsheets()
     
-    for app_key, sheet_name in SHEET_MAPPING.items():
+    for app_key, sheet_name in ALL_MAPPINGS.items():
         with st.spinner(f"Nuking {sheet_name}..."):
             if app_key in existing_data and not existing_data[app_key].empty:
                 old_len = len(existing_data[app_key])
@@ -109,7 +118,7 @@ ABRA_COORDS = {
     "Tineg": (17.785, 120.938), "Tubo": (17.234, 120.748), "Villaviciosa": (17.439, 120.632)
 }
 
-# --- DATA CLEANING FUNCTION ---
+# --- UNTOUCHED IMMUNIZATION CLEANER ---
 @st.cache_data
 def load_and_clean_fhsis_data(uploaded_file, year):
     try:
@@ -119,43 +128,32 @@ def load_and_clean_fhsis_data(uploaded_file, year):
         else:
             xls = pd.ExcelFile(uploaded_file)
             sheets_to_process = {}
-            
             valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
             invalid_keywords = ["-", "to", "q", "sem", "annual", "summary", "cons", "ytd"]
             month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                          "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
-            
             for sheet in xls.sheet_names:
                 sheet_lower = sheet.lower().strip()
                 months_found = [m for m in valid_months if m in sheet_lower]
-                if len(months_found) != 1:
-                    continue
-                if any(inv in sheet_lower for inv in invalid_keywords):
-                    continue
-                matched_month = month_map[months_found[0]]
-                sheets_to_process[matched_month] = pd.read_excel(xls, sheet_name=sheet, header=None)
+                if len(months_found) != 1: continue
+                if any(inv in sheet_lower for inv in invalid_keywords): continue
+                sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
         for month_val, df in sheets_to_process.items():
             area_row_idx = -1
             for idx, row in df.iterrows():
                 if any('Area' in str(val).strip() for val in row.values if pd.notna(val)):
-                    area_row_idx = idx
-                    break
-            if area_row_idx == -1:
-                continue 
+                    area_row_idx = idx; break
+            if area_row_idx == -1: continue 
             sub_row_idx = -1
             for idx in range(area_row_idx + 1, min(area_row_idx + 5, len(df))):
                 row = df.iloc[idx]
                 if any(str(val).strip() in ['Male', 'Female'] for val in row.values if pd.notna(val)):
-                    sub_row_idx = idx
-                    break
+                    sub_row_idx = idx; break
 
             main_headers = df.iloc[area_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], np.nan, regex=True).ffill()
-            if sub_row_idx != -1:
-                sub_headers = df.iloc[sub_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True)
-            else:
-                sub_headers = pd.Series([''] * len(main_headers))
+            sub_headers = df.iloc[sub_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True) if sub_row_idx != -1 else pd.Series([''] * len(main_headers))
 
             flat_cols = []
             for top, bot in zip(main_headers, sub_headers):
@@ -205,25 +203,116 @@ def load_and_clean_fhsis_data(uploaded_file, year):
                         df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
             all_months_data.append(df_clean)
         
-        if not all_months_data:
-            raise ValueError("Could not find properly formatted monthly sheets in the file.")
+        if not all_months_data: raise ValueError("Could not find properly formatted monthly sheets in the file.")
         return pd.concat(all_months_data, ignore_index=True)
     except Exception as e:
         st.error(f"Error processing {uploaded_file.name}: {e}")
         return None
 
+# --- NEW: ISOLATED NCD DATA CLEANER ---
+@st.cache_data
+def load_and_clean_ncd_data(uploaded_file, year):
+    """A hyper-robust cleaner built specifically to squash 3-level NCD header rows into flat data."""
+    try:
+        xls = pd.ExcelFile(uploaded_file)
+        sheets_to_process = {}
+        valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        invalid_keywords = ["-", "to", "q", "sem", "annual", "summary", "cons", "ytd", "quarter"]
+        month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
+                     "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
+        
+        for sheet in xls.sheet_names:
+            sheet_lower = sheet.lower().strip()
+            months_found = [m for m in valid_months if m in sheet_lower]
+            if len(months_found) != 1: continue
+            if any(inv in sheet_lower for inv in invalid_keywords): continue
+            sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+
+        all_months_data = []
+        for month_val, df in sheets_to_process.items():
+            area_row_idx = -1
+            data_start_idx = -1
+            
+            # Find the header start and data start
+            for idx, row in df.iterrows():
+                row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
+                if any('AREA' in v for v in row_str) and area_row_idx == -1:
+                    area_row_idx = idx
+                if area_row_idx != -1 and idx > area_row_idx:
+                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] for v in row_str):
+                        data_start_idx = idx
+                        break
+                        
+            if area_row_idx == -1 or data_start_idx == -1: continue
+            
+            # Smash all header rows together safely
+            headers_df = df.iloc[area_row_idx:data_start_idx].copy()
+            headers_df.iloc[0] = headers_df.iloc[0].ffill() 
+            if len(headers_df) > 1: headers_df.iloc[1] = headers_df.iloc[1].ffill() 
+            
+            flat_cols = []
+            for col_idx in range(headers_df.shape[1]):
+                parts = []
+                for row_idx in range(headers_df.shape[0]):
+                    val = str(headers_df.iloc[row_idx, col_idx]).strip().replace('\n', ' ')
+                    if val and val != 'nan' and "Unnamed:" not in val:
+                        if not parts or val != parts[-1]:
+                            parts.append(val)
+                col_name = "_".join(parts)
+                if not col_name: col_name = f"Empty_{col_idx}"
+                flat_cols.append(col_name)
+                
+            seen = set()
+            unique_cols = []
+            for c in flat_cols:
+                new_c = c
+                counter = 1
+                while new_c in seen:
+                    new_c = f"{c}_{counter}"
+                    counter += 1
+                seen.add(new_c)
+                unique_cols.append(new_c)
+
+            clean = df.iloc[data_start_idx:].copy()
+            clean.columns = unique_cols
+            
+            # Lock onto the true Area column
+            area_col = [c for c in unique_cols if "AREA" in c.upper()][0]
+            if area_col != 'Area':
+                if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
+                clean.rename(columns={area_col: 'Area'}, inplace=True)
+            
+            clean.dropna(subset=['Area'], inplace=True)
+            clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
+            clean = clean[clean['Area_Clean'].isin(ABRA_RHUS)]
+            clean['Area'] = clean['Area_Clean']
+            clean.drop(columns=['Area_Clean'], inplace=True)
+            clean['Month'] = month_val
+            clean['Year'] = year
+            
+            for col in clean.columns:
+                if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
+                    clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
+            all_months_data.append(clean)
+            
+        if not all_months_data: raise ValueError("Could not find properly formatted monthly sheets.")
+        return pd.concat(all_months_data, ignore_index=True)
+    except Exception as e:
+        st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
+        return None
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("FHSIS Portal")
-    page = st.radio("Navigation", ["🏠 Home", "📊 Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
+    page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
     st.markdown("---")
     
-    if page in ["📊 Dashboard", "📈 YoY Comparison"]:
+    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison"]:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
 
-# --- INITIALIZE SESSION STATE FROM GOOGLE SHEETS ---
+# --- INITIALIZE SESSION STATE ---
 if 'fhsis_data' not in st.session_state:
     st.session_state['fhsis_data'] = load_data_from_gsheets()
 
@@ -277,6 +366,7 @@ def find_metric_col(df, keyword):
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
+# --- UNTOUCHED IMMUNIZATION UI RENDERER ---
 def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
@@ -297,7 +387,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
             for ec in elig_cols: agg_dict[ec] = 'max' 
                 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
-            
             view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_{safe_filename}")
             
             default_cols = []
@@ -416,7 +505,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
             
             dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
-            # FIX: Adding MCV to the dropout catcher logic
             dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and ("MMR" in c.upper() or "MCV" in c.upper())), None))
             
             if dose_1_col and dose_last_col and tab_title != "Birth Doses":
@@ -439,32 +527,146 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
+# --- NEW: NCD UI RENDERER ---
+def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        filtered_df = filter_data(raw_df, start_m, end_m, gender, year)
+        
+        safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
+        
+        cols_to_plot = []
+        for base in base_metrics:
+            for col in filtered_df.columns:
+                if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
+                    if "%" not in col and "deficit" not in col.lower():
+                        if col not in cols_to_plot:  cols_to_plot.append(col)
+        
+        if cols_to_plot:
+            agg_dict = {col: 'sum' for col in cols_to_plot}
+            for ec in elig_cols: agg_dict[ec] = 'max' 
+                
+            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_ncd_{safe_filename}")
+            
+            with st.expander("⚙️ Add / Remove NCD Indicators"):
+                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot[:3], key=f"ms_ncd_{safe_filename}_{year}")
+
+            if selected_cols:
+                provincial_antigens = {col: agg_df[col].sum() for col in selected_cols}
+                provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
+                
+                st.markdown("#### 🏆 Provincial NCD Summary")
+                kpi_cols = st.columns(len(selected_cols))
+                for i, col in enumerate(selected_cols):
+                    total_val = provincial_antigens[col]
+                    # Shorten super long NCD names for the UI widgets
+                    short_name = col.replace(f"_{gender}", "").split('(')[0].strip()
+                    if len(short_name) > 35: short_name = short_name[:32] + "..."
+                    
+                    if view_mode == "Percentage (%) Coverage" and elig_cols:
+                        perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
+                        kpi_cols[i].metric(label=short_name, value=f"{perc:.1f}%")
+                    else:
+                        kpi_cols[i].metric(label=short_name, value=f"{int(total_val):,}")
+                
+                st.markdown("---")
+                chart_df = agg_df[['Area'] + selected_cols + elig_cols].copy()
+                abra_total_df = pd.DataFrame()
+                abra_total_df['Indicator'] = [c.replace(f"_{gender}", "").split('(')[0].strip() for c in selected_cols]
+                
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    main_elig_col = elig_cols[0]
+                    for col in selected_cols:
+                        chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
+                        chart_df[col] = chart_df[col].round(1)
+                    prov_counts = [provincial_antigens[c] for c in selected_cols]
+                    abra_total_df['Count'] = [(c / provincial_elig * 100) if provincial_elig > 0 else 0 for c in prov_counts]
+                    abra_total_df['Count'] = abra_total_df['Count'].round(1)
+                    y_axis_label = "Coverage (%)"
+                else:
+                    abra_total_df['Count'] = [provincial_antigens[c] for c in selected_cols]
+                    y_axis_label = "Count"
+
+                st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
+                uid = f"ncd_{safe_filename}_{year}_{int(time.time())}"
+                fig_abra = px.bar(abra_total_df, x='Indicator', y='Count', color='Indicator', title=f"Provincial Total ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
+                fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_abra.update_layout(xaxis_title="Indicator", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
+                st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{uid}")
+
+                st.markdown("---")
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator', value_name='Count')
+                melted['Indicator'] = melted['Indicator'].str.replace(f"_{gender}", "").str.split('(').str[0].str.strip()
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
+                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
+                
+                st.markdown("---")
+                st.markdown(f"#### 🗺️ Geospatial View: NCD Hotspots")
+                map_df = chart_df.copy()
+                map_df['Rank_Metric'] = map_df[selected_cols].mean(axis=1)
+                map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
+                map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
+                map_df = map_df[map_df['Lat'] != 0] 
+                
+                color_scale = "Reds" if view_mode != "Percentage (%) Coverage" else "Blues"
+                map_title = f"Map: Average {y_axis_label} (Higher is darker)"
+                
+                fig_map = px.scatter_mapbox(
+                    map_df, lat="Lat", lon="Lon", hover_name="Area", 
+                    hover_data={"Lat": False, "Lon": False, "Rank_Metric": ':.1f'},
+                    color="Rank_Metric", size="Rank_Metric",
+                    color_continuous_scale=color_scale,
+                    size_max=20, zoom=8.5, center={"lat": 17.55, "lon": 120.75},
+                    mapbox_style="carto-positron", title=map_title
+                )
+                fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
+                st.plotly_chart(fig_map, use_container_width=True, key=f"map_{uid}")
+                
+            else:
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
+            
+        else:
+            st.warning("Could not find graphing columns for the selected demographic.")
+            
+        with st.expander("📄 View & Download Raw NCD Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_NCD_{safe_filename}_Data.csv", mime="text/csv")
+    else:
+        st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
+
 # --- HOME PAGE (PORTFOLIO POLISH) ---
 if page == "🏠 Home":
     st.markdown("""
         <div style="text-align: center; padding: 2rem 0;">
             <h1>🛡️ Provincial Health Office (PHO)</h1>
-            <h2>FHSIS Immunization Data Portal</h2>
+            <h2>FHSIS Health & Immunization Portal</h2>
             <p style="font-size: 1.2rem; color: gray;">Engineered for accuracy. Built for action.</p>
         </div>
         ---
     """, unsafe_allow_html=True)
     
-    st.markdown("### Welcome to the Abra Immunization Tracker")
+    st.markdown("### Welcome to the Abra Health Tracker")
     st.markdown("""
     This application is an enterprise-grade reporting engine designed to ingest, clean, and visualize Field Health Services Information System (FHSIS) data across all 27 Rural Health Units (RHUs) in the province of Abra. 
     
     **Core Capabilities:**
     * **Automated Data Extraction:** Safely parses messy, merged, and multi-sheet DOH Excel templates.
+    * **Multi-Module Support:** Fully supports Child Immunization targets and Non-Communicable Disease (NCD) Risk Assessments.
     * **Data Quality Auditing:** Actively filters out "ghost rows," negative deficit anomalies, and duplicate uploads to guarantee 100% mathematical integrity.
-    * **Geospatial & Trend Analysis:** Transforms raw numbers into interactive maps, YoY comparisons, and dropout alerts.
+    * **Geospatial & Trend Analysis:** Transforms raw numbers into interactive maps, YoY comparisons, and actionable insights.
     
-    *Use the sidebar navigation to securely upload FHSIS files, view the provincial dashboard, or analyze historical trends.*
+    *Use the sidebar navigation to securely upload FHSIS files, view the provincial dashboards, or analyze historical trends.*
     """)
-    st.info("💡 **Tip:** Navigate to the **Dashboard** to view the Executive Summary and generate your monthly PHO printable report.")
+    st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO printable report.")
 
-# --- MAIN DASHBOARD PAGE ---
-elif page == "📊 Dashboard":
+# --- IMMUNIZATION DASHBOARD ---
+elif page == "👶 Immunization Dashboard":
     st.title("💉 Child Immunization Dashboard")
     st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
     st.markdown("---")
@@ -640,17 +842,55 @@ elif page == "📊 Dashboard":
     with tab2: render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3", "Penta 1", "Penta 2", "Penta 3"], start_month, end_month, gender_filter, selected_year)
     with tab3: render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter, selected_year)
     with tab4: render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter, selected_year)
-    # FIX: Adding MCV to the search parameters here for the historical tab
     with tab5: render_tab_content("MMR/MCV, FIC and CIC", "MMR", ["MMR", "MCV", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year)
+
+# --- NEW: NCD DASHBOARD ---
+elif page == "🩺 NCD Dashboard":
+    st.title("🩺 Non-Communicable Disease (NCD) Dashboard")
+    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown("---")
+    
+    st.markdown("##### ⏳ Time Filter")
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed", key="ncd_time")
+    with col_t2:
+        if time_view == "Monthly":
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed", key="ncd_m")
+        else:
+            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed", key="ncd_q")
+            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
+            start_month = q_map[start_q][0]
+            end_month = q_map[end_q][1]
+            
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    ncd_tab1, ncd_tab2, ncd_tab3, ncd_tab4 = st.tabs([
+        "👤 Adults Risk (20-59)", 
+        "👴 Seniors Risk (≥60)", 
+        "🎗️ Cervical Cancer", 
+        "🎀 Breast Cancer"
+    ])
+    
+    with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["Risk assessed", "smoking", "Alcohol", "Overweight", "Obese", "physical activity", "unhealthy diet", "Hypertensive", "Type 2 DM"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["Risk assessed", "smoking", "Alcohol", "Overweight", "Obese", "physical activity", "unhealthy diet", "Hypertensive", "Type 2 DM"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab3: render_ncd_tab_content("Cervical Cancer Screening", "Cervical_Cancer", ["screened", "suspicious", "precancerous"], start_month, end_month, gender_filter, selected_year)
+    with ncd_tab4: render_ncd_tab_content("Breast Cancer Screening", "Breast_Cancer", ["high risk women", "Remarkable", "asymptomatic"], start_month, end_month, gender_filter, selected_year)
 
 # --- YOY COMPARISON PAGE ---
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
-    st.markdown("Compare immunization performance between two different years to instantly track regional growth or decline.")
+    st.markdown("Compare metric performance between two different years to instantly track regional growth or decline.")
 
     col_y1, col_y2, col_y3 = st.columns(3)
     with col_y1:
-        yoy_dataset = st.selectbox("Select Vaccine Category", ["Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC"])
+        # Added NCD Categories to the YoY dropdown
+        yoy_dataset = st.selectbox("Select Data Category", [
+            "Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC",
+            "Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"
+        ])
     with col_y2:
         year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2)
     with col_y3:
@@ -664,8 +904,11 @@ elif page == "📈 YoY Comparison":
             "Pentavalent": ("Penta", ["DPT", "Penta"]),
             "Polio": ("Polio", ["OPV", "IPV"]),
             "Pneumococcal (PCV)": ("PCV", ["PCV"]),
-            # FIX: Adding MCV to the YoY Dropdown
-            "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"])
+            "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"]),
+            "Adults Risk (20-59)": ("Adults_Risk", ["Risk assessed", "smoking", "Alcohol", "Hypertensive", "Type 2 DM"]),
+            "Seniors Risk (≥60)": ("Seniors_Risk", ["Risk assessed", "smoking", "Alcohol", "Hypertensive", "Type 2 DM"]),
+            "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "precancerous"]),
+            "Breast Cancer": ("Breast_Cancer", ["high risk", "asymptomatic", "Remarkable"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
 
@@ -705,33 +948,33 @@ elif page == "📈 YoY Comparison":
                     
                     top_improvers = merged.nlargest(3, 'Variance')
                     with c_win:
-                        st.success("**Top 3 Most Improved RHUs (Dose Increase)**")
+                        st.success("**Top 3 Most Improved RHUs (Increase)**")
                         for idx, row in top_improvers.iterrows():
                             if row['Variance'] > 0:
-                                st.markdown(f"- **{row['Area']}:** +{int(row['Variance'])} doses")
+                                st.markdown(f"- **{row['Area']}:** +{int(row['Variance'])} counts")
                             
                     bottom_drops = merged.nsmallest(3, 'Variance')
                     with c_loss:
                         st.error("**Action Required: Steepest Declines**")
                         for idx, row in bottom_drops.iterrows():
                             if row['Variance'] < 0:
-                                st.markdown(f"- **{row['Area']}:** {int(row['Variance'])} doses")
+                                st.markdown(f"- **{row['Area']}:** {int(row['Variance'])} counts")
 
                     st.markdown("---")
-                    st.markdown(f"#### 📊 {compare_col.replace(f'_{gender_filter}', '')} : {year_a} vs {year_b}")
+                    st.markdown(f"#### 📊 {compare_col.replace(f'_{gender_filter}', '').split('(')[0].strip()} : {year_a} vs {year_b}")
 
-                    melted_yoy = merged.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Doses')
-                    fig_yoy = px.bar(melted_yoy, x='Area', y='Doses', color='Year', barmode='group',
+                    melted_yoy = merged.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Counts')
+                    fig_yoy = px.bar(melted_yoy, x='Area', y='Counts', color='Year', barmode='group',
                                      title=f"Head-to-Head Comparison: {year_a} vs {year_b}", text_auto=True, color_discrete_sequence=["#1f77b4", "#ff7f0e"])
-                    fig_yoy.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Doses", margin=dict(t=40))
+                    fig_yoy.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Counts", margin=dict(t=40))
                     st.plotly_chart(fig_yoy, use_container_width=True, key=f"yoy_bar_{compare_col}_{year_a}_{year_b}")
 
                     st.markdown(f"#### 📈 Growth / Decline (Variance)")
                     merged['Color'] = np.where(merged['Variance'] >= 0, 'Growth (Positive)', 'Decline (Negative)')
                     fig_var = px.bar(merged, x='Area', y='Variance', color='Color', text_auto=True,
                                      color_discrete_map={'Growth (Positive)': 'green', 'Decline (Negative)': 'red'},
-                                     title=f"Net Change in Doses ({year_b} minus {year_a})")
-                    fig_var.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Difference in Doses", margin=dict(t=40))
+                                     title=f"Net Change in Counts ({year_b} minus {year_a})")
+                    fig_var.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Difference in Counts", margin=dict(t=40))
                     st.plotly_chart(fig_var, use_container_width=True, key=f"yoy_var_{compare_col}_{year_a}_{year_b}")
 
                     with st.expander("📄 View Detailed YoY Data Table", expanded=True):
@@ -755,53 +998,59 @@ elif page == "📁 Data Uploader":
         st.stop()
         
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
-    
     upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
     
-    col1, col2 = st.columns(2)
-    with col1:
-        file_cpab = st.file_uploader("Upload: 1 CPAB, BCG and Hepa B", type=["csv", "xlsx"])
-        if file_cpab:
-            df = load_and_clean_fhsis_data(file_cpab, upload_year)
-            if df is not None: st.session_state['fhsis_data']["CPAB_BCG_HepB"] = df
-            
-        file_penta = st.file_uploader("Upload: 2 DPT-HiB-HepB", type=["csv", "xlsx"])
-        if file_penta:
-            df = load_and_clean_fhsis_data(file_penta, upload_year)
-            if df is not None: st.session_state['fhsis_data']["Penta"] = df
-            
-        file_polio = st.file_uploader("Upload: 3 OPV and IPV", type=["csv", "xlsx"])
-        if file_polio:
-            df = load_and_clean_fhsis_data(file_polio, upload_year)
-            if df is not None: st.session_state['fhsis_data']["Polio"] = df
-            
-    with col2:
-        file_pcv = st.file_uploader("Upload: 4 PCV", type=["csv", "xlsx"])
-        if file_pcv:
-            df = load_and_clean_fhsis_data(file_pcv, upload_year)
-            if df is not None: st.session_state['fhsis_data']["PCV"] = df
-            
-        file_mmr = st.file_uploader("Upload: 5 MMR, FIC and CIC", type=["csv", "xlsx"])
-        if file_mmr:
-            df = load_and_clean_fhsis_data(file_mmr, upload_year)
-            if df is not None: st.session_state['fhsis_data']["MMR"] = df
-            
-    st.markdown("---")
-    action_col1, action_col2 = st.columns(2)
+    upload_tab_imm, upload_tab_ncd = st.tabs(["👶 Child Immunization", "🩺 Non-Communicable Diseases (NCD)"])
     
-    with action_col1:
-        if st.button("☁️ Save Data to Google Sheets", type="primary", use_container_width=True):
-            if st.session_state['fhsis_data']:
-                save_data_to_gsheets(st.session_state['fhsis_data'])
-                st.success(f"✅ {upload_year} Files processed and safely merged into Google Sheets! Head over to the Dashboard.")
+    with upload_tab_imm:
+        st.markdown("##### Upload Immunization Excel Templates")
+        col1, col2 = st.columns(2)
+        with col1:
+            file_cpab = st.file_uploader("Upload: 1 CPAB, BCG and Hepa B", type=["csv", "xlsx"])
+            file_penta = st.file_uploader("Upload: 2 DPT-HiB-HepB", type=["csv", "xlsx"])
+            file_polio = st.file_uploader("Upload: 3 OPV and IPV", type=["csv", "xlsx"])
+        with col2:
+            file_pcv = st.file_uploader("Upload: 4 PCV", type=["csv", "xlsx"])
+            file_mmr = st.file_uploader("Upload: 5 MMR, FIC and CIC", type=["csv", "xlsx"])
+            
+        if st.button("☁️ Save Immunization Data to Cloud", type="primary", use_container_width=True):
+            upload_dict = {}
+            if file_cpab: upload_dict["CPAB_BCG_HepB"] = load_and_clean_fhsis_data(file_cpab, upload_year)
+            if file_penta: upload_dict["Penta"] = load_and_clean_fhsis_data(file_penta, upload_year)
+            if file_polio: upload_dict["Polio"] = load_and_clean_fhsis_data(file_polio, upload_year)
+            if file_pcv: upload_dict["PCV"] = load_and_clean_fhsis_data(file_pcv, upload_year)
+            if file_mmr: upload_dict["MMR"] = load_and_clean_fhsis_data(file_mmr, upload_year)
+            
+            clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
+            if clean_dict:
+                save_data_to_gsheets(clean_dict)
+                st.success(f"✅ {upload_year} Immunization Files safely merged into Google Sheets!")
             else:
-                st.error("No data uploaded yet to save.")
+                st.error("No valid data uploaded yet to save.")
                 
-    with action_col2:
-        if st.button("🗑️ Clear Current Uploads", type="secondary", use_container_width=True):
-            clear_session_data()
-            st.warning("Current app data cleared. (Note: This does not delete the permanent data inside Google Sheets).")
-            st.rerun()
+    with upload_tab_ncd:
+        st.markdown("##### Upload NCD Excel Templates")
+        col3, col4 = st.columns(2)
+        with col3:
+            file_adults = st.file_uploader("Upload: 1 Adults Risk Assessed", type=["csv", "xlsx"])
+            file_seniors = st.file_uploader("Upload: 2 Seniors Risk Assessed", type=["csv", "xlsx"])
+        with col4:
+            file_cervical = st.file_uploader("Upload: 5 Cervical Cancer", type=["csv", "xlsx"])
+            file_breast = st.file_uploader("Upload: 6 Breast Cancer", type=["csv", "xlsx"])
+            
+        if st.button("☁️ Save NCD Data to Cloud", type="primary", use_container_width=True):
+            upload_dict = {}
+            if file_adults: upload_dict["Adults_Risk"] = load_and_clean_ncd_data(file_adults, upload_year)
+            if file_seniors: upload_dict["Seniors_Risk"] = load_and_clean_ncd_data(file_seniors, upload_year)
+            if file_cervical: upload_dict["Cervical_Cancer"] = load_and_clean_ncd_data(file_cervical, upload_year)
+            if file_breast: upload_dict["Breast_Cancer"] = load_and_clean_ncd_data(file_breast, upload_year)
+            
+            clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
+            if clean_dict:
+                save_data_to_gsheets(clean_dict)
+                st.success(f"✅ {upload_year} NCD Files safely merged into Google Sheets! Head over to the NCD Dashboard.")
+            else:
+                st.error("No valid data uploaded yet to save.")
 
     st.markdown("---")
     with st.expander("⚠️ Database Management (Danger Zone)"):
