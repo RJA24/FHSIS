@@ -322,8 +322,47 @@ with st.sidebar:
 if 'fhsis_data' not in st.session_state:
     st.session_state['fhsis_data'] = load_data_from_gsheets()
 
-# --- HELPER FUNCTIONS ---
-def filter_data(df, start_month, end_month, gender, year, is_cancer=False, drop_zeros=True):
+# --- ISOLATED IMMUNIZATION FILTER ---
+def filter_data(df, start_month, end_month, gender, year):
+    """This function is hard-coded back to the exact state that worked perfectly for Immunization."""
+    months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    start_idx = months_order.index(start_month)
+    end_idx = months_order.index(end_month)
+    valid_months = months_order[start_idx:end_idx+1]
+    
+    filtered_df = df[df['Month'].isin(valid_months)]
+    if 'Year' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Year'] == year]
+        
+    cols_to_keep = ['Area', 'Month']
+    if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
+
+    for col in filtered_df.columns:
+        if col in ['Area', 'Month', 'Year']: continue
+        clean_col = col.lower()
+        is_valid_gender = False
+        
+        if gender == "Total":
+            if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                is_valid_gender = True
+        else:
+            if col.endswith(f"_{gender}"):
+                is_valid_gender = True
+                
+        if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
+            if pd.api.types.is_numeric_dtype(filtered_df[col]):
+                # Safely drop empty ghost columns for Immunization
+                if filtered_df[col].sum() > 0: cols_to_keep.append(col)
+            else:
+                cols_to_keep.append(col)
+                
+    cols_to_keep = list(dict.fromkeys(cols_to_keep))
+    if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
+    return filtered_df
+
+# --- NEW ISOLATED NCD FILTER ---
+def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
+    """A completely separate filter engine for NCD that safely preserves Zero-value 'Treated' columns."""
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
     end_idx = months_order.index(end_month)
@@ -352,14 +391,8 @@ def filter_data(df, start_month, end_month, gender, year, is_cancer=False, drop_
                     is_valid_gender = True
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
-            if pd.api.types.is_numeric_dtype(filtered_df[col]):
-                # FIX: Smart Zero Tolerance allows Immunization to drop blanks, while NCD keeps Treated=0 columns!
-                if drop_zeros:
-                    if filtered_df[col].sum() > 0: cols_to_keep.append(col)
-                else:
-                    cols_to_keep.append(col)
-            else:
-                cols_to_keep.append(col)
+            # Preserves all columns, even if the sum is 0
+            cols_to_keep.append(col)
                 
     cols_to_keep = list(dict.fromkeys(cols_to_keep))
     if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
@@ -402,8 +435,7 @@ def convert_df_to_csv(df):
 def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        # IMUNNIZATION = Drop Zeros True!
-        filtered_df = filter_data(raw_df, start_m, end_m, gender, year, is_cancer=False, drop_zeros=True)
+        filtered_df = filter_data(raw_df, start_m, end_m, gender, year)
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
@@ -566,8 +598,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        # NCD = Drop Zeros False! (To keep 0 Treated visible)
-        filtered_df = filter_data(raw_df, start_m, end_m, gender, year, is_cancer=False, drop_zeros=False)
+        filtered_df = filter_ncd_data(raw_df, start_m, end_m, gender, year, is_cancer=False)
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
@@ -640,6 +671,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
+
 # --- CUSTOM CERVICAL CANCER ENGINE ---
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
@@ -648,17 +680,26 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        # NCD = Drop Zeros False! (To keep 0 Treated visible)
-        filtered_df = filter_data(raw_df, start_m, end_m, "Total", year, is_cancer=True, drop_zeros=False)
+        filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
         
-        c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked"])
-        c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
+        # 1. Total Screened
+        c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred"])
+        
+        # 2. Suspicious Found
+        c_susp_no = get_ncd_col(filtered_df, ["suspicious", "cancer", "no."], ["%", "linked", "treated", "referred", "total"])
+        if not c_susp_no: c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
+        
+        # 3. Suspicious Linked (Treated, Referred, Total)
         c_susp_link_tr = get_ncd_col(filtered_df, ["suspicious", "treated"], ["%"])
         c_susp_link_ref = get_ncd_col(filtered_df, ["suspicious", "referred"], ["%"])
         c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total", "linked"], ["%"])
         if not c_susp_link_tot: c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total"], ["%", "screened", "positive", "lesion"])
         
+        # 4. Positive Found
         c_pos_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "linked", "treated", "referred", "care"])
+        if not c_pos_tot: c_pos_tot = get_ncd_col(filtered_df, ["positive", "no."], ["%", "linked", "treated", "referred"])
+        
+        # 5. Positive Linked (Treated, Referred, Total)
         c_pos_link_tr = get_ncd_col(filtered_df, ["positive", "treated"], ["%"])
         c_pos_link_ref = get_ncd_col(filtered_df, ["positive", "referred"], ["%"])
         c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total", "linked"], ["%"])
@@ -685,7 +726,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             prov_tot = int(agg_df[c_scr_tot].sum())
             fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title=f"1. Total Women Screened/Assessed (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"])
             fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
-            fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=40))
+            fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
             st.plotly_chart(fig_scr, use_container_width=True, key=f"cervical_c1_{year}")
             
         if c_susp_no:
@@ -693,7 +734,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             prov_tot = int(agg_df[c_susp_no].sum())
             fig_susp_found = px.bar(agg_df, x='Area', y=c_susp_no, title=f"2. Total Women Found Suspicious (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF9999"])
             fig_susp_found.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
-            fig_susp_found.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=40))
+            fig_susp_found.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
             st.plotly_chart(fig_susp_found, use_container_width=True, key=f"cervical_c2_{year}")
 
         susp_link_cols = [c for c in [c_susp_link_tr, c_susp_link_ref, c_susp_link_tot] if c]
@@ -704,7 +745,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             melted_susp['Metric'] = melted_susp['Metric'].apply(lambda x: "Treated" if x == c_susp_link_tr else "Referred" if x == c_susp_link_ref else "Total Linked")
             fig_susp_link = px.bar(melted_susp, x='Area', y='Patients', color='Metric', barmode='group', title=f"3. Suspicious Cases Linked to Care (Provincial Total Linked: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#00CC96", "#FFA15A", "#EF553B"])
             fig_susp_link.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig_susp_link.update_layout(xaxis_title="RHU", yaxis_title="Number of Patients", margin=dict(t=40))
+            fig_susp_link.update_layout(xaxis_title="RHU", yaxis_title="Number of Patients", margin=dict(t=50))
             st.plotly_chart(fig_susp_link, use_container_width=True, key=f"cervical_c3_{year}")
 
         if c_pos_tot:
@@ -712,7 +753,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             prov_tot = int(agg_df[c_pos_tot].sum())
             fig_pos_found = px.bar(agg_df, x='Area', y=c_pos_tot, title=f"4. Total Found Positive for Precancerous Lesions (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
             fig_pos_found.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
-            fig_pos_found.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=40))
+            fig_pos_found.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
             st.plotly_chart(fig_pos_found, use_container_width=True, key=f"cervical_c4_{year}")
 
         pos_link_cols = [c for c in [c_pos_link_tr, c_pos_link_ref, c_pos_link_tot] if c]
@@ -723,7 +764,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             melted_pos['Metric'] = melted_pos['Metric'].apply(lambda x: "Treated" if x == c_pos_link_tr else "Referred" if x == c_pos_link_ref else "Total Linked")
             fig_pos_link = px.bar(melted_pos, x='Area', y='Patients', color='Metric', barmode='group', title=f"5. Positive Precancerous Lesions Linked to Care (Provincial Total Linked: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#00CC96", "#FFA15A", "#EF553B"])
             fig_pos_link.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig_pos_link.update_layout(xaxis_title="RHU", yaxis_title="Number of Patients", margin=dict(t=40))
+            fig_pos_link.update_layout(xaxis_title="RHU", yaxis_title="Number of Patients", margin=dict(t=50))
             st.plotly_chart(fig_pos_link, use_container_width=True, key=f"cervical_c5_{year}")
 
         with st.expander("📄 View & Download Formatted Cervical Data"):
@@ -748,7 +789,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
-        filtered_df = filter_data(raw_df, start_m, end_m, "Total", year, is_cancer=True, drop_zeros=False)
+        filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
         
         b_hr_scr_cbe = get_ncd_col(filtered_df, ["high risk", "detection", "cbe"], ["%"])
         b_hr_scr_mam = get_ncd_col(filtered_df, ["high risk", "detection", "mammogram"], ["%"])
@@ -798,7 +839,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_scr_cbe else "Mammogram" if x == b_hr_scr_mam else "Total")
             fig1 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"1. High Risk Women Provided with Early Detection (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#EF553B"])
             fig1.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig1.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
+            fig1.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=50))
             st.plotly_chart(fig1, use_container_width=True, key=f"breast_hr1_{year}")
             
         hr_rem_cols = [c for c in [b_hr_rem_cbe, b_hr_rem_mam, b_hr_rem_tot] if c]
@@ -809,7 +850,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_rem_cbe else "Mammogram" if x == b_hr_rem_mam else "Total")
             fig2 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"2. High Risk Women Found with Remarkable Results (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#EF553B"])
             fig2.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig2.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
+            fig2.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=50))
             st.plotly_chart(fig2, use_container_width=True, key=f"breast_hr2_{year}")
 
         hr_link_cols = [c for c in [b_hr_link_cbe, b_hr_link_mam, b_hr_link_tot] if c]
@@ -820,7 +861,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_link_cbe else "Mammogram" if x == b_hr_link_mam else "Total")
             fig3 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"3. High Risk Women Found Remarkable AND Linked to Care (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF", "#EF553B"])
             fig3.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig3.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
+            fig3.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=50))
             st.plotly_chart(fig3, use_container_width=True, key=f"breast_hr3_{year}")
 
         st.markdown("<br><br>", unsafe_allow_html=True)
@@ -838,7 +879,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_scr_cbe else "Mammogram" if x == b_as_scr_mam else "Total")
             fig4 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"1. Asymptomatic Women Screened for Breast Cancer (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#EF553B"])
             fig4.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig4.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
+            fig4.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=50))
             st.plotly_chart(fig4, use_container_width=True, key=f"breast_as1_{year}")
             
         as_rem_cols = [c for c in [b_as_rem_cbe, b_as_rem_mam, b_as_rem_tot] if c]
@@ -849,7 +890,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_rem_cbe else "Mammogram" if x == b_as_rem_mam else "Total")
             fig5 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"2. Asymptomatic Women Found with Remarkable Results (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#EF553B"])
             fig5.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig5.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
+            fig5.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=50))
             st.plotly_chart(fig5, use_container_width=True, key=f"breast_as2_{year}")
 
         as_link_cols = [c for c in [b_as_link_cbe, b_as_link_mam, b_as_link_tot] if c]
@@ -860,7 +901,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
             m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_link_cbe else "Mammogram" if x == b_as_link_mam else "Total")
             fig6 = px.bar(m, x='Area', y='value', color='variable', barmode='group', title=f"3. Asymptomatic Women Found Remarkable AND Linked to Care (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF9999", "#66B2FF", "#EF553B"])
             fig6.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-            fig6.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=40))
+            fig6.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=50))
             st.plotly_chart(fig6, use_container_width=True, key=f"breast_as3_{year}")
 
         with st.expander("📄 View & Download Formatted Breast Cancer Data (RHU Breakdown)"):
@@ -941,8 +982,8 @@ elif page == "👶 Immunization Dashboard":
         st.markdown("High-level snapshot of critical DOH performance metrics and forecasting.")
         
         if "MMR" in st.session_state['fhsis_data'] and "Penta" in st.session_state['fhsis_data']:
-            mmr_df = filter_data(st.session_state['fhsis_data']["MMR"], start_month, end_month, gender_filter, selected_year, drop_zeros=True)
-            penta_df = filter_data(st.session_state['fhsis_data']["Penta"], start_month, end_month, gender_filter, selected_year, drop_zeros=True)
+            mmr_df = filter_data(st.session_state['fhsis_data']["MMR"], start_month, end_month, gender_filter, selected_year)
+            penta_df = filter_data(st.session_state['fhsis_data']["Penta"], start_month, end_month, gender_filter, selected_year)
             
             fic_col = next((c for c in mmr_df.columns if "FIC" in c and "%" not in c and "DEFICIT" not in c.upper() and "PREVIOUS" not in c.upper()), None)
             cic_col = next((c for c in mmr_df.columns if "CIC" in c and "%" not in c and "DEFICIT" not in c.upper() and "PREVIOUS" not in c.upper()), None)
@@ -1145,8 +1186,8 @@ elif page == "📈 YoY Comparison":
             "MMR, FIC & CIC": ("MMR", ["MMR", "MCV", "FIC", "CIC"]),
             "Adults Risk (20-59)": ("Adults_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive adults", "adults with type 2 dm"]),
             "Seniors Risk (≥60)": ("Seniors_Risk", ["risk assessed", "history of smoking", "alcohol", "hypertensive elderly", "elderly with type 2 dm"]),
-            "Cervical Cancer": ("Cervical_Cancer", ["screened or assessed", "suspicious for cervical", "precancerous lesions"]),
-            "Breast Cancer": ("Breast_Cancer", ["early detection services", "asymptomatic women screened", "women (50-69 y.o.) found with remarkable"])
+            "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "positive", "lesions"]),
+            "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
