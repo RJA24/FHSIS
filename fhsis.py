@@ -591,11 +591,32 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-# --- UPGRADED GENERIC NCD RENDERER (ADULTS & SENIORS WITH 2024 SUPPORT) ---
+# --- UPGRADED GENERIC NCD RENDERER (ADULTS & SENIORS WITH YEAR-AWARE FILTER) ---
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
+        
+        # --- YEAR-AWARE INDICATOR FILTER ---
+        # 1. Isolate the data for the ENTIRE selected year
+        year_df = raw_df[raw_df['Year'] == year]
+        
+        # 2. Determine which columns actually existed in this year's DOH template
+        # If a metric is 0 for all 27 RHUs across all 12 months, it is a "ghost" column.
+        valid_year_cols = ['Area', 'Month', 'Year']
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if 'elig' in col.lower() or 'pop' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+        
+        # 3. Apply the standard month/gender filter
         filtered_df = filter_ncd_data(raw_df, start_m, end_m, gender, year, is_cancer=False)
+        
+        # 4. Destroy the ghost columns by intersecting with our valid_year_cols
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
@@ -713,7 +734,6 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_NCD_{safe_filename}_Data.csv", mime="text/csv")
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
-
 
 # --- CUSTOM CERVICAL CANCER ENGINE (WITH 2024 LEGACY MODE) ---
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
