@@ -336,7 +336,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- NEW WASH DATA CLEANER (WITH SMART MAPPER & FIX) ---
+# --- NEW WASH DATA CLEANER (WITH SMART MAPPER & FIXES) ---
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
@@ -430,14 +430,14 @@ def load_and_clean_wash_data(uploaded_file, year):
                 # Safe Water Indicators
                 elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
                     renamed_cols[c] = "HH with Access to Basic Safe Water Supply"
+                elif "SAFELY MANAGED DRINKING" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "HHs using Safely Managed Drinking-water Services"
                 elif "LEVEL 1" in c_upper and "%" not in c_upper:
                     renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_1"
                 elif "LEVEL 2" in c_upper and "%" not in c_upper:
                     renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_2"
                 elif "LEVEL 3" in c_upper and "%" not in c_upper:
                     renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_3"
-                elif "SAFELY MANAGED DRINKING" in c_upper and "%" not in c_upper:
-                    renamed_cols[c] = "HHs using Safely Managed Drinking-water Services"
                     
                 # Sanitation Indicators
                 elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
@@ -454,7 +454,7 @@ def load_and_clean_wash_data(uploaded_file, year):
             # Apply the clean names
             clean.rename(columns=renamed_cols, inplace=True)
             
-            # ---> THE FIX: Drop duplicated columns <---
+            # Drop duplicated columns
             clean = clean.loc[:, ~clean.columns.duplicated()]
             
             # Destroy useless columns (only keep exact target columns)
@@ -1251,7 +1251,10 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
         valid_year_cols = ['Area', 'Month', 'Year']  
         for col in year_df.columns:
             if col not in valid_year_cols:
-                if 'elig' in col.lower() or 'pop' in col.lower() or 'hh' in col.lower():
+                # The Fix: Always protect official WASH columns, even if the total is 0
+                if col in TARGET_WASH_COLS:
+                    valid_year_cols.append(col)
+                elif 'elig' in col.lower() or 'pop' in col.lower() or 'hh' in col.lower():
                     valid_year_cols.append(col)
                 elif pd.api.types.is_numeric_dtype(year_df[col]):
                     if year_df[col].sum() > 0:
@@ -1278,19 +1281,16 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                 selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=default_cols, key=f"ms_wash_{safe_filename}_{year}")
             
             if selected_cols:
-                # ---> NEW TOGGLE <---
                 view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_wash_{safe_filename}_{year}")
                 
                 st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
                 kpi_cols = st.columns(len(selected_cols[:4])) # Limit to top 4 for the KPI bar
                 
-                # Fetch Provincial Household Denominator safely
                 provincial_hh = agg_df["Projected No. of HHs"].sum() if "Projected No. of HHs" in agg_df.columns else 0
                 
                 for i, col in enumerate(selected_cols[:4]):
                     total_val = agg_df[col].sum()
                     
-                    # Convert KPI to Percentage if enabled
                     if view_mode == "Percentage (%) Coverage" and "Projected No. of HHs" in agg_df.columns and col != "Projected No. of HHs":
                         perc = (total_val / provincial_hh) * 100 if provincial_hh > 0 else 0
                         kpi_cols[i].metric(label=f"{col} (Cov)", value=f"{perc:.1f}%")
@@ -1303,7 +1303,6 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                 chart_df = agg_df[['Area'] + selected_cols].copy()
                 y_axis_label = "Count / Households"
                 
-                # Convert Chart Data to Percentage if enabled
                 if view_mode == "Percentage (%) Coverage" and "Projected No. of HHs" in agg_df.columns:
                     for col in selected_cols:
                         if col != "Projected No. of HHs":
