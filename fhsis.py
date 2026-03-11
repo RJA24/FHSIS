@@ -24,7 +24,12 @@ NCD_MAPPING = {
     "Breast_Cancer": "Breast_Cancer_Data"
 }
 
-ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING}
+WASH_MAPPING = {
+    "Safe_Water": "Safe_Water_Data",
+    "Sanitation": "Sanitation_Data"
+}
+
+ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING}
 
 def save_data_to_gsheets(new_data_dict):
     conn = st.connection("gsheets", type=GSheetsConnection)
@@ -307,13 +312,100 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
+# --- NEW WASH DATA CLEANER (QUARTERLY EXTRACTOR) ---
+@st.cache_data
+def load_and_clean_wash_data(uploaded_file, year):
+    try:
+        xls = pd.ExcelFile(uploaded_file)
+        sheets_to_process = {}
+        valid_qs = ["qtr1", "q1", "qtr2", "q2", "qtr3", "q3", "qtr4", "q4"]
+        q_map = {"qtr1": "Q1", "q1": "Q1", "qtr2": "Q2", "q2": "Q2", 
+                 "qtr3": "Q3", "q3": "Q3", "qtr4": "Q4", "q4": "Q4"}
+        
+        for sheet in xls.sheet_names:
+            sheet_lower = sheet.lower().strip()
+            for q_key in valid_qs:
+                if q_key in sheet_lower:
+                    sheets_to_process[q_map[q_key]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+                    break
+
+        all_q_data = []
+        for q_val, df in sheets_to_process.items():
+            area_row_idx = -1
+            data_start_idx = -1
+            
+            for idx, row in df.iterrows():
+                row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
+                if any('AREA' in v for v in row_str) and area_row_idx == -1:
+                    area_row_idx = idx
+                if area_row_idx != -1 and idx > area_row_idx:
+                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] for v in row_str):
+                        data_start_idx = idx
+                        break
+                        
+            if area_row_idx == -1 or data_start_idx == -1: continue
+            
+            headers_df = df.iloc[area_row_idx:data_start_idx].copy()
+            headers_df.iloc[0] = headers_df.iloc[0].ffill() 
+            if len(headers_df) > 1: headers_df.iloc[1] = headers_df.iloc[1].ffill() 
+            
+            flat_cols = []
+            for col_idx in range(headers_df.shape[1]):
+                parts = []
+                for row_idx in range(headers_df.shape[0]):
+                    val = str(headers_df.iloc[row_idx, col_idx]).strip().replace('\n', ' ')
+                    if val and val != 'nan' and "Unnamed:" not in val:
+                        if not parts or val != parts[-1]:
+                            parts.append(val)
+                col_name = "_".join(parts)
+                if not col_name: col_name = f"Empty_{col_idx}"
+                flat_cols.append(col_name)
+                
+            seen = set()
+            unique_cols = []
+            for c in flat_cols:
+                new_c = c
+                counter = 1
+                while new_c in seen:
+                    new_c = f"{c}_{counter}"
+                    counter += 1
+                seen.add(new_c)
+                unique_cols.append(new_c)
+
+            clean = df.iloc[data_start_idx:].copy()
+            clean.columns = unique_cols
+            
+            area_col = [c for c in unique_cols if "AREA" in c.upper()][0]
+            if area_col != 'Area':
+                if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
+                clean.rename(columns={area_col: 'Area'}, inplace=True)
+            
+            clean.dropna(subset=['Area'], inplace=True)
+            clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
+            clean = clean[clean['Area_Clean'].isin(ABRA_RHUS)]
+            clean['Area'] = clean['Area_Clean']
+            clean.drop(columns=['Area_Clean'], inplace=True)
+            clean['Month'] = q_val  # Saving as Month for easier compatibility, but it holds Q1, Q2 etc.
+            clean['Year'] = year
+            
+            for col in clean.columns:
+                if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
+                    clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
+            all_q_data.append(clean)
+            
+        if not all_q_data: raise ValueError("Could not find properly formatted quarterly sheets.")
+        return pd.concat(all_q_data, ignore_index=True)
+    except Exception as e:
+        st.error(f"WASH Template Error processing {uploaded_file.name}: {e}")
+        return None
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("FHSIS Portal")
-    page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
+    page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "🚰 WASH Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
     st.markdown("---")
     
-    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison"]:
+    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard"]:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
@@ -1063,6 +1155,70 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
     else:
         st.info("No Breast Cancer data uploaded yet.")
 
+
+# --- DYNAMIC WASH RENDERER ---
+def render_wash_tab(tab_title, df_key, selected_quarters, year):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        # 1. Isolate the data for the ENTIRE selected year to detect ghost columns
+        year_df = raw_df[raw_df['Year'] == year]
+        
+        valid_year_cols = ['Area', 'Month', 'Year']  # Note: The extractor uses 'Month' to hold Q1, Q2, etc.
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if 'elig' in col.lower() or 'pop' in col.lower() or 'hh' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+                        
+        # 2. Apply quarter filter
+        filtered_df = year_df[year_df['Month'].isin(selected_quarters)]
+        
+        # 3. Strip ghost columns
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        
+        safe_filename = tab_title.replace(" ", "_")
+        
+        # Any valid numeric column that isn't metadata can be graphed
+        cols_to_plot = [c for c in filtered_df.columns if c not in ['Area', 'Month', 'Year'] and "%" not in c and "deficit" not in c.lower()]
+        
+        if cols_to_plot:
+            agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
+            
+            with st.expander(f"⚙️ Custom {tab_title} Indicators"):
+                selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=cols_to_plot[:5] if len(cols_to_plot) > 5 else cols_to_plot, key=f"ms_wash_{safe_filename}_{year}")
+            
+            if selected_cols:
+                st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
+                kpi_cols = st.columns(len(selected_cols[:4])) # Limit to top 4 for the KPI bar
+                for i, col in enumerate(selected_cols[:4]):
+                    total_val = agg_df[col].sum()
+                    kpi_cols[i].metric(label=col, value=f"{int(total_val):,}")
+                    
+                st.markdown("---")
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                
+                chart_df = agg_df[['Area'] + selected_cols].copy()
+                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator', value_name='Count')
+                
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"{tab_title} Performance ({', '.join(selected_quarters)})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Safe)
+                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Count / Households", margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_wash_{safe_filename}_{year}")
+            else:
+                st.info("👆 Please select at least one indicator to view the chart.")
+                
+        with st.expander(f"📄 View & Download Raw {tab_title} Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
+    else:
+        st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
+
+
 # --- HOME PAGE (PORTFOLIO POLISH) ---
 if page == "🏠 Home":
     st.markdown("""
@@ -1080,7 +1236,7 @@ if page == "🏠 Home":
     
     **Core Capabilities:**
     * **Automated Data Extraction:** Safely parses messy, merged, and multi-sheet DOH Excel templates.
-    * **Multi-Module Support:** Fully supports Child Immunization targets and Non-Communicable Disease (NCD) Risk Assessments.
+    * **Multi-Module Support:** Fully supports Child Immunization, NCD Risk Assessments, and Environmental WASH metrics.
     * **Data Quality Auditing:** Actively filters out "ghost rows," negative deficit anomalies, and duplicate uploads to guarantee 100% mathematical integrity.
     * **Geospatial & Trend Analysis:** Transforms raw numbers into interactive maps, YoY comparisons, and actionable insights.
     
@@ -1302,6 +1458,25 @@ elif page == "🩺 NCD Dashboard":
     with ncd_tab3: render_cervical_cancer_tab("Cervical_Cancer", start_month, end_month, gender_filter, selected_year)
     with ncd_tab4: render_breast_cancer_tab("Breast_Cancer", start_month, end_month, gender_filter, selected_year)
 
+# --- WASH DASHBOARD ---
+elif page == "🚰 WASH Dashboard":
+    st.title("🚰 Water, Sanitation, and Hygiene (WASH) Dashboard")
+    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
+    st.markdown("---")
+    
+    st.markdown("##### ⏳ Quarterly Time Filter")
+    quarters_list = ["Q1", "Q2", "Q3", "Q4"]
+    selected_quarters = st.multiselect("Select Quarters to Aggregate", quarters_list, default=quarters_list)
+    
+    if not selected_quarters:
+        st.warning("Please select at least one quarter to view data.")
+    else:
+        st.markdown("<br>", unsafe_allow_html=True)
+        wash_tab1, wash_tab2 = st.tabs(["🚰 Safe Water", "🚽 Sanitation"])
+        
+        with wash_tab1: render_wash_tab("Safe Water", "Safe_Water", selected_quarters, selected_year)
+        with wash_tab2: render_wash_tab("Sanitation", "Sanitation", selected_quarters, selected_year)
+
 # --- YOY COMPARISON PAGE ---
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
@@ -1455,7 +1630,7 @@ elif page == "📁 Data Uploader":
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
     
-    upload_tab_imm, upload_tab_ncd = st.tabs(["👶 Child Immunization", "🩺 Non-Communicable Diseases (NCD)"])
+    upload_tab_imm, upload_tab_ncd, upload_tab_wash = st.tabs(["👶 Child Immunization", "🩺 Non-Communicable Diseases (NCD)", "🚰 WASH"])
     
     with upload_tab_imm:
         st.markdown("##### Upload Immunization Excel Templates")
@@ -1505,6 +1680,25 @@ elif page == "📁 Data Uploader":
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
                 st.success(f"✅ {upload_year} NCD Files safely merged into Google Sheets! Head over to the NCD Dashboard.")
+            else:
+                st.error("No valid data uploaded yet to save.")
+
+    with upload_tab_wash:
+        st.markdown("##### Upload WASH Excel Templates")
+        st.info("💡 **Tip:** The engine automatically detects Q1, Q2, Q3, and Q4 tabs from your uploaded files.")
+        
+        file_safe_water = st.file_uploader("Upload: Environmental 1 - Safe Water", type=["csv", "xlsx"])
+        file_sanitation = st.file_uploader("Upload: Environmental 2 - Sanitation", type=["csv", "xlsx"])
+        
+        if st.button("☁️ Save WASH Data to Cloud", type="primary", use_container_width=True):
+            upload_dict = {}
+            if file_safe_water: upload_dict["Safe_Water"] = load_and_clean_wash_data(file_safe_water, upload_year)
+            if file_sanitation: upload_dict["Sanitation"] = load_and_clean_wash_data(file_sanitation, upload_year)
+            
+            clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
+            if clean_dict:
+                save_data_to_gsheets(clean_dict)
+                st.success(f"✅ {upload_year} WASH Files safely merged into Google Sheets! Head over to the WASH Dashboard.")
             else:
                 st.error("No valid data uploaded yet to save.")
 
