@@ -336,7 +336,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- NEW WASH DATA CLEANER (WITH BULLETPROOF SMART MAPPER) ---
+# --- BULLETPROOF WASH DATA CLEANER ---
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
@@ -420,49 +420,57 @@ def load_and_clean_wash_data(uploaded_file, year):
 
             # --- BULLETPROOF SMART COLUMN MAPPER ---
             renamed_cols = {}
+            found_targets = set()
+            
             for c in clean.columns:
                 c_upper = c.upper()
+                target = None
                 
                 # Shared
                 if "PROJECTED" in c_upper and "HH" in c_upper:
-                    renamed_cols[c] = "Projected No. of HHs"
+                    target = "Projected No. of HHs"
                     
-                # Priority 1: Safely Managed (Must catch before bleed-over keywords)
-                elif "SAFELY MANAGED DRINKING" in c_upper and "NO." in c_upper:
-                    renamed_cols[c] = "HHs using Safely Managed Drinking-water Services"
-                elif "SAFELY MANAGED SANITATION" in c_upper and "NO." in c_upper:
-                    renamed_cols[c] = "HHs using Safely Managed Sanitation Service"
+                # Priority 1: Safely Managed (Catch these before Level 3 / Sub-categories bleed into them)
+                elif "SAFELY MANAGED DRINKING" in c_upper and "%" not in c_upper:
+                    target = "HHs using Safely Managed Drinking-water Services"
+                elif "SAFELY MANAGED SANITATION" in c_upper and "%" not in c_upper:
+                    target = "HHs using Safely Managed Sanitation Service"
                     
-                # Priority 2: Totals
-                elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper:
-                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply"
-                elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper:
-                    renamed_cols[c] = "HH with Basic Sanitation Facility"
+                # Priority 2: Sub-categories
+                elif "LEVEL 1" in c_upper and "%" not in c_upper:
+                    target = "HH with Access to Basic Safe Water Supply_Lvl_1"
+                elif "LEVEL 2" in c_upper and "%" not in c_upper:
+                    target = "HH with Access to Basic Safe Water Supply_Lvl_2"
+                elif "LEVEL 3" in c_upper and "%" not in c_upper:
+                    target = "HH with Access to Basic Safe Water Supply_Lvl_3"
                     
-                # Priority 3: Sub-categories
-                elif "LEVEL 1" in c_upper and "NO." in c_upper:
-                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_1"
-                elif "LEVEL 2" in c_upper and "NO." in c_upper:
-                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_2"
-                elif "LEVEL 3" in c_upper and "NO." in c_upper:
-                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_3"
-                    
-                elif "SEPTIC TANK" in c_upper and "NO." in c_upper:
-                    renamed_cols[c] = "Pour / flush Toilet connected to Septic Tank"
-                elif "COMMUNITY SEWER" in c_upper and "NO." in c_upper:
-                    renamed_cols[c] = "Pour / flush Toilet connected to Community sewer/sewerage system"
-                elif "PIT LATRINE" in c_upper and "NO." in c_upper:
-                    renamed_cols[c] = "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"
+                elif "SEPTIC TANK" in c_upper and "%" not in c_upper:
+                    target = "Pour / flush Toilet connected to Septic Tank"
+                elif "COMMUNITY SEWER" in c_upper and "%" not in c_upper:
+                    target = "Pour / flush Toilet connected to Community sewer/sewerage system"
+                elif "PIT LATRINE" in c_upper and "%" not in c_upper:
+                    target = "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"
+
+                # Priority 3: Totals
+                elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
+                    target = "HH with Access to Basic Safe Water Supply"
+                elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
+                    target = "HH with Basic Sanitation Facility"
+
+                # Only assign if we found a match AND haven't already mapped this specific target
+                if target and target not in found_targets:
+                    renamed_cols[c] = target
+                    found_targets.add(target)
 
             # Apply the clean names
             clean.rename(columns=renamed_cols, inplace=True)
             
-            # Drop duplicated columns
-            clean = clean.loc[:, ~clean.columns.duplicated()]
+            # Destroy useless columns and strictly keep only our mapped targets
+            keep_cols = ['Area'] + list(found_targets)
             
-            # Destroy useless columns (only keep exact target columns)
-            keep_cols = ['Area'] + [c for c in clean.columns if c in TARGET_WASH_COLS]
-            clean = clean[[c for c in keep_cols]]
+            # Drop duplicated columns if any managed to survive, then filter
+            clean = clean.loc[:, ~clean.columns.duplicated()]
+            clean = clean[[c for c in keep_cols if c in clean.columns]]
             
             clean.dropna(subset=['Area'], inplace=True)
             clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
@@ -1254,7 +1262,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
         valid_year_cols = ['Area', 'Month', 'Year']  
         for col in year_df.columns:
             if col not in valid_year_cols:
-                # The Fix: Always protect official WASH columns, even if the total is 0
+                # Always protect official WASH columns, even if the total is 0
                 if col in TARGET_WASH_COLS:
                     valid_year_cols.append(col)
                 elif 'elig' in col.lower() or 'pop' in col.lower() or 'hh' in col.lower():
@@ -1287,18 +1295,23 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                 view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_wash_{safe_filename}_{year}")
                 
                 st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
-                kpi_cols = st.columns(len(selected_cols[:4])) # Limit to top 4 for the KPI bar
+                
+                # ---> THE FIX: Dynamically generate rows of columns for ALL selected indicators <---
+                cols_per_row = 4
+                rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
                 
                 provincial_hh = agg_df["Projected No. of HHs"].sum() if "Projected No. of HHs" in agg_df.columns else 0
                 
-                for i, col in enumerate(selected_cols[:4]):
+                for i, col in enumerate(selected_cols):
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
                     total_val = agg_df[col].sum()
                     
                     if view_mode == "Percentage (%) Coverage" and "Projected No. of HHs" in agg_df.columns and col != "Projected No. of HHs":
                         perc = (total_val / provincial_hh) * 100 if provincial_hh > 0 else 0
-                        kpi_cols[i].metric(label=f"{col} (Cov)", value=f"{perc:.1f}%")
+                        rows[row_idx][col_idx].metric(label=f"{col} (Cov)", value=f"{perc:.1f}%")
                     else:
-                        kpi_cols[i].metric(label=col, value=f"{int(total_val):,}")
+                        rows[row_idx][col_idx].metric(label=col, value=f"{int(total_val):,}")
                     
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
