@@ -597,11 +597,8 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
         raw_df = st.session_state['fhsis_data'][df_key]
         
         # --- YEAR-AWARE INDICATOR FILTER ---
-        # 1. Isolate the data for the ENTIRE selected year
         year_df = raw_df[raw_df['Year'] == year]
         
-        # 2. Determine which columns actually existed in this year's DOH template
-        # If a metric is 0 for all 27 RHUs across all 12 months, it is a "ghost" column.
         valid_year_cols = ['Area', 'Month', 'Year']
         for col in year_df.columns:
             if col not in valid_year_cols:
@@ -611,10 +608,8 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                     if year_df[col].sum() > 0:
                         valid_year_cols.append(col)
         
-        # 3. Apply the standard month/gender filter
         filtered_df = filter_ncd_data(raw_df, start_m, end_m, gender, year, is_cancer=False)
         
-        # 4. Destroy the ghost columns by intersecting with our valid_year_cols
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
         
@@ -735,7 +730,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-# --- CUSTOM CERVICAL CANCER ENGINE (WITH 2024 LEGACY MODE) ---
+# --- CUSTOM CERVICAL CANCER ENGINE (WITH YEAR-AWARE FILTER & 2024 LEGACY MODE) ---
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
         st.info("🎗️ Cervical Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -743,7 +738,23 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
+        
+        # --- YEAR-AWARE INDICATOR FILTER ---
+        year_df = raw_df[raw_df['Year'] == year]
+        valid_year_cols = ['Area', 'Month', 'Year']
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if 'elig' in col.lower() or 'pop' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+        
         filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
+        
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        # -----------------------------------
         
         c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred", "suspect"])
         
@@ -865,7 +876,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     else:
         st.info("No Cervical Cancer data uploaded yet.")
 
-# --- CUSTOM BREAST CANCER ENGINE (WITH 2024 LEGACY MODE) ---
+# --- CUSTOM BREAST CANCER ENGINE (WITH YEAR-AWARE FILTER & 2024 LEGACY MODE) ---
 def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
         st.info("🎀 Breast Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -873,7 +884,23 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
+        
+        # --- YEAR-AWARE INDICATOR FILTER ---
+        year_df = raw_df[raw_df['Year'] == year]
+        valid_year_cols = ['Area', 'Month', 'Year']
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if 'elig' in col.lower() or 'pop' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+        
         filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
+        
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        # -----------------------------------
         
         # Legacy 2024 Extractors (Breast Mass was inside Cervical File)
         b_leg_scr = get_ncd_col(filtered_df, ["screened for breast mass"], ["%", "suspicious"])
