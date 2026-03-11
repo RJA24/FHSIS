@@ -336,7 +336,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- BULLETPROOF WASH DATA CLEANER ---
+# --- BULLETPROOF WASH DATA CLEANER (WITH AUTO-CORRECT FOR EXCEL MATH ERRORS) ---
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
@@ -483,6 +483,16 @@ def load_and_clean_wash_data(uploaded_file, year):
             for col in clean.columns:
                 if col not in ['Area', 'Month', 'Year']:
                     clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
+                    
+            # --- AUTO-CORRECT EXCEL MATH ERRORS ---
+            # Enforce mathematical integrity by calculating the true sum of the sub-levels,
+            # overriding any human addition errors made in the Excel "Total" columns.
+            if all(c in clean.columns for c in ["HH with Access to Basic Safe Water Supply_Lvl_1", "HH with Access to Basic Safe Water Supply_Lvl_2", "HH with Access to Basic Safe Water Supply_Lvl_3"]):
+                clean["HH with Access to Basic Safe Water Supply"] = clean["HH with Access to Basic Safe Water Supply_Lvl_1"] + clean["HH with Access to Basic Safe Water Supply_Lvl_2"] + clean["HH with Access to Basic Safe Water Supply_Lvl_3"]
+                
+            if all(c in clean.columns for c in ["Pour / flush Toilet connected to Septic Tank", "Pour / flush Toilet connected to Community sewer/sewerage system", "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"]):
+                clean["HH with Basic Sanitation Facility"] = clean["Pour / flush Toilet connected to Septic Tank"] + clean["Pour / flush Toilet connected to Community sewer/sewerage system"] + clean["Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"]
+
             all_q_data.append(clean)
             
         if not all_q_data: 
@@ -1296,7 +1306,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                 
                 st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
                 
-                # ---> THE FIX: Dynamically generate rows of columns for ALL selected indicators <---
+                # Dynamically generate rows of columns for ALL selected indicators
                 cols_per_row = 4
                 rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
                 
