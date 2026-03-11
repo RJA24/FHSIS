@@ -31,6 +31,21 @@ WASH_MAPPING = {
 
 ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING}
 
+# --- TARGET WASH INDICATORS ---
+TARGET_WASH_COLS = [
+    "Projected No. of HHs",
+    "HH with Access to Basic Safe Water Supply",
+    "HH with Access to Basic Safe Water Supply_Lvl_1",
+    "HH with Access to Basic Safe Water Supply_Lvl_2",
+    "HH with Access to Basic Safe Water Supply_Lvl_3",
+    "HHs using Safely Managed Drinking-water Services",
+    "HH with Basic Sanitation Facility",
+    "Pour / flush Toilet connected to Septic Tank",
+    "Pour / flush Toilet connected to Community sewer/sewerage system",
+    "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)",
+    "HHs using Safely Managed Sanitation Service"
+]
+
 def save_data_to_gsheets(new_data_dict):
     conn = st.connection("gsheets", type=GSheetsConnection)
     existing_data = load_data_from_gsheets()
@@ -52,8 +67,6 @@ def save_data_to_gsheets(new_data_dict):
             
             combined_df = pd.concat([old_df, new_df_clean], ignore_index=True)
             
-        # THE FIX: Google Sheets API crashes on 'NaN' values. We must replace them with empty strings.
-        # We also ensure all column headers are strings to prevent JSON serialization errors.
         combined_df.columns = combined_df.columns.astype(str)
         combined_df = combined_df.fillna("")
             
@@ -73,7 +86,6 @@ def save_data_to_gsheets(new_data_dict):
                 conn.update(worksheet=sheet_name, data=combined_df)
                 time.sleep(2.5) 
             except Exception as e:
-                # Upgraded error message to print the exact API complaint
                 st.error(f"❌ Failed to save {sheet_name}. API Error: {e}")
 
 def load_data_from_gsheets():
@@ -92,11 +104,12 @@ def load_data_from_gsheets():
         st.error("Google Sheets connection not fully configured yet.")
     return loaded_data
 
-def nuke_cloud_database():
+def nuke_cloud_database(selected_keys):
     conn = st.connection("gsheets", type=GSheetsConnection)
     existing_data = load_data_from_gsheets()
     
-    for app_key, sheet_name in ALL_MAPPINGS.items():
+    for app_key in selected_keys:
+        sheet_name = ALL_MAPPINGS[app_key]
         with st.spinner(f"Nuking {sheet_name}..."):
             try:
                 if app_key in existing_data and not existing_data[app_key].empty:
@@ -109,10 +122,14 @@ def nuke_cloud_database():
                 empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) 
                 conn.update(worksheet=sheet_name, data=empty_df)
                 time.sleep(2.5) 
+                
+                # Remove specifically from session state
+                if app_key in st.session_state.get('fhsis_data', {}):
+                    del st.session_state['fhsis_data'][app_key]
+                    
             except Exception as e:
                 st.warning(f"⚠️ Skipped {sheet_name} (Tab might not exist yet or API limit reached).")
             
-    st.session_state['fhsis_data'] = {}
     st.cache_data.clear()
 
 def clear_session_data():
@@ -319,11 +336,10 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- NEW WASH DATA CLEANER (QUARTERLY EXTRACTOR) ---
+# --- NEW WASH DATA CLEANER (WITH SMART MAPPER) ---
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
-        # Check if user is uploading a single CSV export directly
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
             q_val = "Q1"
@@ -354,7 +370,6 @@ def load_and_clean_wash_data(uploaded_file, year):
             for idx, row in df.iterrows():
                 row_vals = [str(val).upper() for val in row.values if pd.notna(val)]
                 
-                # Robust Area detection for WASH templates
                 if area_row_idx == -1 and any(k in v for v in row_vals for k in ['AREA', 'MUNICIPALITY', 'CITY']):
                     area_row_idx = idx
                     
@@ -366,10 +381,10 @@ def load_and_clean_wash_data(uploaded_file, year):
             if area_row_idx == -1 or data_start_idx == -1: 
                 continue
             
+            # Support deep multi-level headers (fill forward up to 4 rows deep)
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
-            headers_df.iloc[0] = headers_df.iloc[0].ffill() 
-            if len(headers_df) > 1: headers_df.iloc[1] = headers_df.iloc[1].ffill() 
-            if len(headers_df) > 2: headers_df.iloc[2] = headers_df.iloc[2].ffill()
+            for i in range(len(headers_df)):
+                headers_df.iloc[i] = headers_df.iloc[i].ffill() 
             
             flat_cols = []
             for col_idx in range(headers_df.shape[1]):
@@ -397,28 +412,67 @@ def load_and_clean_wash_data(uploaded_file, year):
             clean = df.iloc[data_start_idx:].copy()
             clean.columns = unique_cols
             
-            # Find whichever variation of "Municipality" they used
             area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY'])), unique_cols[0])
             
             if area_col != 'Area':
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 clean.rename(columns={area_col: 'Area'}, inplace=True)
+
+            # --- THE SMART COLUMN MAPPER ---
+            renamed_cols = {}
+            for c in clean.columns:
+                c_upper = c.upper()
+                
+                # Shared
+                if "PROJECTED" in c_upper and "HH" in c_upper:
+                    renamed_cols[c] = "Projected No. of HHs"
+                    
+                # Safe Water Indicators
+                elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply"
+                elif "LEVEL 1" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_1"
+                elif "LEVEL 2" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_2"
+                elif "LEVEL 3" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_3"
+                elif "SAFELY MANAGED DRINKING" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "HHs using Safely Managed Drinking-water Services"
+                    
+                # Sanitation Indicators
+                elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "HH with Basic Sanitation Facility"
+                elif "SEPTIC TANK" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "Pour / flush Toilet connected to Septic Tank"
+                elif "COMMUNITY SEWER" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "Pour / flush Toilet connected to Community sewer/sewerage system"
+                elif "PIT LATRINE" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"
+                elif "SAFELY MANAGED SANITATION" in c_upper and "%" not in c_upper:
+                    renamed_cols[c] = "HHs using Safely Managed Sanitation Service"
+
+            # Apply the clean names
+            clean.rename(columns=renamed_cols, inplace=True)
+            
+            # Destroy useless columns (only keep exact target columns)
+            keep_cols = ['Area'] + [c for c in clean.columns if c in TARGET_WASH_COLS]
+            clean = clean[[c for c in keep_cols]]
             
             clean.dropna(subset=['Area'], inplace=True)
             clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
             clean = clean[clean['Area_Clean'].isin(ABRA_RHUS)]
             clean['Area'] = clean['Area_Clean']
             clean.drop(columns=['Area_Clean'], inplace=True)
-            clean['Month'] = q_val  # Saving as Month for easier compatibility, but it holds Q1, Q2 etc.
+            clean['Month'] = q_val  
             clean['Year'] = year
             
             for col in clean.columns:
-                if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
+                if col not in ['Area', 'Month', 'Year']:
                     clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
             all_q_data.append(clean)
             
         if not all_q_data: 
-            st.error(f"Could not locate correct Municipality/Area headers in {uploaded_file.name}. Please check the file formatting.")
+            st.error(f"Could not locate correct Municipality headers in {uploaded_file.name}.")
             return None
             
         return pd.concat(all_q_data, ignore_index=True)
@@ -1191,7 +1245,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
         # 1. Isolate the data for the ENTIRE selected year to detect ghost columns
         year_df = raw_df[raw_df['Year'] == year]
         
-        valid_year_cols = ['Area', 'Month', 'Year']  # Note: The extractor uses 'Month' to hold Q1, Q2, etc.
+        valid_year_cols = ['Area', 'Month', 'Year']  
         for col in year_df.columns:
             if col not in valid_year_cols:
                 if 'elig' in col.lower() or 'pop' in col.lower() or 'hh' in col.lower():
@@ -1209,14 +1263,16 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
         
         safe_filename = tab_title.replace(" ", "_")
         
-        # Any valid numeric column that isn't metadata can be graphed
-        cols_to_plot = [c for c in filtered_df.columns if c not in ['Area', 'Month', 'Year'] and "%" not in c and "deficit" not in c.lower()]
+        # Since we mapped everything cleanly during upload, we can easily grab all valid columns
+        cols_to_plot = [c for c in filtered_df.columns if c not in ['Area', 'Month', 'Year']]
         
         if cols_to_plot:
             agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
             
             with st.expander(f"⚙️ Custom {tab_title} Indicators"):
-                selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=cols_to_plot[:5] if len(cols_to_plot) > 5 else cols_to_plot, key=f"ms_wash_{safe_filename}_{year}")
+                # Make the default selection everything EXCEPT the raw Projected HH denominator
+                default_cols = [c for c in cols_to_plot if c != "Projected No. of HHs"]
+                selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=default_cols, key=f"ms_wash_{safe_filename}_{year}")
             
             if selected_cols:
                 st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
@@ -1731,8 +1787,20 @@ elif page == "📁 Data Uploader":
 
     st.markdown("---")
     with st.expander("⚠️ Database Management (Danger Zone)"):
-        st.warning("Clicking this button will instantly delete all historical data inside your connected Google Sheet. Only use this to clear out old test data or fix a corrupted database.")
-        if st.button("🚨 Nuke Cloud Database", type="primary"):
-            nuke_cloud_database()
-            st.success("✅ Database completely wiped clean! Please re-upload your files.")
-            st.rerun()
+        st.warning("Select the specific datasets you want to clear from the cloud database. This will permanently delete their historical data.")
+        
+        # New Feature: Selective Datasets Nuking
+        datasets_to_nuke = st.multiselect(
+            "Select Datasets to Nuke", 
+            options=list(ALL_MAPPINGS.keys()), 
+            default=[]
+        )
+        
+        if st.button("🚨 Nuke Selected Data", type="primary"):
+            if not datasets_to_nuke:
+                st.error("Please select at least one dataset from the dropdown above to nuke.")
+            else:
+                nuke_cloud_database(datasets_to_nuke)
+                st.success(f"✅ Successfully wiped: {', '.join(datasets_to_nuke)}! Please re-upload your files for these categories.")
+                time.sleep(2.5)
+                st.rerun()
