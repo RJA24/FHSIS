@@ -316,18 +316,28 @@ def load_and_clean_ncd_data(uploaded_file, year):
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
-        xls = pd.ExcelFile(uploaded_file)
-        sheets_to_process = {}
-        valid_qs = ["qtr1", "q1", "qtr2", "q2", "qtr3", "q3", "qtr4", "q4"]
-        q_map = {"qtr1": "Q1", "q1": "Q1", "qtr2": "Q2", "q2": "Q2", 
-                 "qtr3": "Q3", "q3": "Q3", "qtr4": "Q4", "q4": "Q4"}
-        
-        for sheet in xls.sheet_names:
-            sheet_lower = sheet.lower().strip()
-            for q_key in valid_qs:
-                if q_key in sheet_lower:
-                    sheets_to_process[q_map[q_key]] = pd.read_excel(xls, sheet_name=sheet, header=None)
-                    break
+        # Check if user is uploading a single CSV export directly
+        if uploaded_file.name.endswith('.csv'):
+            df_raw = pd.read_csv(uploaded_file, header=None)
+            q_val = "Q1"
+            name_low = uploaded_file.name.lower()
+            if "q2" in name_low or "qtr2" in name_low: q_val = "Q2"
+            elif "q3" in name_low or "qtr3" in name_low: q_val = "Q3"
+            elif "q4" in name_low or "qtr4" in name_low: q_val = "Q4"
+            sheets_to_process = {q_val: df_raw}
+        else:
+            xls = pd.ExcelFile(uploaded_file)
+            sheets_to_process = {}
+            valid_qs = ["qtr1", "q1", "qtr2", "q2", "qtr3", "q3", "qtr4", "q4"]
+            q_map = {"qtr1": "Q1", "q1": "Q1", "qtr2": "Q2", "q2": "Q2", 
+                     "qtr3": "Q3", "q3": "Q3", "qtr4": "Q4", "q4": "Q4"}
+            
+            for sheet in xls.sheet_names:
+                sheet_lower = sheet.lower().strip()
+                for q_key in valid_qs:
+                    if q_key in sheet_lower:
+                        sheets_to_process[q_map[q_key]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+                        break
 
         all_q_data = []
         for q_val, df in sheets_to_process.items():
@@ -335,19 +345,24 @@ def load_and_clean_wash_data(uploaded_file, year):
             data_start_idx = -1
             
             for idx, row in df.iterrows():
-                row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
-                if any('AREA' in v for v in row_str) and area_row_idx == -1:
+                row_vals = [str(val).upper() for val in row.values if pd.notna(val)]
+                
+                # Robust Area detection for WASH templates
+                if area_row_idx == -1 and any(k in v for v in row_vals for k in ['AREA', 'MUNICIPALITY', 'CITY']):
                     area_row_idx = idx
+                    
                 if area_row_idx != -1 and idx > area_row_idx:
-                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] for v in row_str):
+                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] for v in row_vals):
                         data_start_idx = idx
                         break
                         
-            if area_row_idx == -1 or data_start_idx == -1: continue
+            if area_row_idx == -1 or data_start_idx == -1: 
+                continue
             
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
             headers_df.iloc[0] = headers_df.iloc[0].ffill() 
             if len(headers_df) > 1: headers_df.iloc[1] = headers_df.iloc[1].ffill() 
+            if len(headers_df) > 2: headers_df.iloc[2] = headers_df.iloc[2].ffill()
             
             flat_cols = []
             for col_idx in range(headers_df.shape[1]):
@@ -375,7 +390,9 @@ def load_and_clean_wash_data(uploaded_file, year):
             clean = df.iloc[data_start_idx:].copy()
             clean.columns = unique_cols
             
-            area_col = [c for c in unique_cols if "AREA" in c.upper()][0]
+            # Find whichever variation of "Municipality" they used
+            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY'])), unique_cols[0])
+            
             if area_col != 'Area':
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 clean.rename(columns={area_col: 'Area'}, inplace=True)
@@ -393,10 +410,13 @@ def load_and_clean_wash_data(uploaded_file, year):
                     clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
             all_q_data.append(clean)
             
-        if not all_q_data: raise ValueError("Could not find properly formatted quarterly sheets.")
+        if not all_q_data: 
+            st.error(f"Could not locate correct Municipality/Area headers in {uploaded_file.name}. Please check the file formatting.")
+            return None
+            
         return pd.concat(all_q_data, ignore_index=True)
     except Exception as e:
-        st.error(f"WASH Template Error processing {uploaded_file.name}: {e}")
+        st.error(f"WASH Template Parsing Error processing {uploaded_file.name}: {e}")
         return None
 
 # --- SIDEBAR ---
