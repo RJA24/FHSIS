@@ -1278,21 +1278,48 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                 selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=default_cols, key=f"ms_wash_{safe_filename}_{year}")
             
             if selected_cols:
+                # ---> NEW TOGGLE <---
+                view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_wash_{safe_filename}_{year}")
+                
                 st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
                 kpi_cols = st.columns(len(selected_cols[:4])) # Limit to top 4 for the KPI bar
+                
+                # Fetch Provincial Household Denominator safely
+                provincial_hh = agg_df["Projected No. of HHs"].sum() if "Projected No. of HHs" in agg_df.columns else 0
+                
                 for i, col in enumerate(selected_cols[:4]):
                     total_val = agg_df[col].sum()
-                    kpi_cols[i].metric(label=col, value=f"{int(total_val):,}")
+                    
+                    # Convert KPI to Percentage if enabled
+                    if view_mode == "Percentage (%) Coverage" and "Projected No. of HHs" in agg_df.columns and col != "Projected No. of HHs":
+                        perc = (total_val / provincial_hh) * 100 if provincial_hh > 0 else 0
+                        kpi_cols[i].metric(label=f"{col} (Cov)", value=f"{perc:.1f}%")
+                    else:
+                        kpi_cols[i].metric(label=col, value=f"{int(total_val):,}")
                     
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
                 
                 chart_df = agg_df[['Area'] + selected_cols].copy()
+                y_axis_label = "Count / Households"
+                
+                # Convert Chart Data to Percentage if enabled
+                if view_mode == "Percentage (%) Coverage" and "Projected No. of HHs" in agg_df.columns:
+                    for col in selected_cols:
+                        if col != "Projected No. of HHs":
+                            chart_df[col] = np.where(agg_df["Projected No. of HHs"] > 0, (chart_df[col] / agg_df["Projected No. of HHs"]) * 100, 0)
+                            chart_df[col] = chart_df[col].round(1)
+                    y_axis_label = "Coverage (%)"
+                
                 melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator', value_name='Count')
                 
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"{tab_title} Performance ({', '.join(selected_quarters)})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Safe)
+                
+                if view_mode == "Percentage (%) Coverage":
+                    fig_rhu.add_hline(y=100, line_dash="dash", line_color="green", annotation_text="100% Target")
+                    
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Count / Households", margin=dict(t=60))
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_wash_{safe_filename}_{year}")
             else:
                 st.info("👆 Please select at least one indicator to view the chart.")
