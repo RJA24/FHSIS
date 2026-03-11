@@ -336,7 +336,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- NEW WASH DATA CLEANER (WITH SMART MAPPER & FIXES) ---
+# --- NEW WASH DATA CLEANER (WITH BULLETPROOF SMART MAPPER) ---
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
@@ -418,7 +418,7 @@ def load_and_clean_wash_data(uploaded_file, year):
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 clean.rename(columns={area_col: 'Area'}, inplace=True)
 
-            # --- THE SMART COLUMN MAPPER ---
+            # --- BULLETPROOF SMART COLUMN MAPPER ---
             renamed_cols = {}
             for c in clean.columns:
                 c_upper = c.upper()
@@ -427,29 +427,32 @@ def load_and_clean_wash_data(uploaded_file, year):
                 if "PROJECTED" in c_upper and "HH" in c_upper:
                     renamed_cols[c] = "Projected No. of HHs"
                     
-                # Safe Water Indicators
-                elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
-                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply"
-                elif "SAFELY MANAGED DRINKING" in c_upper and "%" not in c_upper:
+                # Priority 1: Safely Managed (Must catch before bleed-over keywords)
+                elif "SAFELY MANAGED DRINKING" in c_upper and "NO." in c_upper:
                     renamed_cols[c] = "HHs using Safely Managed Drinking-water Services"
-                elif "LEVEL 1" in c_upper and "%" not in c_upper:
+                elif "SAFELY MANAGED SANITATION" in c_upper and "NO." in c_upper:
+                    renamed_cols[c] = "HHs using Safely Managed Sanitation Service"
+                    
+                # Priority 2: Totals
+                elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper:
+                    renamed_cols[c] = "HH with Access to Basic Safe Water Supply"
+                elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper:
+                    renamed_cols[c] = "HH with Basic Sanitation Facility"
+                    
+                # Priority 3: Sub-categories
+                elif "LEVEL 1" in c_upper and "NO." in c_upper:
                     renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_1"
-                elif "LEVEL 2" in c_upper and "%" not in c_upper:
+                elif "LEVEL 2" in c_upper and "NO." in c_upper:
                     renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_2"
-                elif "LEVEL 3" in c_upper and "%" not in c_upper:
+                elif "LEVEL 3" in c_upper and "NO." in c_upper:
                     renamed_cols[c] = "HH with Access to Basic Safe Water Supply_Lvl_3"
                     
-                # Sanitation Indicators
-                elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
-                    renamed_cols[c] = "HH with Basic Sanitation Facility"
-                elif "SEPTIC TANK" in c_upper and "%" not in c_upper:
+                elif "SEPTIC TANK" in c_upper and "NO." in c_upper:
                     renamed_cols[c] = "Pour / flush Toilet connected to Septic Tank"
-                elif "COMMUNITY SEWER" in c_upper and "%" not in c_upper:
+                elif "COMMUNITY SEWER" in c_upper and "NO." in c_upper:
                     renamed_cols[c] = "Pour / flush Toilet connected to Community sewer/sewerage system"
-                elif "PIT LATRINE" in c_upper and "%" not in c_upper:
+                elif "PIT LATRINE" in c_upper and "NO." in c_upper:
                     renamed_cols[c] = "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"
-                elif "SAFELY MANAGED SANITATION" in c_upper and "%" not in c_upper:
-                    renamed_cols[c] = "HHs using Safely Managed Sanitation Service"
 
             # Apply the clean names
             clean.rename(columns=renamed_cols, inplace=True)
