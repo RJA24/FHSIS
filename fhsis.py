@@ -336,7 +336,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- NEW WASH DATA CLEANER (WITH SMART MAPPER) ---
+# --- NEW WASH DATA CLEANER (WITH SMART MAPPER & FIX) ---
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
@@ -453,6 +453,9 @@ def load_and_clean_wash_data(uploaded_file, year):
 
             # Apply the clean names
             clean.rename(columns=renamed_cols, inplace=True)
+            
+            # ---> THE FIX: Drop duplicated columns <---
+            clean = clean.loc[:, ~clean.columns.duplicated()]
             
             # Destroy useless columns (only keep exact target columns)
             keep_cols = ['Area'] + [c for c in clean.columns if c in TARGET_WASH_COLS]
