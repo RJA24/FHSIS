@@ -52,6 +52,11 @@ def save_data_to_gsheets(new_data_dict):
             
             combined_df = pd.concat([old_df, new_df_clean], ignore_index=True)
             
+        # THE FIX: Google Sheets API crashes on 'NaN' values. We must replace them with empty strings.
+        # We also ensure all column headers are strings to prevent JSON serialization errors.
+        combined_df.columns = combined_df.columns.astype(str)
+        combined_df = combined_df.fillna("")
+            
         with st.spinner(f"Merging and saving {app_key} to cloud database..."):
             try:
                 if app_key in existing_data and not existing_data[app_key].empty:
@@ -61,13 +66,15 @@ def save_data_to_gsheets(new_data_dict):
                         diff = old_len - new_len
                         padding = pd.DataFrame([[""] * len(combined_df.columns)] * diff, columns=combined_df.columns)
                         write_df = pd.concat([combined_df, padding], ignore_index=True)
+                        write_df = write_df.fillna("")
                         conn.update(worksheet=sheet_name, data=write_df)
                         time.sleep(2.5) 
                         continue
                 conn.update(worksheet=sheet_name, data=combined_df)
                 time.sleep(2.5) 
             except Exception as e:
-                st.error(f"❌ Failed to save {sheet_name}. Verify the tab exists in Google Sheets and is named exactly correct.")
+                # Upgraded error message to print the exact API complaint
+                st.error(f"❌ Failed to save {sheet_name}. API Error: {e}")
 
 def load_data_from_gsheets():
     loaded_data = {}
