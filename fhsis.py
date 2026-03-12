@@ -1567,8 +1567,22 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
         filtered_df = year_df[year_df['Month'].isin(valid_months)]
         safe_filename = tab_title.replace(" ", "_")
         
-        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower() or 'pregnant' in c.lower()]
-        cols_to_plot = [c for c in filtered_df.columns if c not in ['Area', 'Month', 'Year'] and c not in elig_cols and pd.api.types.is_numeric_dtype(filtered_df[c])]
+        # FIX 1: Prevent "New Pregnant Women" from being accidentally treated as the Eligible Population denominator
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
+        
+        # FIX 2: Strictly filter out the age-bracket columns (10-14, 15-19) and only grab the "Total" column for our exact targets
+        target_keywords = [
+            'new pregnant', 'least 4 anc', 'tracked during pregnancy (a)', '8th anc on schedule', 'least 8anc (a+b)',
+            '2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 
+            'iron with folic', 'vitamin a'
+        ]
+        
+        cols_to_plot = []
+        for col in filtered_df.columns:
+            c_low = col.lower().replace('\n', ' ')
+            if "total" in c_low and any(k in c_low for k in target_keywords):
+                if col not in cols_to_plot:
+                    cols_to_plot.append(col)
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
@@ -1576,13 +1590,8 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
             
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            target_keywords = [
-                'new pregnant', 'least 4 anc', 'tracked during pregnancy (a)', '8th anc on schedule', 'least 8anc (a+b)',
-                '2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 
-                'iron with folic', 'vitamin a'
-            ]
-            default_cols = [c for c in cols_to_plot if "total" in c.lower() and any(k in c.lower().replace('\n', ' ') for k in target_keywords)]
-            if not default_cols: default_cols = cols_to_plot[:3]
+            # Default to showing all the newly cleaned, deduplicated columns
+            default_cols = cols_to_plot
             
             with st.expander(f"⚙️ Custom {tab_title} Indicators"):
                 selected_cols = st.multiselect(
@@ -1687,7 +1696,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
     else:
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
-
 
 # --- PAGES ---
 if page == "🏠 Home":
