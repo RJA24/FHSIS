@@ -48,45 +48,71 @@ TARGET_WASH_COLS = [
 
 def save_data_to_gsheets(new_data_dict):
     conn = st.connection("gsheets", type=GSheetsConnection)
-    existing_data = load_data_from_gsheets()
     
     for app_key, new_df in new_data_dict.items():
         sheet_name = ALL_MAPPINGS[app_key]
         combined_df = new_df.copy()
         
-        if app_key in existing_data and not existing_data[app_key].empty:
-            old_df = existing_data[app_key].copy()
-            old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
-            new_df['Year_Num'] = pd.to_numeric(new_df['Year'], errors='coerce').fillna(0).astype(int)
-            
-            upload_years = new_df['Year_Num'].unique()
-            old_df = old_df[~old_df['Year_Num'].isin(upload_years)]
-            
-            old_df = old_df.drop(columns=['Year_Num'])
-            new_df_clean = new_df.drop(columns=['Year_Num'])
-            
-            combined_df = pd.concat([old_df, new_df_clean], ignore_index=True)
-            
-        combined_df.columns = combined_df.columns.astype(str)
-        combined_df = combined_df.fillna("")
-            
         with st.spinner(f"Merging and saving {app_key} to cloud database..."):
             try:
-                if app_key in existing_data and not existing_data[app_key].empty:
-                    old_len = len(existing_data[app_key])
-                    new_len = len(combined_df)
-                    if new_len < old_len:
-                        diff = old_len - new_len
-                        padding = pd.DataFrame([[""] * len(combined_df.columns)] * diff, columns=combined_df.columns)
-                        write_df = pd.concat([combined_df, padding], ignore_index=True)
-                        write_df = write_df.fillna("")
-                        conn.update(worksheet=sheet_name, data=write_df)
-                        time.sleep(2.5) 
-                        continue
-                conn.update(worksheet=sheet_name, data=combined_df)
-                time.sleep(2.5) 
+                # 1. ONLY fetch the specific worksheet we are currently updating (saves API quota)
+                try:
+                    existing_df = conn.read(worksheet=sheet_name, ttl=0)
+                    if not existing_df.empty and 'Area' in existing_df.columns:
+                        existing_df = existing_df.dropna(subset=['Area', 'Year'])
+                    else:
+                        existing_df = pd.DataFrame()
+                except Exception:
+                    existing_df = pd.DataFrame() # Tab might be empty or not created yet
+                
+                # 2. Merge logic
+                if not existing_df.empty:
+                    old_df = existing_df.copy()
+                    old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
+                    new_df['Year_Num'] = pd.to_numeric(new_df['Year'], errors='coerce').fillna(0).astype(int)
+                    
+                    upload_years = new_df['Year_Num'].unique()
+                    old_df = old_df[~old_df['Year_Num'].isin(upload_years)]
+                    
+                    old_df = old_df.drop(columns=['Year_Num'])
+                    new_df_clean = new_df.drop(columns=['Year_Num'])
+                    
+                    combined_df = pd.concat([old_df, new_df_clean], ignore_index=True)
+                    
+                combined_df.columns = combined_df.columns.astype(str)
+                combined_df = combined_df.fillna("")
+                    
+                # 3. Write data back
+                old_len = len(existing_df)
+                new_len = len(combined_df)
+                
+                if new_len < old_len:
+                    diff = old_len - new_len
+                    padding = pd.DataFrame([[""] * len(combined_df.columns)] * diff, columns=combined_df.columns)
+                    write_df = pd.concat([combined_df, padding], ignore_index=True)
+                    write_df = write_df.fillna("")
+                    conn.update(worksheet=sheet_name, data=write_df)
+                else:
+                    conn.update(worksheet=sheet_name, data=combined_df)
+                
+                # Let the Google API breathe
+                time.sleep(3) 
+                
             except Exception as e:
                 st.error(f"❌ Failed to save {sheet_name}. API Error: {e}")
+                
+    # Update ONLY the session state keys we modified to avoid a full 11-sheet reload
+    st.cache_data.clear()
+    for app_key in new_data_dict.keys():
+        sheet_name = ALL_MAPPINGS[app_key]
+        try:
+            df = conn.read(worksheet=sheet_name, ttl=0)
+            if not df.empty and 'Area' in df.columns:
+                df = df.dropna(subset=['Area', 'Year'])
+                st.session_state['fhsis_data'][app_key] = df
+        except Exception:
+            pass
+        time.sleep(2) # Pace the session state update too
 
 def load_data_from_gsheets():
     loaded_data = {}
@@ -100,6 +126,8 @@ def load_data_from_gsheets():
                     loaded_data[app_key] = df
             except Exception:
                 pass 
+            # Add a 1.5 second delay between reads so we don't trigger the 60 requests/min limit
+            time.sleep(1.5)
     except Exception as e:
         st.error("Google Sheets connection not fully configured yet.")
     return loaded_data
