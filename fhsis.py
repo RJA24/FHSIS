@@ -29,7 +29,11 @@ WASH_MAPPING = {
     "Sanitation": "Sanitation_Data"
 }
 
-ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING}
+MATERNAL_MAPPING = {
+    "ANC": "ANC_Data"
+}
+
+ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING}
 
 # --- TARGET WASH INDICATORS ---
 TARGET_WASH_COLS = [
@@ -46,6 +50,7 @@ TARGET_WASH_COLS = [
     "HHs using Safely Managed Sanitation Service"
 ]
 
+# --- GSHEETS FUNCTIONS (OPTIMIZED FOR API LIMITS) ---
 def save_data_to_gsheets(new_data_dict):
     conn = st.connection("gsheets", type=GSheetsConnection)
     
@@ -55,7 +60,6 @@ def save_data_to_gsheets(new_data_dict):
         
         with st.spinner(f"Merging and saving {app_key} to cloud database..."):
             try:
-                # 1. ONLY fetch the specific worksheet we are currently updating (saves API quota)
                 try:
                     existing_df = conn.read(worksheet=sheet_name, ttl=0)
                     if not existing_df.empty and 'Area' in existing_df.columns:
@@ -63,9 +67,8 @@ def save_data_to_gsheets(new_data_dict):
                     else:
                         existing_df = pd.DataFrame()
                 except Exception:
-                    existing_df = pd.DataFrame() # Tab might be empty or not created yet
+                    existing_df = pd.DataFrame() 
                 
-                # 2. Merge logic
                 if not existing_df.empty:
                     old_df = existing_df.copy()
                     old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
@@ -82,7 +85,6 @@ def save_data_to_gsheets(new_data_dict):
                 combined_df.columns = combined_df.columns.astype(str)
                 combined_df = combined_df.fillna("")
                     
-                # 3. Write data back
                 old_len = len(existing_df)
                 new_len = len(combined_df)
                 
@@ -95,13 +97,11 @@ def save_data_to_gsheets(new_data_dict):
                 else:
                     conn.update(worksheet=sheet_name, data=combined_df)
                 
-                # Let the Google API breathe
                 time.sleep(3) 
                 
             except Exception as e:
                 st.error(f"❌ Failed to save {sheet_name}. API Error: {e}")
                 
-    # Update ONLY the session state keys we modified to avoid a full 11-sheet reload
     st.cache_data.clear()
     for app_key in new_data_dict.keys():
         sheet_name = ALL_MAPPINGS[app_key]
@@ -112,7 +112,7 @@ def save_data_to_gsheets(new_data_dict):
                 st.session_state['fhsis_data'][app_key] = df
         except Exception:
             pass
-        time.sleep(2) # Pace the session state update too
+        time.sleep(2)
 
 def load_data_from_gsheets():
     loaded_data = {}
@@ -120,14 +120,12 @@ def load_data_from_gsheets():
         conn = st.connection("gsheets", type=GSheetsConnection)
         for app_key, sheet_name in ALL_MAPPINGS.items():
             try:
-                # CHANGED: ttl="10m" caches the data so we aren't constantly hitting the API
                 df = conn.read(worksheet=sheet_name, ttl="10m") 
                 if not df.empty and 'Area' in df.columns:
                     df = df.dropna(subset=['Area', 'Year'])
                     loaded_data[app_key] = df
             except Exception:
                 pass 
-            # CHANGED: Dropped the delay from 1.5s down to 0.2s for lightning-fast initial loads
             time.sleep(0.2)
     except Exception as e:
         st.error("Google Sheets connection not fully configured yet.")
@@ -152,7 +150,6 @@ def nuke_cloud_database(selected_keys):
                 conn.update(worksheet=sheet_name, data=empty_df)
                 time.sleep(2.5) 
                 
-                # Remove specifically from session state
                 if app_key in st.session_state.get('fhsis_data', {}):
                     del st.session_state['fhsis_data'][app_key]
                     
@@ -365,7 +362,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- BULLETPROOF WASH DATA CLEANER (WITH AUTO-CORRECT FOR EXCEL MATH ERRORS) ---
+# --- BULLETPROOF WASH DATA CLEANER ---
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
@@ -410,7 +407,6 @@ def load_and_clean_wash_data(uploaded_file, year):
             if area_row_idx == -1 or data_start_idx == -1: 
                 continue
             
-            # Support deep multi-level headers (fill forward up to 4 rows deep)
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
             for i in range(len(headers_df)):
                 headers_df.iloc[i] = headers_df.iloc[i].ffill() 
@@ -447,7 +443,6 @@ def load_and_clean_wash_data(uploaded_file, year):
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 clean.rename(columns={area_col: 'Area'}, inplace=True)
 
-            # --- BULLETPROOF SMART COLUMN MAPPER ---
             renamed_cols = {}
             found_targets = set()
             
@@ -455,49 +450,36 @@ def load_and_clean_wash_data(uploaded_file, year):
                 c_upper = c.upper()
                 target = None
                 
-                # Shared
                 if "PROJECTED" in c_upper and "HH" in c_upper:
                     target = "Projected No. of HHs"
-                    
-                # Priority 1: Safely Managed (Catch these before Level 3 / Sub-categories bleed into them)
                 elif "SAFELY MANAGED DRINKING" in c_upper and "%" not in c_upper:
                     target = "HHs using Safely Managed Drinking-water Services"
                 elif "SAFELY MANAGED SANITATION" in c_upper and "%" not in c_upper:
                     target = "HHs using Safely Managed Sanitation Service"
-                    
-                # Priority 2: Sub-categories
                 elif "LEVEL 1" in c_upper and "%" not in c_upper:
                     target = "HH with Access to Basic Safe Water Supply_Lvl_1"
                 elif "LEVEL 2" in c_upper and "%" not in c_upper:
                     target = "HH with Access to Basic Safe Water Supply_Lvl_2"
                 elif "LEVEL 3" in c_upper and "%" not in c_upper:
                     target = "HH with Access to Basic Safe Water Supply_Lvl_3"
-                    
                 elif "SEPTIC TANK" in c_upper and "%" not in c_upper:
                     target = "Pour / flush Toilet connected to Septic Tank"
                 elif "COMMUNITY SEWER" in c_upper and "%" not in c_upper:
                     target = "Pour / flush Toilet connected to Community sewer/sewerage system"
                 elif "PIT LATRINE" in c_upper and "%" not in c_upper:
                     target = "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"
-
-                # Priority 3: Totals
                 elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
                     target = "HH with Access to Basic Safe Water Supply"
                 elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
                     target = "HH with Basic Sanitation Facility"
 
-                # Only assign if we found a match AND haven't already mapped this specific target
                 if target and target not in found_targets:
                     renamed_cols[c] = target
                     found_targets.add(target)
 
-            # Apply the clean names
             clean.rename(columns=renamed_cols, inplace=True)
             
-            # Destroy useless columns and strictly keep only our mapped targets
             keep_cols = ['Area'] + list(found_targets)
-            
-            # Drop duplicated columns if any managed to survive, then filter
             clean = clean.loc[:, ~clean.columns.duplicated()]
             clean = clean[[c for c in keep_cols if c in clean.columns]]
             
@@ -513,9 +495,6 @@ def load_and_clean_wash_data(uploaded_file, year):
                 if col not in ['Area', 'Month', 'Year']:
                     clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
                     
-            # --- AUTO-CORRECT EXCEL MATH ERRORS ---
-            # Enforce mathematical integrity by calculating the true sum of the sub-levels,
-            # overriding any human addition errors made in the Excel "Total" columns.
             if all(c in clean.columns for c in ["HH with Access to Basic Safe Water Supply_Lvl_1", "HH with Access to Basic Safe Water Supply_Lvl_2", "HH with Access to Basic Safe Water Supply_Lvl_3"]):
                 clean["HH with Access to Basic Safe Water Supply"] = clean["HH with Access to Basic Safe Water Supply_Lvl_1"] + clean["HH with Access to Basic Safe Water Supply_Lvl_2"] + clean["HH with Access to Basic Safe Water Supply_Lvl_3"]
                 
@@ -533,13 +512,101 @@ def load_and_clean_wash_data(uploaded_file, year):
         st.error(f"WASH Template Parsing Error processing {uploaded_file.name}: {e}")
         return None
 
+# --- MATERNAL CARE (ANC) DATA CLEANER ---
+@st.cache_data
+def load_and_clean_maternal_data(uploaded_file, year):
+    try:
+        xls = pd.ExcelFile(uploaded_file)
+        sheets_to_process = {}
+        valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem", "elig", "q1", "q2", "q3", "q4"]
+        month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
+                     "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
+        
+        for sheet in xls.sheet_names:
+            sheet_lower = sheet.lower().strip()
+            months_found = [m for m in valid_months if m in sheet_lower]
+            if len(months_found) != 1: continue
+            if any(inv in sheet_lower for inv in invalid_keywords): continue
+            sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+
+        all_months_data = []
+        for month_val, df in sheets_to_process.items():
+            area_row_idx = -1
+            data_start_idx = -1
+            
+            for idx, row in df.iterrows():
+                row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
+                if any('AREA' in v for v in row_str) and area_row_idx == -1:
+                    area_row_idx = idx
+                if area_row_idx != -1 and idx > area_row_idx:
+                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] for v in row_str):
+                        data_start_idx = idx
+                        break
+                        
+            if area_row_idx == -1 or data_start_idx == -1: continue
+            
+            headers_df = df.iloc[area_row_idx:data_start_idx].copy()
+            for i in range(len(headers_df)):
+                headers_df.iloc[i] = headers_df.iloc[i].ffill() 
+            
+            flat_cols = []
+            for col_idx in range(headers_df.shape[1]):
+                parts = []
+                for row_idx in range(headers_df.shape[0]):
+                    val = str(headers_df.iloc[row_idx, col_idx]).strip().replace('\n', ' ')
+                    if val and val != 'nan' and "Unnamed:" not in val:
+                        if not parts or val != parts[-1]:
+                            parts.append(val)
+                col_name = "_".join(parts)
+                if not col_name: col_name = f"Empty_{col_idx}"
+                flat_cols.append(col_name)
+                
+            seen = set()
+            unique_cols = []
+            for c in flat_cols:
+                new_c = c
+                counter = 1
+                while new_c in seen:
+                    new_c = f"{c}_{counter}"
+                    counter += 1
+                seen.add(new_c)
+                unique_cols.append(new_c)
+
+            clean = df.iloc[data_start_idx:].copy()
+            clean.columns = unique_cols
+            
+            area_col = next((c for c in unique_cols if "AREA" in c.upper()), unique_cols[0])
+            if area_col != 'Area':
+                if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
+                clean.rename(columns={area_col: 'Area'}, inplace=True)
+            
+            clean.dropna(subset=['Area'], inplace=True)
+            clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
+            clean = clean[clean['Area_Clean'].isin(ABRA_RHUS)]
+            clean['Area'] = clean['Area_Clean']
+            clean.drop(columns=['Area_Clean'], inplace=True)
+            clean['Month'] = month_val
+            clean['Year'] = year
+            
+            for col in clean.columns:
+                if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
+                    clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
+            all_months_data.append(clean)
+            
+        if not all_months_data: raise ValueError("Could not find properly formatted monthly sheets.")
+        return pd.concat(all_months_data, ignore_index=True)
+    except Exception as e:
+        st.error(f"Maternal Template Parsing Error for {uploaded_file.name}: {e}")
+        return None
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("FHSIS Portal")
-    page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "🚰 WASH Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
+    page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
     st.markdown("---")
     
-    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard"]:
+    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard"]:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
@@ -548,7 +615,7 @@ with st.sidebar:
 if 'fhsis_data' not in st.session_state:
     st.session_state['fhsis_data'] = load_data_from_gsheets()
 
-# --- ISOLATED IMMUNIZATION FILTER ---
+# --- HELPER FUNCTIONS ---
 def filter_data(df, start_month, end_month, gender, year):
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
@@ -584,7 +651,6 @@ def filter_data(df, start_month, end_month, gender, year):
     if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
     return filtered_df
 
-# --- ISOLATED NCD FILTER ---
 def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
@@ -654,7 +720,7 @@ def get_clean_ncd_name(col_name):
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
-# --- UNTOUCHED IMMUNIZATION UI RENDERER ---
+# --- UI RENDERERS ---
 def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
@@ -817,12 +883,10 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-# --- UPGRADED GENERIC NCD RENDERER (ADULTS & SENIORS WITH YEAR-AWARE FILTER) ---
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
-        # --- YEAR-AWARE INDICATOR FILTER ---
         year_df = raw_df[raw_df['Year'] == year]
         
         valid_year_cols = ['Area', 'Month', 'Year']
@@ -956,7 +1020,6 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-# --- CUSTOM CERVICAL CANCER ENGINE (WITH YEAR-AWARE FILTER & 2024 LEGACY MODE) ---
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
         st.info("🎗️ Cervical Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -965,7 +1028,6 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
-        # --- YEAR-AWARE INDICATOR FILTER ---
         year_df = raw_df[raw_df['Year'] == year]
         valid_year_cols = ['Area', 'Month', 'Year']
         for col in year_df.columns:
@@ -980,10 +1042,8 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
-        # -----------------------------------
         
         c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred", "suspect"])
-        
         c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
         c_susp_link_tr = get_ncd_col(filtered_df, ["suspicious", "treated"], ["%"])
         c_susp_link_ref = get_ncd_col(filtered_df, ["suspicious", "referred"], ["%"])
@@ -994,7 +1054,6 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         c_pos_link_ref = get_ncd_col(filtered_df, ["positive", "referred"], ["%"])
         c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total", "linked"], ["%"])
         
-        # 2024 Legacy Format Finder
         c_pos_suspect_tot = get_ncd_col(filtered_df, ["positive or suspect", "total"], ["%"])
         
         cols_to_agg = [c for c in [c_scr_tot, c_susp_no, c_susp_link_tr, c_susp_link_ref, c_susp_link_tot, c_pos_tot, c_pos_link_tr, c_pos_link_ref, c_pos_link_tot, c_pos_suspect_tot] if c]
@@ -1032,7 +1091,6 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
                 st.dataframe(agg_df, use_container_width=True, hide_index=True)
             return
 
-        # --- 2025 LOGIC ---
         st.markdown("### 🎗️ Cervical Cancer Screening & Linkage to Care")
         st.markdown("##### Provincial Medical Totals")
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -1102,7 +1160,6 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     else:
         st.info("No Cervical Cancer data uploaded yet.")
 
-# --- CUSTOM BREAST CANCER ENGINE (WITH YEAR-AWARE FILTER & 2024 LEGACY MODE) ---
 def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
         st.info("🎀 Breast Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -1111,7 +1168,6 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
-        # --- YEAR-AWARE INDICATOR FILTER ---
         year_df = raw_df[raw_df['Year'] == year]
         valid_year_cols = ['Area', 'Month', 'Year']
         for col in year_df.columns:
@@ -1126,13 +1182,10 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
-        # -----------------------------------
         
-        # Legacy 2024 Extractors (Breast Mass was inside Cervical File)
         b_leg_scr = get_ncd_col(filtered_df, ["screened for breast mass"], ["%", "suspicious"])
         b_leg_susp = get_ncd_col(filtered_df, ["suspicious breast mass"], ["%", "screened"])
         
-        # 2025 High Risk Extractors
         b_hr_scr_cbe = get_ncd_col(filtered_df, ["high risk", "detection", "cbe"], ["%"])
         b_hr_scr_mam = get_ncd_col(filtered_df, ["high risk", "detection", "mammogram"], ["%"])
         b_hr_scr_tot = get_ncd_col(filtered_df, ["high risk", "detection", "total"], ["%"])
@@ -1143,7 +1196,6 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         b_hr_link_mam = get_ncd_col(filtered_df, ["high risk", "linked", "mammogram"], ["%"])
         b_hr_link_tot = get_ncd_col(filtered_df, ["high risk", "linked", "total"], ["%"])
         
-        # 2025 Asymptomatic Extractors
         b_as_scr_cbe = get_ncd_col(filtered_df, ["asymptomatic", "cbe"], ["%"])
         b_as_scr_mam = get_ncd_col(filtered_df, ["asymptomatic", "mammogram"], ["%"])
         b_as_scr_tot = get_ncd_col(filtered_df, ["asymptomatic", "total"], ["%"])
@@ -1193,7 +1245,6 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
                 st.dataframe(agg_df, use_container_width=True, hide_index=True)
             return
 
-        # --- 2025 LOGIC ---
         st.markdown("### 🎀 High Risk Women (30-69 y.o.)")
         hr_c1, hr_c2, hr_c3 = st.columns(3)
         if b_hr_scr_tot: hr_c1.metric("1. Screened / Early Detection (Total)", f"{int(agg_df[b_hr_scr_tot].sum()):,}")
@@ -1289,19 +1340,15 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
     else:
         st.info("No Breast Cancer data uploaded yet.")
 
-
-# --- DYNAMIC WASH RENDERER ---
 def render_wash_tab(tab_title, df_key, selected_quarters, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
-        # 1. Isolate the data for the ENTIRE selected year to detect ghost columns
         year_df = raw_df[raw_df['Year'] == year]
         
         valid_year_cols = ['Area', 'Month', 'Year']  
         for col in year_df.columns:
             if col not in valid_year_cols:
-                # Always protect official WASH columns, even if the total is 0
                 if col in TARGET_WASH_COLS:
                     valid_year_cols.append(col)
                 elif 'elig' in col.lower() or 'pop' in col.lower() or 'hh' in col.lower():
@@ -1310,34 +1357,28 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                     if year_df[col].sum() > 0:
                         valid_year_cols.append(col)
                         
-        # 2. Apply quarter filter
         filtered_df = year_df[year_df['Month'].isin(selected_quarters)]
         
-        # 3. Strip ghost columns
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
         
         safe_filename = tab_title.replace(" ", "_")
         
-        # Since we mapped everything cleanly during upload, we can easily grab all valid columns
         cols_to_plot = [c for c in filtered_df.columns if c not in ['Area', 'Month', 'Year']]
         
         if cols_to_plot:
             agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
             
             with st.expander(f"⚙️ Custom {tab_title} Indicators"):
-                # Make the default selection everything EXCEPT the raw Projected HH denominator
                 default_cols = [c for c in cols_to_plot if c != "Projected No. of HHs"]
                 selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=default_cols, key=f"ms_wash_{safe_filename}_{year}")
             
             if selected_cols:
                 view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_wash_{safe_filename}_{year}")
                 
-                # --- IDENTIFY PRIMARY METRIC FOR ADVANCED CHARTS ---
                 primary_metric = "HH with Access to Basic Safe Water Supply" if tab_title == "Safe Water" else "HH with Basic Sanitation Facility"
                 has_primary = primary_metric in agg_df.columns and "Projected No. of HHs" in agg_df.columns
                 
-                # --- FEATURE 3: DATA QUALITY AUDIT ---
                 if has_primary:
                     over_100_df = agg_df[agg_df[primary_metric] > agg_df["Projected No. of HHs"]]
                     if not over_100_df.empty:
@@ -1346,7 +1387,6 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
 
                 st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
                 
-                # Dynamically generate rows of columns for ALL selected indicators
                 cols_per_row = 4
                 rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
                 
@@ -1365,12 +1405,11 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                 
                 st.markdown("---")
                 
-                # --- FEATURE 5: LEADERBOARDS ---
                 if has_primary:
                     st.markdown(f"#### 🌟 Performance Leaderboards ({tab_title})")
                     leader_df = agg_df[['Area', primary_metric, 'Projected No. of HHs']].copy()
                     leader_df['Coverage'] = np.where(leader_df['Projected No. of HHs'] > 0, (leader_df[primary_metric] / leader_df['Projected No. of HHs']) * 100, 0)
-                    leader_df['Coverage'] = leader_df['Coverage'].clip(upper=100) # Cap at 100% for fair visual scaling
+                    leader_df['Coverage'] = leader_df['Coverage'].clip(upper=100) 
                     leader_sorted = leader_df.sort_values(by='Coverage', ascending=False)
                     
                     col_l1, col_l2 = st.columns(2)
@@ -1413,7 +1452,6 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_wash_{safe_filename}_{year}")
                 
-                # --- FEATURE 1 & 2: GEOSPATIAL MAP & GAP ANALYSIS ---
                 if has_primary:
                     st.markdown("---")
                     col_m1, col_m2 = st.columns(2)
@@ -1438,8 +1476,8 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                         st.markdown(f"#### ⚠️ Gap Analysis: Unserved Households")
                         gap_df = agg_df[['Area', primary_metric, 'Projected No. of HHs']].copy()
                         gap_df['Unserved'] = gap_df['Projected No. of HHs'] - gap_df[primary_metric]
-                        gap_df['Unserved'] = gap_df['Unserved'].apply(lambda x: max(0, int(x))) # Remove negative deficits if >100%
-                        gap_sorted = gap_df.sort_values('Unserved', ascending=True).tail(10) # Target the Top 10 worst
+                        gap_df['Unserved'] = gap_df['Unserved'].apply(lambda x: max(0, int(x))) 
+                        gap_sorted = gap_df.sort_values('Unserved', ascending=True).tail(10) 
                         
                         fig_gap = px.bar(gap_sorted, x='Unserved', y='Area', orientation='h', text_auto=True, 
                                          title=f"Top 10 RHUs with Highest Absolute Unserved HHs",
@@ -1447,8 +1485,6 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                         fig_gap.update_layout(xaxis_title="Number of Households Without Access", yaxis_title="RHU", margin=dict(t=40, b=0, l=0, r=0))
                         st.plotly_chart(fig_gap, use_container_width=True, key=f"wash_gap_{safe_filename}_{year}")
 
-                # --- FEATURE 4: QUARTER-OVER-QUARTER TRENDLINE ---
-                # We use the full year_df to show the whole year's trend context, regardless of filter above.
                 if has_primary and len(year_df['Month'].unique()) > 1:
                     st.markdown("---")
                     st.markdown(f"#### 📈 Quarter-over-Quarter (QoQ) Trend")
@@ -1486,8 +1522,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
     else:
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
 
-
-# --- HOME PAGE (PORTFOLIO POLISH) ---
+# --- PAGES ---
 if page == "🏠 Home":
     st.markdown("""
         <div style="text-align: center; padding: 2rem 0;">
@@ -1504,7 +1539,7 @@ if page == "🏠 Home":
     
     **Core Capabilities:**
     * **Automated Data Extraction:** Safely parses messy, merged, and multi-sheet DOH Excel templates.
-    * **Multi-Module Support:** Fully supports Child Immunization, NCD Risk Assessments, and Environmental WASH metrics.
+    * **Multi-Module Support:** Fully supports Child Immunization, NCD Risk Assessments, Environmental WASH, and Maternal Health metrics.
     * **Data Quality Auditing:** Actively filters out "ghost rows," negative deficit anomalies, and duplicate uploads to guarantee 100% mathematical integrity.
     * **Geospatial & Trend Analysis:** Transforms raw numbers into interactive maps, YoY comparisons, and actionable insights.
     
@@ -1512,7 +1547,6 @@ if page == "🏠 Home":
     """)
     st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO printable report.")
 
-# --- IMMUNIZATION DASHBOARD ---
 elif page == "👶 Immunization Dashboard":
     st.title("💉 Child Immunization Dashboard")
     st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
@@ -1691,7 +1725,6 @@ elif page == "👶 Immunization Dashboard":
     with tab4: render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter, selected_year)
     with tab5: render_tab_content("MMR/MCV, FIC and CIC", "MMR", ["MMR", "MCV", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year)
 
-# --- NCD DASHBOARD ---
 elif page == "🩺 NCD Dashboard":
     st.title("🩺 Non-Communicable Disease (NCD) Dashboard")
     st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
@@ -1726,7 +1759,6 @@ elif page == "🩺 NCD Dashboard":
     with ncd_tab3: render_cervical_cancer_tab("Cervical_Cancer", start_month, end_month, gender_filter, selected_year)
     with ncd_tab4: render_breast_cancer_tab("Breast_Cancer", start_month, end_month, gender_filter, selected_year)
 
-# --- WASH DASHBOARD ---
 elif page == "🚰 WASH Dashboard":
     st.title("🚰 Water, Sanitation, and Hygiene (WASH) Dashboard")
     st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
@@ -1745,7 +1777,10 @@ elif page == "🚰 WASH Dashboard":
         with wash_tab1: render_wash_tab("Safe Water", "Safe_Water", selected_quarters, selected_year)
         with wash_tab2: render_wash_tab("Sanitation", "Sanitation", selected_quarters, selected_year)
 
-# --- YOY COMPARISON PAGE ---
+elif page == "🤰 Maternal Dashboard":
+    st.title("🤰 Maternal Health Dashboard")
+    st.info("🚧 The visualization engine for Antenatal Care (ANC) is currently under construction. You can start uploading your Maternal Health files via the Data Uploader right now to prepare the database!")
+
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
     st.markdown("Compare metric performance between two different years to instantly track regional growth or decline.")
@@ -1886,7 +1921,6 @@ elif page == "📈 YoY Comparison":
         else:
             st.info("No data available for this category yet. Go to Data Uploader to push your FHSIS files.")
 
-# --- DATA UPLOADER PAGE ---
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
     
@@ -1898,7 +1932,7 @@ elif page == "📁 Data Uploader":
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
     
-    upload_tab_imm, upload_tab_ncd, upload_tab_wash = st.tabs(["👶 Child Immunization", "🩺 Non-Communicable Diseases (NCD)", "🚰 WASH"])
+    upload_tab_imm, upload_tab_ncd, upload_tab_wash, upload_tab_mat = st.tabs(["👶 Child Immunization", "🩺 NCD", "🚰 WASH", "🤰 Maternal Health"])
     
     with upload_tab_imm:
         st.markdown("##### Upload Immunization Excel Templates")
@@ -1970,11 +2004,26 @@ elif page == "📁 Data Uploader":
             else:
                 st.error("No valid data uploaded yet to save.")
 
+    with upload_tab_mat:
+        st.markdown("##### Upload Maternal Health Excel Templates")
+        
+        file_anc = st.file_uploader("Upload: 1 4ANC and 8ANC", type=["csv", "xlsx"])
+        
+        if st.button("☁️ Save Maternal Data to Cloud", type="primary", use_container_width=True):
+            upload_dict = {}
+            if file_anc: upload_dict["ANC"] = load_and_clean_maternal_data(file_anc, upload_year)
+            
+            clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
+            if clean_dict:
+                save_data_to_gsheets(clean_dict)
+                st.success(f"✅ {upload_year} Maternal Files safely merged into Google Sheets!")
+            else:
+                st.error("No valid data uploaded yet to save.")
+
     st.markdown("---")
     with st.expander("⚠️ Database Management (Danger Zone)"):
         st.warning("Select the specific datasets you want to clear from the cloud database. This will permanently delete their historical data.")
         
-        # New Feature: Selective Datasets Nuking
         datasets_to_nuke = st.multiselect(
             "Select Datasets to Nuke", 
             options=list(ALL_MAPPINGS.keys()), 
