@@ -1304,6 +1304,17 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
             if selected_cols:
                 view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_wash_{safe_filename}_{year}")
                 
+                # --- IDENTIFY PRIMARY METRIC FOR ADVANCED CHARTS ---
+                primary_metric = "HH with Access to Basic Safe Water Supply" if tab_title == "Safe Water" else "HH with Basic Sanitation Facility"
+                has_primary = primary_metric in agg_df.columns and "Projected No. of HHs" in agg_df.columns
+                
+                # --- FEATURE 3: DATA QUALITY AUDIT ---
+                if has_primary:
+                    over_100_df = agg_df[agg_df[primary_metric] > agg_df["Projected No. of HHs"]]
+                    if not over_100_df.empty:
+                        flagged_rhus = over_100_df['Area'].tolist()
+                        st.warning(f"🕵️‍♂️ **Data Quality Audit:** The following RHUs reported more covered households than their projected total, exceeding 100% coverage: **{', '.join(flagged_rhus)}**. Please verify their submissions.")
+
                 st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
                 
                 # Dynamically generate rows of columns for ALL selected indicators
@@ -1322,8 +1333,34 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                         rows[row_idx][col_idx].metric(label=f"{col} (Cov)", value=f"{perc:.1f}%")
                     else:
                         rows[row_idx][col_idx].metric(label=col, value=f"{int(total_val):,}")
-                    
+                
                 st.markdown("---")
+                
+                # --- FEATURE 5: LEADERBOARDS ---
+                if has_primary:
+                    st.markdown(f"#### 🌟 Performance Leaderboards ({tab_title})")
+                    leader_df = agg_df[['Area', primary_metric, 'Projected No. of HHs']].copy()
+                    leader_df['Coverage'] = np.where(leader_df['Projected No. of HHs'] > 0, (leader_df[primary_metric] / leader_df['Projected No. of HHs']) * 100, 0)
+                    leader_df['Coverage'] = leader_df['Coverage'].clip(upper=100) # Cap at 100% for fair visual scaling
+                    leader_sorted = leader_df.sort_values(by='Coverage', ascending=False)
+                    
+                    col_l1, col_l2 = st.columns(2)
+                    with col_l1:
+                        st.markdown("**Top 3 Performing RHUs**")
+                        top3 = leader_sorted.head(3)
+                        fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
+                        fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=10, b=0), height=300)
+                        st.plotly_chart(fig_top3, use_container_width=True, key=f"wash_top3_{safe_filename}_{year}")
+                    
+                    with col_l2:
+                        st.markdown("**Action Required: Bottom 3 RHUs**")
+                        bot3 = leader_sorted.tail(3).sort_values(by='Coverage', ascending=True)
+                        fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
+                        fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=10, b=0), height=300)
+                        st.plotly_chart(fig_bot3, use_container_width=True, key=f"wash_bot3_{safe_filename}_{year}")
+                        
+                    st.markdown("---")
+
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
                 
                 chart_df = agg_df[['Area'] + selected_cols].copy()
@@ -1346,6 +1383,70 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_wash_{safe_filename}_{year}")
+                
+                # --- FEATURE 1 & 2: GEOSPATIAL MAP & GAP ANALYSIS ---
+                if has_primary:
+                    st.markdown("---")
+                    col_m1, col_m2 = st.columns(2)
+                    
+                    with col_m1:
+                        st.markdown(f"#### 🗺️ Provincial Coverage Heatmap")
+                        map_df = agg_df.copy()
+                        map_df['Coverage (%)'] = np.where(map_df['Projected No. of HHs'] > 0, (map_df[primary_metric] / map_df['Projected No. of HHs']) * 100, 0).clip(0, 100)
+                        map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
+                        map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
+                        map_df = map_df[map_df['Lat'] != 0] 
+                        
+                        fig_map = px.scatter_mapbox(map_df, lat="Lat", lon="Lon", hover_name="Area", 
+                                                    hover_data={"Lat": False, "Lon": False, "Coverage (%)": ':.1f'}, 
+                                                    color="Coverage (%)", size="Projected No. of HHs", 
+                                                    color_continuous_scale="RdYlGn", size_max=20, zoom=8.5, 
+                                                    center={"lat": 17.55, "lon": 120.75}, mapbox_style="carto-positron")
+                        fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+                        st.plotly_chart(fig_map, use_container_width=True, key=f"wash_map_{safe_filename}_{year}")
+                        
+                    with col_m2:
+                        st.markdown(f"#### ⚠️ Gap Analysis: Unserved Households")
+                        gap_df = agg_df[['Area', primary_metric, 'Projected No. of HHs']].copy()
+                        gap_df['Unserved'] = gap_df['Projected No. of HHs'] - gap_df[primary_metric]
+                        gap_df['Unserved'] = gap_df['Unserved'].apply(lambda x: max(0, int(x))) # Remove negative deficits if >100%
+                        gap_sorted = gap_df.sort_values('Unserved', ascending=True).tail(10) # Target the Top 10 worst
+                        
+                        fig_gap = px.bar(gap_sorted, x='Unserved', y='Area', orientation='h', text_auto=True, 
+                                         title=f"Top 10 RHUs with Highest Absolute Unserved HHs",
+                                         color='Unserved', color_continuous_scale="Reds")
+                        fig_gap.update_layout(xaxis_title="Number of Households Without Access", yaxis_title="RHU", margin=dict(t=40, b=0, l=0, r=0))
+                        st.plotly_chart(fig_gap, use_container_width=True, key=f"wash_gap_{safe_filename}_{year}")
+
+                # --- FEATURE 4: QUARTER-OVER-QUARTER TRENDLINE ---
+                # We use the full year_df to show the whole year's trend context, regardless of filter above.
+                if has_primary and len(year_df['Month'].unique()) > 1:
+                    st.markdown("---")
+                    st.markdown(f"#### 📈 Quarter-over-Quarter (QoQ) Trend")
+                    trend_df = year_df.groupby('Month')[['Projected No. of HHs', primary_metric]].sum().reset_index()
+                    
+                    q_order = ["Q1", "Q2", "Q3", "Q4"]
+                    trend_df['Month'] = pd.Categorical(trend_df['Month'], categories=q_order, ordered=True)
+                    trend_df = trend_df.sort_values('Month').dropna()
+                    
+                    if view_mode == "Percentage (%) Coverage":
+                        trend_df['Value'] = np.where(trend_df['Projected No. of HHs'] > 0, (trend_df[primary_metric] / trend_df['Projected No. of HHs']) * 100, 0)
+                        trend_df['Value'] = trend_df['Value'].round(1)
+                        y_label = "Coverage (%)"
+                    else:
+                        trend_df['Value'] = trend_df[primary_metric]
+                        y_label = "Households with Access"
+                        
+                    fig_trend = px.line(trend_df, x='Month', y='Value', markers=True, 
+                                        title=f"Provincial Trend: {primary_metric} ({year})", 
+                                        color_discrete_sequence=["#1f77b4"])
+                    
+                    if view_mode == "Percentage (%) Coverage":
+                        fig_trend.add_hline(y=100, line_dash="dash", line_color="green", annotation_text="100% Target")
+                        
+                    fig_trend.update_layout(xaxis_title="Quarter", yaxis_title=y_label, margin=dict(t=40))
+                    st.plotly_chart(fig_trend, use_container_width=True, key=f"wash_trend_{safe_filename}_{year}")
+
             else:
                 st.info("👆 Please select at least one indicator to view the chart.")
                 
