@@ -713,8 +713,10 @@ def get_ncd_col(df, include_words, exclude_words=None):
                 return col
     return None
 
-def get_clean_ncd_name(col_name):
+def get_clean_indicator_name(col_name):
     c_low = col_name.lower().replace('\n', ' ')
+    
+    # --- NCD Mapping ---
     if "risk assessed" in c_low: return "Total Risk Assessed"
     if "smoking" in c_low or "smoker" in c_low: return "History of Smoking (Current Smoker)"
     if "alcohol" in c_low: return "Alcohol Binge Drinkers"
@@ -725,6 +727,22 @@ def get_clean_ncd_name(col_name):
     if "unhealthy diet" in c_low: return "Unhealthy Diet"
     if "hypertensive" in c_low: return "Identified Hypertensive"
     if "type 2 dm" in c_low or "diabetes" in c_low: return "Identified Type 2 DM"
+    
+    # --- Maternal Care (ANC) Exact Mapping ---
+    if 'new pregnant' in c_low: return '1. New Pregnant Women Seen'
+    if 'tracked during pregnancy (a)' in c_low: return '2. Tracked During Pregnancy'
+    if 'at least 4 anc' in c_low and 'delivered' in c_low: return '3. Delivered w/ at least 4 ANC'
+    if '8th anc on schedule' in c_low: return '4. 1st-8th ANC on Schedule'
+    if 'at least 8anc (a+b)' in c_low: return '5. Completed at least 8 ANC'
+    
+    # --- Maternal Care (PPC) Exact Mapping ---
+    if 'pp women who were tracked (a)' in c_low: return '1. Tracked Postpartum Women'
+    if '2 postpartum check-ups' in c_low: return '2. Completed at least 2 PP Check-ups'
+    if '4th pnc on schedule' in c_low: return '3. 1st-4th PNC on Schedule'
+    if 'at least 4pnc =(a+b)' in c_low: return '4. Completed at least 4 PNC'
+    if 'iron with folic' in c_low: return '5. Completed Iron w/ Folic Acid'
+    if 'vitamin a' in c_low: return '6. Given Vitamin A'
+    
     name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
     if "_" in name: name = name.split("_")[0]
     return name
@@ -943,7 +961,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
             with st.expander("⚙️ Add / Remove NCD Indicators"):
-                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot, key=f"ms_ncd_{safe_filename}_{year}_{gender}", format_func=get_clean_ncd_name)
+                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot, key=f"ms_ncd_{safe_filename}_{year}_{gender}", format_func=get_clean_indicator_name)
 
             valid_selected = [c for c in selected_cols if c in agg_df.columns]
             uid = f"ncd_{safe_filename}_{year}_{gender}_{int(time.time())}"
@@ -965,7 +983,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                     row_idx = i // cols_per_row
                     col_idx = i % cols_per_row
                     total_val = provincial_antigens[col]
-                    short_name = get_clean_ncd_name(col)
+                    short_name = get_clean_indicator_name(col)
                     
                     if c_assessed and col in [c_hyper, c_dm] and provincial_antigens[c_assessed] > 0:
                         yield_pct = (total_val / provincial_antigens[c_assessed]) * 100
@@ -982,7 +1000,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                     with v_col1:
                         if lifestyle_cols:
                             radar_data = pd.DataFrame({
-                                'Risk Factor': [get_clean_ncd_name(c) for c in lifestyle_cols],
+                                'Risk Factor': [get_clean_indicator_name(c) for c in lifestyle_cols],
                                 'Count': [provincial_antigens[c] for c in lifestyle_cols]
                             })
                             fig_radar = px.line_polar(radar_data, r='Count', theta='Risk Factor', line_close=True, title="🕸️ Lifestyle Risk Profile (Radar)", markers=True, color_discrete_sequence=["#FF9933"])
@@ -1015,7 +1033,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 chart_df = agg_df[['Area'] + valid_selected].copy()
                 
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
-                melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_ncd_name)
+                melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Count", legend_title="Indicator", margin=dict(t=60))
@@ -1558,11 +1576,22 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
             
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            default_cols = [c for c in cols_to_plot if "total" in c.lower() and ("tri" in c.lower() or "anc" in c.lower() or "postpartum" in c.lower() or "deliveries" in c.lower() or "iron" in c.lower() or "vitamin" in c.lower())]
+            target_keywords = [
+                'new pregnant', 'least 4 anc', 'tracked during pregnancy (a)', '8th anc on schedule', 'least 8anc (a+b)',
+                '2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 
+                'iron with folic', 'vitamin a'
+            ]
+            default_cols = [c for c in cols_to_plot if "total" in c.lower() and any(k in c.lower().replace('\n', ' ') for k in target_keywords)]
             if not default_cols: default_cols = cols_to_plot[:3]
             
             with st.expander(f"⚙️ Custom {tab_title} Indicators"):
-                selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=default_cols, key=f"ms_mat_{safe_filename}_{year}")
+                selected_cols = st.multiselect(
+                    f"Select specific {tab_title} indicators to visualize:", 
+                    options=cols_to_plot, 
+                    default=default_cols, 
+                    key=f"ms_mat_{safe_filename}_{year}",
+                    format_func=get_clean_indicator_name
+                )
             
             if selected_cols:
                 view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_mat_{safe_filename}_{year}")
@@ -1577,7 +1606,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                     row_idx = i // cols_per_row
                     col_idx = i % cols_per_row
                     total_val = agg_df[col].sum()
-                    clean_name = col.replace("_Total", "").replace("Total ", "").strip()
+                    clean_name = get_clean_indicator_name(col)
                     
                     if view_mode == "Percentage (%) Coverage" and elig_cols:
                         perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
@@ -1595,11 +1624,11 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                     st.markdown("Tracking the volume of women across different maternal care stages.")
                 
                 cascade_data = pd.DataFrame({
-                    'Stage': [c.replace("_Total", "").replace("Total ", "").strip() for c in selected_cols],
+                    'Stage': [get_clean_indicator_name(c) for c in selected_cols],
                     'Count': [agg_df[c].sum() for c in selected_cols]
                 })
                 
-                cascade_data = cascade_data.sort_values(by='Count', ascending=False)
+                cascade_data = cascade_data.sort_values(by='Stage', ascending=True)
                 
                 fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial Retention ({start_m} - {end_m})", color_discrete_sequence=["#9B59B6"])
                 fig_funnel.update_traces(textposition="inside")
@@ -1619,7 +1648,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                     y_axis_label = "Coverage (%)"
                 
                 melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator', value_name='Count')
-                melted['Indicator'] = melted['Indicator'].str.replace("_Total", "").str.replace("Total ", "")
+                melted['Indicator'] = melted['Indicator'].apply(get_clean_indicator_name)
                 
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Prism)
                 if view_mode == "Percentage (%) Coverage":
@@ -1643,7 +1672,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                     for col in selected_cols: trend_chart_df[col] = trend_agg[col]
                     
                 trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=selected_cols, var_name='Indicator', value_name='Count')
-                trend_melted['Indicator'] = trend_melted['Indicator'].str.replace("_Total", "").str.replace("Total ", "")
+                trend_melted['Indicator'] = trend_melted['Indicator'].apply(get_clean_indicator_name)
                 
                 fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
                 fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
@@ -1971,11 +2000,13 @@ elif page == "📈 YoY Comparison":
             "Seniors Risk (≥60)": ("Seniors_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "hypertensive", "type 2 dm"]),
             "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "positive", "lesions"]),
             "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"]),
-            "Antenatal Care (ANC)": ("ANC", ["tri", "anc", "total"]),
-            "Postpartum Care (PPC)": ("PPC", ["deliveries", "postpartum", "iron", "vitamin", "total"])
+            "Antenatal Care (ANC)": ("ANC", ['new pregnant', 'least 4 anc', 'tracked during pregnancy (a)', '8th anc on schedule', 'least 8anc (a+b)']),
+            "Postpartum Care (PPC)": ("PPC", ['2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 'iron with folic', 'vitamin a'])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
+        
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
+        is_maternal = yoy_dataset in ["Antenatal Care (ANC)", "Postpartum Care (PPC)"]
         is_cancer_dataset = "Cancer" in yoy_dataset
 
         if is_cancer_dataset and gender_filter == "Male":
@@ -1984,14 +2015,14 @@ elif page == "📈 YoY Comparison":
             raw_df = st.session_state['fhsis_data'][df_key]
             available_cols = []
             
-            if is_ncd:
+            if is_ncd or is_maternal:
                 for base in base_mets:
                     group_cols = []
                     for col in raw_df.columns:
-                        clean_c = col.replace('\n', ' ')
-                        if base.lower() in clean_c.lower() and "%" not in col and "deficit" not in clean_c.lower() and "previous" not in clean_c.lower():
+                        clean_c = col.replace('\n', ' ').lower()
+                        if base.lower() in clean_c and "%" not in col and "deficit" not in clean_c and "previous" not in clean_c:
                             is_valid_gender = False
-                            if is_cancer_dataset:
+                            if is_cancer_dataset or is_maternal:
                                 is_valid_gender = True
                             else:
                                 if gender_filter == "Total":
@@ -2026,7 +2057,7 @@ elif page == "📈 YoY Comparison":
                                 available_cols.append(col)
 
             if available_cols:
-                compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols, format_func=get_clean_ncd_name, key=f"yoy_select_{yoy_dataset}_{gender_filter}_{year_a}_{year_b}")
+                compare_col = st.selectbox("🎯 Select Specific Indicator to Compare", available_cols, format_func=get_clean_indicator_name, key=f"yoy_select_{yoy_dataset}_{gender_filter}_{year_a}_{year_b}")
 
                 if 'Year' in raw_df.columns:
                     df_a = raw_df[raw_df['Year'] == year_a]
@@ -2058,7 +2089,7 @@ elif page == "📈 YoY Comparison":
                                 st.markdown(f"- **{row['Area']}:** {int(row['Variance'])} counts")
 
                     st.markdown("---")
-                    st.markdown(f"#### 📊 {get_clean_ncd_name(compare_col)} : {year_a} vs {year_b}")
+                    st.markdown(f"#### 📊 {get_clean_indicator_name(compare_col)} : {year_a} vs {year_b}")
 
                     melted_yoy = merged.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Counts')
                     fig_yoy = px.bar(melted_yoy, x='Area', y='Counts', color='Year', barmode='group',
