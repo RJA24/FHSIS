@@ -31,7 +31,8 @@ WASH_MAPPING = {
 
 MATERNAL_MAPPING = {
     "ANC": "ANC_Data",
-    "PPC": "PPC_Data"
+    "PPC": "PPC_Data",
+    "Livebirths": "Livebirths_Data"
 }
 
 ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING}
@@ -725,8 +726,11 @@ def get_clean_indicator_name(col_name):
     if "hypertensive" in c_low: return "Identified Hypertensive"
     if "type 2 dm" in c_low or "diabetes" in c_low: return "Identified Type 2 DM"
     
-    # --- Maternal Care ---
-    if 'total deliveries' in c_low: return '0. Total Deliveries'
+    # --- Maternal Care (Livebirths Base) ---
+    if 'total livebirths' in c_low: return 'Total Livebirths'
+    elif 'total deliveries' in c_low: return '0. Total Deliveries'
+    
+    # --- Maternal Care (ANC) Exact Mapping ---
     elif 'new pregnant' in c_low: return '1. New Pregnant Women Seen'
     elif 'at least 4 anc' in c_low and 'delivered' in c_low: return '2. Delivered with at least 4 ANC visits'
     elif 'gave birth' in c_low and 'tracked' in c_low: return '3. Women gave birth tracked during pregnancy (a)'
@@ -737,6 +741,7 @@ def get_clean_indicator_name(col_name):
     elif '8anc' in c_low and 'trans in' in c_low: return '8. Completed 8ANC TRANS IN (b)'
     elif 'at least 8anc (a+b)' in c_low: return '9. Delivered & completed at least 8ANC (a+b)'
     
+    # --- Maternal Care (PPC) Exact Mapping ---
     elif '2 postpartum check ups' in c_low: return '2. Completed at least 2 PP check-ups'
     elif 'tracked (a)' in c_low and 'pp women' in c_low: return '3. PP women who were tracked (a)'
     elif 'trans in' in c_low and 'pp' in c_low and '4pnc' not in c_low: return '4. PP women TRANS-IN (b)'
@@ -757,16 +762,19 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
     suffix = age_filter
     
     denom_col = None
+    # ANC Target Denominators
     if clean_name == "2. Delivered with at least 4 ANC visits":
         denom_col = f"Total Deliveries_{suffix}"
     elif clean_name == "9. Delivered & completed at least 8ANC (a+b)":
         denom_col = f"Women who delivered and were tracked during pregnancy  (a+b)-c_{suffix}"
+        
+    # PPC Target Denominators
     elif clean_name == "2. Completed at least 2 PP check-ups":
         denom_col = f"Total Deliveries_{suffix}"
     elif clean_name == "9. Women gave birth completed at least 4PNC =(a+b)":
         denom_col = f"PP Women who were tracked during pregnancy =(a+b)-c_{suffix}"
     elif clean_name in ["10. PP women who completed iron with folic acid", "11. PP women given Vitamin A supplementation"]:
-        denom_col = "Elig. Pop."
+        denom_col = f"Total Deliveries_{suffix}"
         
     if denom_col and denom_col in all_cols:
         return denom_col
@@ -775,7 +783,8 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
         for c in all_cols:
             if clean_target in c.replace("  ", " ").replace("=", "").strip().lower():
                 return c
-    return None
+                
+    return "Elig. Pop." if "Elig. Pop." in all_cols else None
 
 @st.cache_data
 def convert_df_to_csv(df):
@@ -1618,6 +1627,17 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
             
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
+            # --- CROSS-FILE DATA MERGING (PULL DENOMINATORS FROM LIVEBIRTHS TEMPLATE) ---
+            if 'Livebirths' in st.session_state['fhsis_data']:
+                lb_df = st.session_state['fhsis_data']['Livebirths']
+                lb_year = lb_df[lb_df['Year'] == year]
+                lb_filt = lb_year[lb_year['Month'].isin(valid_months)]
+                if not lb_filt.empty:
+                    lb_numeric = [c for c in lb_filt.columns if pd.api.types.is_numeric_dtype(lb_filt[c]) and c not in ['Area', 'Month', 'Year']]
+                    lb_agg = lb_filt.groupby('Area')[lb_numeric].sum().reset_index()
+                    cols_to_merge = ['Area'] + [c for c in lb_numeric if c not in agg_df.columns]
+                    agg_df = pd.merge(agg_df, lb_agg[cols_to_merge], on='Area', how='left').fillna(0)
+
             default_cols = cols_to_plot
             
             with st.expander(f"⚙️ Custom {tab_title} Indicators"):
@@ -1711,6 +1731,13 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                 st.markdown("---")
                 st.markdown(f"#### 📈 Monthly Trend Analysis")
                 trend_agg = filtered_df.groupby('Month').sum(numeric_only=True).reset_index()
+                
+                # MERGE DENOMINATORS INTO TREND AGGREGATION AS WELL
+                if 'Livebirths' in st.session_state['fhsis_data'] and not lb_filt.empty:
+                    lb_trend_agg = lb_filt.groupby('Month')[lb_numeric].sum().reset_index()
+                    cols_to_merge_trend = ['Month'] + [c for c in lb_numeric if c not in trend_agg.columns]
+                    trend_agg = pd.merge(trend_agg, lb_trend_agg[cols_to_merge_trend], on='Month', how='left').fillna(0)
+
                 trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
                 trend_agg = trend_agg.sort_values('Month').dropna()
                 
@@ -1719,8 +1746,8 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                 
                 if view_mode == "Percentage (%) Coverage":
                     for col in selected_cols:
-                        denom_col = get_maternal_denominator(col, age_filter, filtered_df.columns)
-                        if denom_col and denom_col in filtered_df.columns:
+                        denom_col = get_maternal_denominator(col, age_filter, trend_agg.columns)
+                        if denom_col and denom_col in trend_agg.columns:
                             trend_chart_df[col] = [
                                 (v / denom_val * 100) if denom_val > 0 else 0 
                                 for v, denom_val in zip(trend_agg[col], trend_agg[denom_col])
@@ -2045,7 +2072,7 @@ elif page == "📈 YoY Comparison":
         yoy_dataset = st.selectbox("Select Data Category", [
             "Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC",
             "Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer",
-            "Antenatal Care (ANC)", "Postpartum Care (PPC)"
+            "Antenatal Care (ANC)", "Postpartum Care (PPC)", "Livebirths & Deliveries"
         ])
     with col_y2:
         year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2)
@@ -2066,12 +2093,13 @@ elif page == "📈 YoY Comparison":
             "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "positive", "lesions"]),
             "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"]),
             "Antenatal Care (ANC)": ("ANC", ['new pregnant', 'least 4 anc', 'tracked during pregnancy (a)', '8th anc on schedule', 'least 8anc (a+b)']),
-            "Postpartum Care (PPC)": ("PPC", ['2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 'iron with folic', 'vitamin a'])
+            "Postpartum Care (PPC)": ("PPC", ['2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 'iron with folic', 'vitamin a']),
+            "Livebirths & Deliveries": ("Livebirths", ["total deliveries", "total livebirths"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
-        is_maternal = yoy_dataset in ["Antenatal Care (ANC)", "Postpartum Care (PPC)"]
+        is_maternal = yoy_dataset in ["Antenatal Care (ANC)", "Postpartum Care (PPC)", "Livebirths & Deliveries"]
         is_cancer_dataset = "Cancer" in yoy_dataset
 
         if is_cancer_dataset and gender_filter == "Male":
@@ -2269,16 +2297,19 @@ elif page == "📁 Data Uploader":
 
     with upload_tab_mat:
         st.markdown("##### Upload Maternal Health Excel Templates")
-        col5, col6 = st.columns(2)
+        col5, col6, col7 = st.columns(3)
         with col5:
             file_anc = st.file_uploader("Upload: 1 4ANC and 8ANC", type=["csv", "xlsx"])
         with col6:
             file_ppc = st.file_uploader("Upload: 7 Postpartum Care", type=["csv", "xlsx"])
+        with col7:
+            file_lb = st.file_uploader("Upload: 6 Livebirths & Deliveries", type=["csv", "xlsx"])
             
         if st.button("☁️ Save Maternal Data to Cloud", type="primary", use_container_width=True):
             upload_dict = {}
             if file_anc: upload_dict["ANC"] = load_and_clean_maternal_data(file_anc, upload_year)
             if file_ppc: upload_dict["PPC"] = load_and_clean_maternal_data(file_ppc, upload_year)
+            if file_lb: upload_dict["Livebirths"] = load_and_clean_maternal_data(file_lb, upload_year)
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
