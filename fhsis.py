@@ -513,7 +513,7 @@ def load_and_clean_wash_data(uploaded_file, year):
         return None
 
 @st.cache_data
-def load_and_clean_maternal_data(uploaded_file, year):
+def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
     try:
         sheets_to_process = {}
         month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
@@ -557,6 +557,35 @@ def load_and_clean_maternal_data(uploaded_file, year):
                         
             if area_row_idx == -1 or data_start_idx == -1: continue
             
+            clean = df.iloc[data_start_idx:].copy()
+            
+            # --- LIVEBIRTHS SPECIFIC EXTRACTION ---
+            if template_type == "Livebirths":
+                lb_clean = pd.DataFrame()
+                lb_clean['Area_Original'] = clean.iloc[:, 0]
+                lb_clean['Area_Clean'] = lb_clean['Area_Original'].astype(str).str.strip()
+                lb_clean = lb_clean[lb_clean['Area_Clean'].isin(ABRA_RHUS)]
+                lb_clean['Area'] = lb_clean['Area_Clean']
+                lb_clean.drop(columns=['Area_Clean', 'Area_Original'], inplace=True)
+                
+                valid_indices = lb_clean.index
+                clean_filtered = clean.loc[valid_indices]
+                
+                lb_clean['Month'] = month_val
+                lb_clean['Year'] = year
+                lb_clean['Total Livebirths_Total'] = pd.to_numeric(clean_filtered.iloc[:, 1], errors='coerce').fillna(0)
+                
+                # Fetch DX (127), DY (128), and DZ (129) accurately
+                if clean_filtered.shape[1] > 129:
+                    lb_clean['Total Deliveries_10-14'] = pd.to_numeric(clean_filtered.iloc[:, 127], errors='coerce').fillna(0)
+                    lb_clean['Total Deliveries_15-19'] = pd.to_numeric(clean_filtered.iloc[:, 128], errors='coerce').fillna(0)
+                    lb_clean['Total Deliveries_20-49'] = pd.to_numeric(clean_filtered.iloc[:, 129], errors='coerce').fillna(0)
+                    lb_clean['Total Deliveries_Total'] = lb_clean['Total Deliveries_10-14'] + lb_clean['Total Deliveries_15-19'] + lb_clean['Total Deliveries_20-49']
+                    
+                all_months_data.append(lb_clean)
+                continue
+                
+            # --- ANC & PPC NORMAL EXTRACTION ---
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
             for i in range(len(headers_df)):
                 headers_df.iloc[i] = headers_df.iloc[i].ffill() 
@@ -584,7 +613,6 @@ def load_and_clean_maternal_data(uploaded_file, year):
                 seen.add(new_c)
                 unique_cols.append(new_c)
 
-            clean = df.iloc[data_start_idx:].copy()
             clean.columns = unique_cols
             
             area_col = next((c for c in unique_cols if "AREA" in c.upper()), unique_cols[0])
@@ -599,6 +627,23 @@ def load_and_clean_maternal_data(uploaded_file, year):
             clean.drop(columns=['Area_Clean'], inplace=True)
             clean['Month'] = month_val
             clean['Year'] = year
+            
+            # 1. Drop existing faulty "Total Deliveries" columns so Livebirths can safely override them
+            cols_to_drop = [c for c in clean.columns if "total deliveries" in str(c).lower() or "total livebirths" in str(c).lower()]
+            clean.drop(columns=[c for c in cols_to_drop if c in clean.columns], inplace=True)
+            
+            # 2. Recalculate ALL _Total columns manually to ensure data integrity
+            base_indicators = [c.replace("_10-14", "") for c in clean.columns if c.endswith("_10-14")]
+            for base in base_indicators:
+                c14 = f"{base}_10-14"
+                c19 = f"{base}_15-19"
+                c49 = f"{base}_20-49"
+                cTotal = f"{base}_Total"
+                if c14 in clean.columns and c19 in clean.columns and c49 in clean.columns:
+                    clean[c14] = pd.to_numeric(clean[c14], errors='coerce').fillna(0)
+                    clean[c19] = pd.to_numeric(clean[c19], errors='coerce').fillna(0)
+                    clean[c49] = pd.to_numeric(clean[c49], errors='coerce').fillna(0)
+                    clean[cTotal] = clean[c14] + clean[c19] + clean[c49]
             
             for col in clean.columns:
                 if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
@@ -2307,9 +2352,9 @@ elif page == "📁 Data Uploader":
             
         if st.button("☁️ Save Maternal Data to Cloud", type="primary", use_container_width=True):
             upload_dict = {}
-            if file_anc: upload_dict["ANC"] = load_and_clean_maternal_data(file_anc, upload_year)
-            if file_ppc: upload_dict["PPC"] = load_and_clean_maternal_data(file_ppc, upload_year)
-            if file_lb: upload_dict["Livebirths"] = load_and_clean_maternal_data(file_lb, upload_year)
+            if file_anc: upload_dict["ANC"] = load_and_clean_maternal_data(file_anc, upload_year, "ANC")
+            if file_ppc: upload_dict["PPC"] = load_and_clean_maternal_data(file_ppc, upload_year, "PPC")
+            if file_lb: upload_dict["Livebirths"] = load_and_clean_maternal_data(file_lb, upload_year, "Livebirths")
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
