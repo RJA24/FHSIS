@@ -183,7 +183,7 @@ ABRA_COORDS = {
     "Tineg": (17.785, 120.938), "Tubo": (17.234, 120.748), "Villaviciosa": (17.439, 120.632)
 }
 
-# --- UNTOUCHED IMMUNIZATION CLEANER ---
+# --- DATA CLEANERS ---
 @st.cache_data
 def load_and_clean_fhsis_data(uploaded_file, year):
     try:
@@ -275,7 +275,6 @@ def load_and_clean_fhsis_data(uploaded_file, year):
         st.error(f"Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- ISOLATED NCD DATA CLEANER ---
 @st.cache_data
 def load_and_clean_ncd_data(uploaded_file, year):
     try:
@@ -363,7 +362,6 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- BULLETPROOF WASH DATA CLEANER ---
 @st.cache_data
 def load_and_clean_wash_data(uploaded_file, year):
     try:
@@ -513,7 +511,6 @@ def load_and_clean_wash_data(uploaded_file, year):
         st.error(f"WASH Template Parsing Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- MATERNAL CARE DATA CLEANER ---
 @st.cache_data
 def load_and_clean_maternal_data(uploaded_file, year):
     try:
@@ -714,13 +711,13 @@ def get_ncd_col(df, include_words, exclude_words=None):
     return None
 
 def get_clean_indicator_name(col_name):
-    c_low = col_name.lower().replace('\n', ' ')
+    c_low = col_name.lower().replace('\n', ' ').replace('-', ' ')
     
     # --- NCD Mapping ---
     if "risk assessed" in c_low: return "Total Risk Assessed"
     if "smoking" in c_low or "smoker" in c_low: return "History of Smoking (Current Smoker)"
     if "alcohol" in c_low: return "Alcohol Binge Drinkers"
-    if "obese/ overweight" in c_low or "obese/overweight" in c_low: return "Obese / Overweight"
+    if "obese/ overweight" in c_low or "obese/overweight" in c_low or "obese / overweight" in c_low: return "Obese / Overweight"
     if "overweight" in c_low: return "Overweight"
     if "obese" in c_low: return "Obese"
     if "physical activity" in c_low: return "Insufficient Physical Activity"
@@ -730,18 +727,27 @@ def get_clean_indicator_name(col_name):
     
     # --- Maternal Care (ANC) Exact Mapping ---
     if 'new pregnant' in c_low: return '1. New Pregnant Women Seen'
-    if 'tracked during pregnancy (a)' in c_low: return '2. Tracked During Pregnancy'
-    if 'at least 4 anc' in c_low and 'delivered' in c_low: return '3. Delivered w/ at least 4 ANC'
-    if '8th anc on schedule' in c_low: return '4. 1st-8th ANC on Schedule'
-    if 'at least 8anc (a+b)' in c_low: return '5. Completed at least 8 ANC'
+    elif 'at least 4 anc' in c_low and 'delivered' in c_low: return '2. Delivered with at least 4 ANC visits'
+    elif 'gave birth' in c_low and 'tracked' in c_low: return '3. Women gave birth tracked during pregnancy (a)'
+    elif 'trans in' in c_low and '8anc' not in c_low and '4pnc' not in c_low and 'pp' not in c_low: return '4. TRANS IN from other LGUs (b)'
+    elif 'trans out' in c_low and '8anc' in c_low: return '5. TRANS OUT before completing 8ANC (c)'
+    elif '(a+b) c' in c_low and 'delivered' in c_low: return '6. Delivered & tracked during pregnancy (a+b)-c'
+    elif '1st to 8th anc' in c_low: return '7. Provided 1st to 8th ANC on schedule (a)'
+    elif '8anc' in c_low and 'trans in' in c_low: return '8. Completed 8ANC TRANS IN (b)'
+    elif 'at least 8anc (a+b)' in c_low: return '9. Delivered & completed at least 8ANC (a+b)'
     
     # --- Maternal Care (PPC) Exact Mapping ---
-    if 'pp women who were tracked (a)' in c_low: return '1. Tracked Postpartum Women'
-    if '2 postpartum check-ups' in c_low: return '2. Completed at least 2 PP Check-ups'
-    if '4th pnc on schedule' in c_low: return '3. 1st-4th PNC on Schedule'
-    if 'at least 4pnc =(a+b)' in c_low: return '4. Completed at least 4 PNC'
-    if 'iron with folic' in c_low: return '5. Completed Iron w/ Folic Acid'
-    if 'vitamin a' in c_low: return '6. Given Vitamin A'
+    elif 'total deliveries' in c_low: return '1. Total Deliveries'
+    elif '2 postpartum check ups' in c_low: return '2. Completed at least 2 PP check-ups'
+    elif 'tracked (a)' in c_low and 'pp women' in c_low: return '3. PP women who were tracked (a)'
+    elif 'trans in' in c_low and 'pp' in c_low and '4pnc' not in c_low: return '4. PP women TRANS-IN (b)'
+    elif 'trans out' in c_low and 'pp' in c_low: return '5. PP women TRANS-OUT (c)'
+    elif '=(a+b) c' in c_low and 'pp' in c_low: return '6. PP Women tracked during pregnancy =(a+b)-c'
+    elif '1st to 4th pnc' in c_low: return '7. PP women provided 1st to 4th PNC on schedule (a)'
+    elif '4pnc' in c_low and 'trans in' in c_low: return '8. PP women with completed 4PNC TRANS IN (b)'
+    elif 'at least 4pnc =(a+b)' in c_low: return '9. Women gave birth completed at least 4PNC =(a+b)'
+    elif 'iron with folic' in c_low: return '10. PP women who completed iron with folic acid'
+    elif 'vitamin a' in c_low: return '11. PP women given Vitamin A supplementation'
     
     name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
     if "_" in name: name = name.split("_")[0]
@@ -1553,7 +1559,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
     else:
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
 
-def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
+def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -1567,22 +1573,19 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
         filtered_df = year_df[year_df['Month'].isin(valid_months)]
         safe_filename = tab_title.replace(" ", "_")
         
-        # FIX 1: Prevent "New Pregnant Women" from being accidentally treated as the Eligible Population denominator
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
-        
-        # FIX 2: Strictly filter out the age-bracket columns (10-14, 15-19) and only grab the "Total" column for our exact targets
-        target_keywords = [
-            'new pregnant', 'least 4 anc', 'tracked during pregnancy (a)', '8th anc on schedule', 'least 8anc (a+b)',
-            '2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 
-            'iron with folic', 'vitamin a'
-        ]
         
         cols_to_plot = []
         for col in filtered_df.columns:
-            c_low = col.lower().replace('\n', ' ')
-            if "total" in c_low and any(k in c_low for k in target_keywords):
-                if col not in cols_to_plot:
-                    cols_to_plot.append(col)
+            if col in ['Area', 'Month', 'Year'] or col in elig_cols:
+                continue
+                
+            filter_suffix = str(age_filter).lower()
+            if col.lower().endswith(filter_suffix) or f"_{filter_suffix}" in col.lower():
+                mapped_name = get_clean_indicator_name(col)
+                if mapped_name and mapped_name.split('.')[0].isdigit():
+                    if col not in cols_to_plot:
+                        cols_to_plot.append(col)
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
@@ -1590,7 +1593,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
             
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            # Default to showing all the newly cleaned, deduplicated columns
             default_cols = cols_to_plot
             
             with st.expander(f"⚙️ Custom {tab_title} Indicators"):
@@ -1598,16 +1600,16 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                     f"Select specific {tab_title} indicators to visualize:", 
                     options=cols_to_plot, 
                     default=default_cols, 
-                    key=f"ms_mat_{safe_filename}_{year}",
+                    key=f"ms_mat_{safe_filename}_{year}_{age_filter}",
                     format_func=get_clean_indicator_name
                 )
             
             if selected_cols:
-                view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_mat_{safe_filename}_{year}")
+                view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_mat_{safe_filename}_{year}_{age_filter}")
                 
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
-                st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
+                st.markdown(f"#### 🏆 Provincial {tab_title} Highlights ({age_filter})")
                 cols_per_row = 4
                 rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
                 
@@ -1637,11 +1639,13 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                     'Count': [agg_df[c].sum() for c in selected_cols]
                 })
                 
-                cascade_data = cascade_data.sort_values(by='Stage', ascending=True)
+                # Extract integer prefix to ensure perfect chronological sorting
+                cascade_data['Stage_Num'] = cascade_data['Stage'].apply(lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 99)
+                cascade_data = cascade_data.sort_values(by='Stage_Num', ascending=True)
                 
-                fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial Retention ({start_m} - {end_m})", color_discrete_sequence=["#9B59B6"])
+                fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial Retention ({start_m} - {end_m}) | Group: {age_filter}", color_discrete_sequence=["#9B59B6"])
                 fig_funnel.update_traces(textposition="inside")
-                st.plotly_chart(fig_funnel, use_container_width=True, key=f"mat_funnel_{safe_filename}_{year}")
+                st.plotly_chart(fig_funnel, use_container_width=True, key=f"mat_funnel_{safe_filename}_{year}_{age_filter}")
                 
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
@@ -1664,7 +1668,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                     fig_rhu.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="100% Target")
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
-                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_mat_{safe_filename}_{year}")
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_mat_{safe_filename}_{year}_{age_filter}")
                 
                 st.markdown("---")
                 st.markdown(f"#### 📈 Monthly Trend Analysis")
@@ -1685,7 +1689,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                 
                 fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
                 fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
-                st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}")
+                st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}_{age_filter}")
                 
             else:
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
@@ -1693,9 +1697,10 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
         with st.expander(f"📄 View & Download Raw {tab_title} Data"):
             st.dataframe(filtered_df, use_container_width=True, hide_index=True)
             csv_data = convert_df_to_csv(filtered_df)
-            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_{age_filter}_Data.csv", mime="text/csv")
     else:
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
+
 
 # --- PAGES ---
 if page == "🏠 Home":
@@ -1972,12 +1977,15 @@ elif page == "🤰 Maternal Dashboard":
             start_month = q_map[start_q][0]
             end_month = q_map[end_q][1]
             
+    st.markdown("##### 👩 Age Filter")
+    age_filter = st.selectbox("Isolate Specific Demographic", ["Total", "10-14", "15-19", "20-49"])
+            
     st.markdown("<br>", unsafe_allow_html=True)
     
     mat_tab1, mat_tab2 = st.tabs(["🩺 Antenatal Care (ANC)", "👶 Postpartum Care (PPC)"])
     
-    with mat_tab1: render_maternal_tab("Antenatal Care (ANC)", "ANC", start_month, end_month, selected_year)
-    with mat_tab2: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year)
+    with mat_tab1: render_maternal_tab("Antenatal Care (ANC)", "ANC", start_month, end_month, selected_year, age_filter)
+    with mat_tab2: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter)
 
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
@@ -2030,8 +2038,11 @@ elif page == "📈 YoY Comparison":
                         clean_c = col.replace('\n', ' ').lower()
                         if base.lower() in clean_c and "%" not in col and "deficit" not in clean_c and "previous" not in clean_c:
                             is_valid_gender = False
-                            if is_cancer_dataset or is_maternal:
+                            if is_cancer_dataset:
                                 is_valid_gender = True
+                            elif is_maternal:
+                                if col.lower().endswith("total") or "_total" in col.lower():
+                                    is_valid_gender = True
                             else:
                                 if gender_filter == "Total":
                                     if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
