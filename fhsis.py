@@ -120,14 +120,15 @@ def load_data_from_gsheets():
         conn = st.connection("gsheets", type=GSheetsConnection)
         for app_key, sheet_name in ALL_MAPPINGS.items():
             try:
-                df = conn.read(worksheet=sheet_name, ttl=0) 
+                # CHANGED: ttl="10m" caches the data so we aren't constantly hitting the API
+                df = conn.read(worksheet=sheet_name, ttl="10m") 
                 if not df.empty and 'Area' in df.columns:
                     df = df.dropna(subset=['Area', 'Year'])
                     loaded_data[app_key] = df
             except Exception:
                 pass 
-            # Add a 1.5 second delay between reads so we don't trigger the 60 requests/min limit
-            time.sleep(1.5)
+            # CHANGED: Dropped the delay from 1.5s down to 0.2s for lightning-fast initial loads
+            time.sleep(0.2)
     except Exception as e:
         st.error("Google Sheets connection not fully configured yet.")
     return loaded_data
