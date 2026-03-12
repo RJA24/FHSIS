@@ -559,7 +559,6 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
             
             clean = df.iloc[data_start_idx:].copy()
             
-            # --- LIVEBIRTHS SPECIFIC EXTRACTION ---
             if template_type == "Livebirths":
                 lb_clean = pd.DataFrame()
                 lb_clean['Area_Original'] = clean.iloc[:, 0]
@@ -575,7 +574,6 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
                 lb_clean['Year'] = year
                 lb_clean['Total Livebirths_Total'] = pd.to_numeric(clean_filtered.iloc[:, 1], errors='coerce').fillna(0)
                 
-                # Fetch DX (127), DY (128), and DZ (129) accurately
                 if clean_filtered.shape[1] > 129:
                     lb_clean['Total Deliveries_10-14'] = pd.to_numeric(clean_filtered.iloc[:, 127], errors='coerce').fillna(0)
                     lb_clean['Total Deliveries_15-19'] = pd.to_numeric(clean_filtered.iloc[:, 128], errors='coerce').fillna(0)
@@ -585,7 +583,6 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
                 all_months_data.append(lb_clean)
                 continue
                 
-            # --- ANC & PPC NORMAL EXTRACTION ---
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
             for i in range(len(headers_df)):
                 headers_df.iloc[i] = headers_df.iloc[i].ffill() 
@@ -628,11 +625,9 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
             clean['Month'] = month_val
             clean['Year'] = year
             
-            # 1. Drop existing faulty "Total Deliveries" columns so Livebirths can safely override them
             cols_to_drop = [c for c in clean.columns if "total deliveries" in str(c).lower() or "total livebirths" in str(c).lower()]
             clean.drop(columns=[c for c in cols_to_drop if c in clean.columns], inplace=True)
             
-            # 2. Recalculate ALL _Total columns manually to ensure data integrity
             base_indicators = [c.replace("_10-14", "") for c in clean.columns if c.endswith("_10-14")]
             for base in base_indicators:
                 c14 = f"{base}_10-14"
@@ -807,13 +802,11 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
     suffix = age_filter
     
     denom_col = None
-    # ANC Target Denominators
     if clean_name == "2. Delivered with at least 4 ANC visits":
         denom_col = f"Total Deliveries_{suffix}"
     elif clean_name == "9. Delivered & completed at least 8ANC (a+b)":
         denom_col = f"Women who delivered and were tracked during pregnancy  (a+b)-c_{suffix}"
         
-    # PPC Target Denominators
     elif clean_name == "2. Completed at least 2 PP check-ups":
         denom_col = f"Total Deliveries_{suffix}"
     elif clean_name == "9. Women gave birth completed at least 4PNC =(a+b)":
@@ -1651,6 +1644,17 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
         filtered_df = year_df[year_df['Month'].isin(valid_months)]
         safe_filename = tab_title.replace(" ", "_")
         
+        # --- CROSS-FILE DATA MERGING (PULL DENOMINATORS FROM LIVEBIRTHS TEMPLATE FIRST) ---
+        if 'Livebirths' in st.session_state['fhsis_data']:
+            lb_df = st.session_state['fhsis_data']['Livebirths']
+            lb_year = lb_df[lb_df['Year'] == year]
+            lb_filt = lb_year[lb_year['Month'].isin(valid_months)]
+            if not lb_filt.empty:
+                lb_cols = [c for c in lb_filt.columns if c not in filtered_df.columns and c not in ['Year']]
+                if lb_cols:
+                    filtered_df = pd.merge(filtered_df, lb_filt[['Area', 'Month'] + lb_cols], on=['Area', 'Month'], how='left').fillna(0)
+        # --------------------------------------------------------------------------------
+        
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
         
         cols_to_plot = []
@@ -1672,17 +1676,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
             
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            # --- CROSS-FILE DATA MERGING (PULL DENOMINATORS FROM LIVEBIRTHS TEMPLATE) ---
-            if 'Livebirths' in st.session_state['fhsis_data']:
-                lb_df = st.session_state['fhsis_data']['Livebirths']
-                lb_year = lb_df[lb_df['Year'] == year]
-                lb_filt = lb_year[lb_year['Month'].isin(valid_months)]
-                if not lb_filt.empty:
-                    lb_numeric = [c for c in lb_filt.columns if pd.api.types.is_numeric_dtype(lb_filt[c]) and c not in ['Area', 'Month', 'Year']]
-                    lb_agg = lb_filt.groupby('Area')[lb_numeric].sum().reset_index()
-                    cols_to_merge = ['Area'] + [c for c in lb_numeric if c not in agg_df.columns]
-                    agg_df = pd.merge(agg_df, lb_agg[cols_to_merge], on='Area', how='left').fillna(0)
-
             default_cols = cols_to_plot
             
             with st.expander(f"⚙️ Custom {tab_title} Indicators"):
@@ -1777,12 +1770,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                 st.markdown(f"#### 📈 Monthly Trend Analysis")
                 trend_agg = filtered_df.groupby('Month').sum(numeric_only=True).reset_index()
                 
-                # MERGE DENOMINATORS INTO TREND AGGREGATION AS WELL
-                if 'Livebirths' in st.session_state['fhsis_data'] and not lb_filt.empty:
-                    lb_trend_agg = lb_filt.groupby('Month')[lb_numeric].sum().reset_index()
-                    cols_to_merge_trend = ['Month'] + [c for c in lb_numeric if c not in trend_agg.columns]
-                    trend_agg = pd.merge(trend_agg, lb_trend_agg[cols_to_merge_trend], on='Month', how='left').fillna(0)
-
                 trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
                 trend_agg = trend_agg.sort_values('Month').dropna()
                 
