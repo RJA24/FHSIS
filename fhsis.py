@@ -1521,7 +1521,130 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
     else:
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
-
+def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        # Isolate the data for the selected year and months
+        year_df = raw_df[raw_df['Year'] == year]
+        
+        months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        start_idx = months_order.index(start_m)
+        end_idx = months_order.index(end_m)
+        valid_months = months_order[start_idx:end_idx+1]
+        
+        filtered_df = year_df[year_df['Month'].isin(valid_months)]
+        safe_filename = tab_title.replace(" ", "_")
+        
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower() or 'pregnant' in c.lower()]
+        cols_to_plot = [c for c in filtered_df.columns if c not in ['Area', 'Month', 'Year'] and c not in elig_cols and pd.api.types.is_numeric_dtype(filtered_df[c])]
+        
+        if cols_to_plot:
+            agg_dict = {col: 'sum' for col in cols_to_plot}
+            for ec in elig_cols: agg_dict[ec] = 'max' 
+            
+            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            
+            # Smart Default Selection (Targeting "Total" columns for 1st Tri, 4ANC, 8ANC)
+            default_cols = [c for c in cols_to_plot if "total" in c.lower() and ("tri" in c.lower() or "anc" in c.lower())]
+            if not default_cols: default_cols = cols_to_plot[:3]
+            
+            with st.expander(f"⚙️ Custom {tab_title} Indicators"):
+                selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=default_cols, key=f"ms_mat_{safe_filename}_{year}")
+            
+            if selected_cols:
+                view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_mat_{safe_filename}_{year}")
+                
+                provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
+                
+                st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
+                cols_per_row = 4
+                rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
+                
+                for i, col in enumerate(selected_cols):
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
+                    total_val = agg_df[col].sum()
+                    clean_name = col.replace("_Total", "").replace("Total ", "").strip()
+                    
+                    if view_mode == "Percentage (%) Coverage" and elig_cols:
+                        perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
+                        rows[row_idx][col_idx].metric(label=f"{clean_name} (Cov)", value=f"{perc:.1f}%")
+                    else:
+                        rows[row_idx][col_idx].metric(label=clean_name, value=f"{int(total_val):,}")
+                
+                st.markdown("---")
+                
+                # --- ANTENATAL CARE CASCADE ---
+                st.markdown(f"#### 🌪️ Antenatal Care (ANC) Cascade")
+                st.markdown("Tracking the drop-off rate of pregnant women throughout their prenatal care journey.")
+                
+                cascade_data = pd.DataFrame({
+                    'Stage': [c.replace("_Total", "").replace("Total ", "").strip() for c in selected_cols],
+                    'Count': [agg_df[c].sum() for c in selected_cols]
+                })
+                
+                # Sort descending to create a natural funnel
+                cascade_data = cascade_data.sort_values(by='Count', ascending=False)
+                
+                fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial ANC Retention ({start_m} - {end_m})", color_discrete_sequence=["#9B59B6"])
+                fig_funnel.update_traces(textposition="inside")
+                st.plotly_chart(fig_funnel, use_container_width=True, key=f"mat_funnel_{safe_filename}_{year}")
+                
+                st.markdown("---")
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                
+                chart_df = agg_df[['Area'] + selected_cols].copy()
+                y_axis_label = "Number of Pregnant Women"
+                
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    main_elig_col = elig_cols[0]
+                    for col in selected_cols:
+                        chart_df[col] = np.where(agg_df[main_elig_col] > 0, (chart_df[col] / agg_df[main_elig_col]) * 100, 0)
+                        chart_df[col] = chart_df[col].round(1)
+                    y_axis_label = "Coverage (%)"
+                
+                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator', value_name='Count')
+                melted['Indicator'] = melted['Indicator'].str.replace("_Total", "").str.replace("Total ", "")
+                
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Prism)
+                if view_mode == "Percentage (%) Coverage":
+                    fig_rhu.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="100% Target")
+                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_mat_{safe_filename}_{year}")
+                
+                st.markdown("---")
+                st.markdown(f"#### 📈 Monthly Trend Analysis")
+                trend_agg = filtered_df.groupby('Month')[selected_cols].sum().reset_index()
+                trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
+                trend_agg = trend_agg.sort_values('Month').dropna()
+                
+                trend_chart_df = pd.DataFrame({'Month': trend_agg['Month']})
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    for col in selected_cols:
+                        trend_chart_df[col] = [(v / provincial_elig * 100) if provincial_elig > 0 else 0 for v in trend_agg[col]]
+                        trend_chart_df[col] = trend_chart_df[col].round(1)
+                else:
+                    for col in selected_cols: trend_chart_df[col] = trend_agg[col]
+                    
+                trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=selected_cols, var_name='Indicator', value_name='Count')
+                trend_melted['Indicator'] = trend_melted['Indicator'].str.replace("_Total", "").str.replace("Total ", "")
+                
+                fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial ANC Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
+                fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
+                st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}")
+                
+            else:
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
+                
+        with st.expander(f"📄 View & Download Raw {tab_title} Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
+    else:
+        st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
+        
 # --- PAGES ---
 if page == "🏠 Home":
     st.markdown("""
@@ -1779,7 +1902,31 @@ elif page == "🚰 WASH Dashboard":
 
 elif page == "🤰 Maternal Dashboard":
     st.title("🤰 Maternal Health Dashboard")
-    st.info("🚧 The visualization engine for Antenatal Care (ANC) is currently under construction. You can start uploading your Maternal Health files via the Data Uploader right now to prepare the database!")
+    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
+    st.markdown("---")
+    
+    st.markdown("##### ⏳ Time Filter")
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed", key="mat_time")
+    with col_t2:
+        if time_view == "Monthly":
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed", key="mat_m")
+        else:
+            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed", key="mat_q")
+            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
+            start_month = q_map[start_q][0]
+            end_month = q_map[end_q][1]
+            
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    mat_tab1, mat_tab2, mat_tab3 = st.tabs(["🩺 Antenatal Care (ANC)", "🏥 Facility-Based Deliveries (Coming Soon)", "💊 Family Planning (Coming Soon)"])
+    
+    with mat_tab1: render_maternal_tab("Antenatal Care (ANC)", "ANC", start_month, end_month, selected_year)
+    with mat_tab2: st.info("Ready to track Facility-Based Deliveries (FBD). Upload the FBD template next!")
+    with mat_tab3: st.info("Ready to track Family Planning (CPR). Upload the Family Planning template next!")
 
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
