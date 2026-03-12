@@ -30,7 +30,8 @@ WASH_MAPPING = {
 }
 
 MATERNAL_MAPPING = {
-    "ANC": "ANC_Data"
+    "ANC": "ANC_Data",
+    "PPC": "PPC_Data"
 }
 
 ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING}
@@ -512,23 +513,35 @@ def load_and_clean_wash_data(uploaded_file, year):
         st.error(f"WASH Template Parsing Error processing {uploaded_file.name}: {e}")
         return None
 
-# --- MATERNAL CARE (ANC) DATA CLEANER ---
+# --- MATERNAL CARE DATA CLEANER ---
 @st.cache_data
 def load_and_clean_maternal_data(uploaded_file, year):
     try:
-        xls = pd.ExcelFile(uploaded_file)
         sheets_to_process = {}
-        valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-        invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem", "elig", "q1", "q2", "q3", "q4"]
         month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                      "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
-        
-        for sheet in xls.sheet_names:
-            sheet_lower = sheet.lower().strip()
-            months_found = [m for m in valid_months if m in sheet_lower]
-            if len(months_found) != 1: continue
-            if any(inv in sheet_lower for inv in invalid_keywords): continue
-            sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+                     
+        if uploaded_file.name.endswith('.csv'):
+            df_raw = pd.read_csv(uploaded_file, header=None)
+            name_low = uploaded_file.name.lower()
+            valid_months = list(month_map.keys())
+            month_found = "Jan" 
+            for m in valid_months:
+                if m in name_low:
+                    month_found = month_map[m]
+                    break
+            sheets_to_process = {month_found: df_raw}
+        else:
+            xls = pd.ExcelFile(uploaded_file)
+            valid_months = list(month_map.keys())
+            invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem", "elig", "q1", "q2", "q3", "q4"]
+            
+            for sheet in xls.sheet_names:
+                sheet_lower = sheet.lower().strip()
+                months_found = [m for m in valid_months if m in sheet_lower]
+                if len(months_found) != 1: continue
+                if any(inv in sheet_lower for inv in invalid_keywords): continue
+                sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
         for month_val, df in sheets_to_process.items():
@@ -1521,11 +1534,11 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
     else:
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
+
 def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
-        # Isolate the data for the selected year and months
         year_df = raw_df[raw_df['Year'] == year]
         
         months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -1545,8 +1558,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
             
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
-            # Smart Default Selection (Targeting "Total" columns for 1st Tri, 4ANC, 8ANC)
-            default_cols = [c for c in cols_to_plot if "total" in c.lower() and ("tri" in c.lower() or "anc" in c.lower())]
+            default_cols = [c for c in cols_to_plot if "total" in c.lower() and ("tri" in c.lower() or "anc" in c.lower() or "postpartum" in c.lower() or "deliveries" in c.lower() or "iron" in c.lower() or "vitamin" in c.lower())]
             if not default_cols: default_cols = cols_to_plot[:3]
             
             with st.expander(f"⚙️ Custom {tab_title} Indicators"):
@@ -1575,19 +1587,21 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                 
                 st.markdown("---")
                 
-                # --- ANTENATAL CARE CASCADE ---
-                st.markdown(f"#### 🌪️ Antenatal Care (ANC) Cascade")
-                st.markdown("Tracking the drop-off rate of pregnant women throughout their prenatal care journey.")
+                if "ANC" in tab_title:
+                    st.markdown(f"#### 🌪️ Antenatal Care (ANC) Cascade")
+                    st.markdown("Tracking the drop-off rate of pregnant women throughout their prenatal care journey.")
+                else:
+                    st.markdown(f"#### 🌪️ {tab_title} Funnel")
+                    st.markdown("Tracking the volume of women across different maternal care stages.")
                 
                 cascade_data = pd.DataFrame({
                     'Stage': [c.replace("_Total", "").replace("Total ", "").strip() for c in selected_cols],
                     'Count': [agg_df[c].sum() for c in selected_cols]
                 })
                 
-                # Sort descending to create a natural funnel
                 cascade_data = cascade_data.sort_values(by='Count', ascending=False)
                 
-                fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial ANC Retention ({start_m} - {end_m})", color_discrete_sequence=["#9B59B6"])
+                fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial Retention ({start_m} - {end_m})", color_discrete_sequence=["#9B59B6"])
                 fig_funnel.update_traces(textposition="inside")
                 st.plotly_chart(fig_funnel, use_container_width=True, key=f"mat_funnel_{safe_filename}_{year}")
                 
@@ -1595,7 +1609,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
                 
                 chart_df = agg_df[['Area'] + selected_cols].copy()
-                y_axis_label = "Number of Pregnant Women"
+                y_axis_label = "Number of Women"
                 
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
                     main_elig_col = elig_cols[0]
@@ -1631,7 +1645,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
                 trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=selected_cols, var_name='Indicator', value_name='Count')
                 trend_melted['Indicator'] = trend_melted['Indicator'].str.replace("_Total", "").str.replace("Total ", "")
                 
-                fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial ANC Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
+                fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
                 fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
                 st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}")
                 
@@ -1644,7 +1658,8 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year):
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
     else:
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
-        
+
+
 # --- PAGES ---
 if page == "🏠 Home":
     st.markdown("""
@@ -1922,11 +1937,10 @@ elif page == "🤰 Maternal Dashboard":
             
     st.markdown("<br>", unsafe_allow_html=True)
     
-    mat_tab1, mat_tab2, mat_tab3 = st.tabs(["🩺 Antenatal Care (ANC)", "🏥 Facility-Based Deliveries (Coming Soon)", "💊 Family Planning (Coming Soon)"])
+    mat_tab1, mat_tab2 = st.tabs(["🩺 Antenatal Care (ANC)", "👶 Postpartum Care (PPC)"])
     
     with mat_tab1: render_maternal_tab("Antenatal Care (ANC)", "ANC", start_month, end_month, selected_year)
-    with mat_tab2: st.info("Ready to track Facility-Based Deliveries (FBD). Upload the FBD template next!")
-    with mat_tab3: st.info("Ready to track Family Planning (CPR). Upload the Family Planning template next!")
+    with mat_tab2: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year)
 
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
@@ -1936,7 +1950,8 @@ elif page == "📈 YoY Comparison":
     with col_y1:
         yoy_dataset = st.selectbox("Select Data Category", [
             "Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC",
-            "Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"
+            "Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer",
+            "Antenatal Care (ANC)", "Postpartum Care (PPC)"
         ])
     with col_y2:
         year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2)
@@ -1955,7 +1970,9 @@ elif page == "📈 YoY Comparison":
             "Adults Risk (20-59)": ("Adults_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "hypertensive", "type 2 dm"]),
             "Seniors Risk (≥60)": ("Seniors_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "hypertensive", "type 2 dm"]),
             "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "positive", "lesions"]),
-            "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"])
+            "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"]),
+            "Antenatal Care (ANC)": ("ANC", ["tri", "anc", "total"]),
+            "Postpartum Care (PPC)": ("PPC", ["deliveries", "postpartum", "iron", "vitamin", "total"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
@@ -2153,12 +2170,16 @@ elif page == "📁 Data Uploader":
 
     with upload_tab_mat:
         st.markdown("##### Upload Maternal Health Excel Templates")
-        
-        file_anc = st.file_uploader("Upload: 1 4ANC and 8ANC", type=["csv", "xlsx"])
-        
+        col5, col6 = st.columns(2)
+        with col5:
+            file_anc = st.file_uploader("Upload: 1 4ANC and 8ANC", type=["csv", "xlsx"])
+        with col6:
+            file_ppc = st.file_uploader("Upload: 7 Postpartum Care", type=["csv", "xlsx"])
+            
         if st.button("☁️ Save Maternal Data to Cloud", type="primary", use_container_width=True):
             upload_dict = {}
             if file_anc: upload_dict["ANC"] = load_and_clean_maternal_data(file_anc, upload_year)
+            if file_ppc: upload_dict["PPC"] = load_and_clean_maternal_data(file_ppc, upload_year)
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
