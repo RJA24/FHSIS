@@ -855,8 +855,10 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
         denom_col = f"Total Deliveries_{suffix}"
     elif clean_name == "9. Women gave birth completed at least 4PNC =(a+b)":
         denom_col = f"PP Women who were tracked during pregnancy =(a+b)-c_{suffix}"
+        
+    # FIXED: Iron with Folic Acid and Vitamin A now use Elig. Pop.
     elif clean_name in ["10. PP women who completed iron with folic acid", "11. PP women given Vitamin A supplementation"]:
-        denom_col = f"Total Deliveries_{suffix}"
+        denom_col = "Elig. Pop."
         
     # --- Nutritional & Td Denominators ---
     elif clean_name in [
