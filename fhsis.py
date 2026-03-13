@@ -1781,124 +1781,129 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
             if selected_cols:
                 view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_mat_{safe_filename}_{year}_{age_filter}")
                 
-                st.markdown(f"#### 🏆 Provincial {tab_title} Highlights ({age_filter})")
-                cols_per_row = 4
-                rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
-                
-                for i, col in enumerate(selected_cols):
-                    row_idx = i // cols_per_row
-                    col_idx = i % cols_per_row
-                    total_val = agg_df[col].sum()
-                    clean_name = get_clean_indicator_name(col)
+                # --- STRICT ANC PERCENTAGE OVERRIDE ---
+                if view_mode == "Percentage (%) Coverage" and "ANC" in tab_title:
+                    allowed_perc_indicators = [
+                        "0. Total Deliveries",
+                        "2. Delivered with at least 4 ANC visits",
+                        "9. Delivered & completed at least 8ANC (a+b)"
+                    ]
+                    # Automatically wipe out any selected indicator that isn't one of the 3 targets
+                    selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) in allowed_perc_indicators]
                     
-                    if view_mode == "Percentage (%) Coverage":
-                        denom_col = get_maternal_denominator(col, age_filter, agg_df.columns)
-                        if denom_col and denom_col in agg_df.columns:
-                            denom_val = agg_df[denom_col].sum()
-                            perc = (total_val / denom_val) * 100 if denom_val > 0 else 0
-                            rows[row_idx][col_idx].metric(label=f"{clean_name} (%)", value=f"{perc:.1f}%")
+                    if not selected_cols:
+                        st.info("💡 In Percentage view, the ANC dashboard strictly tracks **Total Deliveries**, **ANC 4**, and **ANC 8**. Please select them from the dropdown above.")
+                
+                # Re-check selected_cols in case the override emptied the list
+                if selected_cols:
+                    st.markdown(f"#### 🏆 Provincial {tab_title} Highlights ({age_filter})")
+                    cols_per_row = 4
+                    rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
+                    
+                    for i, col in enumerate(selected_cols):
+                        row_idx = i // cols_per_row
+                        col_idx = i % cols_per_row
+                        total_val = agg_df[col].sum()
+                        clean_name = get_clean_indicator_name(col)
+                        
+                        if view_mode == "Percentage (%) Coverage":
+                            denom_col = get_maternal_denominator(col, age_filter, agg_df.columns)
+                            if denom_col and denom_col in agg_df.columns:
+                                denom_val = agg_df[denom_col].sum()
+                                perc = (total_val / denom_val) * 100 if denom_val > 0 else 0
+                                rows[row_idx][col_idx].metric(label=f"{clean_name} (%)", value=f"{perc:.1f}%")
+                            else:
+                                rows[row_idx][col_idx].metric(label=f"{clean_name} (Count)", value=f"{int(total_val):,}")
                         else:
-                            rows[row_idx][col_idx].metric(label=f"{clean_name} (Count)", value=f"{int(total_val):,}")
+                            rows[row_idx][col_idx].metric(label=clean_name, value=f"{int(total_val):,}")
+                    
+                    st.markdown("---")
+                    
+                    if "ANC" in tab_title:
+                        st.markdown(f"#### 🌪️ Antenatal Care (ANC) Cascade")
+                        st.markdown("Tracking the drop-off rate of pregnant women throughout their prenatal care journey.")
                     else:
-                        rows[row_idx][col_idx].metric(label=clean_name, value=f"{int(total_val):,}")
-                
-                st.markdown("---")
-                
-                if "ANC" in tab_title:
-                    st.markdown(f"#### 🌪️ Antenatal Care (ANC) Cascade")
-                    st.markdown("Tracking the drop-off rate of pregnant women throughout their prenatal care journey.")
-                else:
-                    st.markdown(f"#### 🌪️ {tab_title} Funnel")
-                    st.markdown("Tracking the volume of women across different maternal care stages.")
-                
-                cascade_data = pd.DataFrame({
-                    'Stage': [get_clean_indicator_name(c) for c in selected_cols],
-                    'Count': [agg_df[c].sum() for c in selected_cols]
-                })
-                
-                cascade_data['Stage_Num'] = cascade_data['Stage'].apply(lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 99)
-                cascade_data = cascade_data.sort_values(by='Stage_Num', ascending=True)
-                
-                fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial Retention ({start_m} - {end_m}) | Group: {age_filter}", color_discrete_sequence=["#9B59B6"])
-                fig_funnel.update_traces(textposition="inside")
-                st.plotly_chart(fig_funnel, use_container_width=True, key=f"mat_funnel_{safe_filename}_{year}_{age_filter}")
-                
-                st.markdown("---")
-                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-                
-                chart_df = agg_df[['Area']].copy()
-                valid_chart_cols = []
-                
-                if view_mode == "Percentage (%) Coverage":
-                    y_axis_label = "Coverage (%)"
-                    for col in selected_cols:
-                        denom_col = get_maternal_denominator(col, age_filter, agg_df.columns)
-                        if denom_col and denom_col in agg_df.columns:
-                            chart_df[col] = np.where(agg_df[denom_col] > 0, (agg_df[col] / agg_df[denom_col]) * 100, 0)
-                            chart_df[col] = chart_df[col].round(1)
-                            valid_chart_cols.append(col)
-                            
-                    if len(valid_chart_cols) < len(selected_cols):
-                        st.info("💡 Note: Only indicators with an official DOH percentage calculation are plotted on the chart to maintain accurate scaling.")
-                else:
-                    y_axis_label = "Number of Women"
-                    for col in selected_cols:
-                        chart_df[col] = agg_df[col]
-                        valid_chart_cols.append(col)
-                
-                if valid_chart_cols:
-                    melted = chart_df.melt(id_vars='Area', value_vars=valid_chart_cols, var_name='Indicator', value_name='Count')
-                    melted['Indicator'] = melted['Indicator'].apply(get_clean_indicator_name)
+                        st.markdown(f"#### 🌪️ {tab_title} Funnel")
+                        st.markdown("Tracking the volume of women across different maternal care stages.")
                     
-                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Prism)
+                    cascade_data = pd.DataFrame({
+                        'Stage': [get_clean_indicator_name(c) for c in selected_cols],
+                        'Count': [agg_df[c].sum() for c in selected_cols]
+                    })
+                    
+                    cascade_data['Stage_Num'] = cascade_data['Stage'].apply(lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 99)
+                    cascade_data = cascade_data.sort_values(by='Stage_Num', ascending=True)
+                    
+                    fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial Retention ({start_m} - {end_m}) | Group: {age_filter}", color_discrete_sequence=["#9B59B6"])
+                    fig_funnel.update_traces(textposition="inside")
+                    st.plotly_chart(fig_funnel, use_container_width=True, key=f"mat_funnel_{safe_filename}_{year}_{age_filter}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                    
+                    chart_df = agg_df[['Area']].copy()
+                    valid_chart_cols = []
+                    
                     if view_mode == "Percentage (%) Coverage":
-                        fig_rhu.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="100% Target")
-                    fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-                    fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
-                    st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_mat_{safe_filename}_{year}_{age_filter}")
-                
-                st.markdown("---")
-                st.markdown(f"#### 📈 Monthly Trend Analysis")
-                trend_agg = filtered_df.groupby('Month').sum(numeric_only=True).reset_index()
-                
-                trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
-                trend_agg = trend_agg.sort_values('Month').dropna()
-                
-                trend_chart_df = pd.DataFrame({'Month': trend_agg['Month']})
-                valid_trend_cols = []
-                
-                if view_mode == "Percentage (%) Coverage":
-                    for col in selected_cols:
-                        denom_col = get_maternal_denominator(col, age_filter, trend_agg.columns)
-                        if denom_col and denom_col in trend_agg.columns:
-                            trend_chart_df[col] = [
-                                (v / denom_val * 100) if denom_val > 0 else 0 
-                                for v, denom_val in zip(trend_agg[col], trend_agg[denom_col])
-                            ]
-                            trend_chart_df[col] = trend_chart_df[col].round(1)
+                        y_axis_label = "Coverage (%)"
+                        for col in selected_cols:
+                            denom_col = get_maternal_denominator(col, age_filter, agg_df.columns)
+                            if denom_col and denom_col in agg_df.columns:
+                                chart_df[col] = np.where(agg_df[denom_col] > 0, (agg_df[col] / agg_df[denom_col]) * 100, 0)
+                                chart_df[col] = chart_df[col].round(1)
+                                valid_chart_cols.append(col)
+                                
+                        if len(valid_chart_cols) < len(selected_cols):
+                            st.info("💡 Note: Only indicators with an official DOH percentage calculation are plotted on the chart to maintain accurate scaling.")
+                    else:
+                        y_axis_label = "Number of Women"
+                        for col in selected_cols:
+                            chart_df[col] = agg_df[col]
+                            valid_chart_cols.append(col)
+                    
+                    if valid_chart_cols:
+                        melted = chart_df.melt(id_vars='Area', value_vars=valid_chart_cols, var_name='Indicator', value_name='Count')
+                        melted['Indicator'] = melted['Indicator'].apply(get_clean_indicator_name)
+                        
+                        fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Prism)
+                        if view_mode == "Percentage (%) Coverage":
+                            fig_rhu.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="100% Target")
+                        fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                        fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
+                        st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_mat_{safe_filename}_{year}_{age_filter}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 📈 Monthly Trend Analysis")
+                    trend_agg = filtered_df.groupby('Month').sum(numeric_only=True).reset_index()
+                    
+                    trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
+                    trend_agg = trend_agg.sort_values('Month').dropna()
+                    
+                    trend_chart_df = pd.DataFrame({'Month': trend_agg['Month']})
+                    valid_trend_cols = []
+                    
+                    if view_mode == "Percentage (%) Coverage":
+                        for col in selected_cols:
+                            denom_col = get_maternal_denominator(col, age_filter, trend_agg.columns)
+                            if denom_col and denom_col in trend_agg.columns:
+                                trend_chart_df[col] = [
+                                    (v / denom_val * 100) if denom_val > 0 else 0 
+                                    for v, denom_val in zip(trend_agg[col], trend_agg[denom_col])
+                                ]
+                                trend_chart_df[col] = trend_chart_df[col].round(1)
+                                valid_trend_cols.append(col)
+                    else:
+                        for col in selected_cols:
+                            trend_chart_df[col] = trend_agg[col]
                             valid_trend_cols.append(col)
-                else:
-                    for col in selected_cols:
-                        trend_chart_df[col] = trend_agg[col]
-                        valid_trend_cols.append(col)
-                    
-                if valid_trend_cols:
-                    trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=valid_trend_cols, var_name='Indicator', value_name='Count')
-                    trend_melted['Indicator'] = trend_melted['Indicator'].apply(get_clean_indicator_name)
-                    
-                    fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
-                    fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
-                    st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}_{age_filter}")
-                
-            else:
-                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
-                
-        with st.expander(f"📄 View & Download Raw {tab_title} Data"):
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-            csv_data = convert_df_to_csv(filtered_df)
-            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_{age_filter}_Data.csv", mime="text/csv")
-    else:
-        st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
+                        
+                    if valid_trend_cols:
+                        trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=valid_trend_cols, var_name='Indicator', value_name='Count')
+                        trend_melted['Indicator'] = trend_melted['Indicator'].apply(get_clean_indicator_name)
+                        
+                        fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
+                        fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
+                        st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}_{age_filter}")
 
 
 # --- PAGES ---
