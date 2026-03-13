@@ -799,7 +799,11 @@ def get_clean_indicator_name(col_name):
     elif 'vitamin a' in c_low: return '11. PP women given Vitamin A supplementation'
 
     # --- Nutritional Status (File 2) ---
-    elif 'assessed of their nutritional status' in c_low: return '1. Assessed for Nutritional Status'
+    elif 'assessed of their nutritional status' in c_low:
+        if 'normal bmi' in c_low: return '1. Assessed Nutritional Status (Normal BMI)'
+        elif 'low bmi' in c_low: return '1. Assessed Nutritional Status (Low BMI)'
+        elif 'high bmi' in c_low: return '1. Assessed Nutritional Status (High BMI)'
+        else: return '1. Assessed Nutritional Status'
     elif '1st time given at least 2 doses of td' in c_low: return '2. Given at least 2 doses of Td (1st time)'
     elif '2nd or more times given at least 3 doses of td' in c_low: return '3. Given at least 3 doses of Td (2nd+ time)'
     elif 'completed the dose of iron w/ folic acid' in c_low: return '4. Completed Iron w/ Folic Acid'
