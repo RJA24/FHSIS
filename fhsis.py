@@ -36,8 +36,7 @@ MATERNAL_MAPPING = {
     "Syphilis_HepB": "Syphilis_HepB_Data",
     "CBC_Gestational": "CBC_Gestational_Data",
     "PPC": "PPC_Data",
-    "Livebirths": "Livebirths_Data",
-    "Adolescent_Birth": "Adolescent_Birth_Data"
+    "Livebirths": "Livebirths_Data"
 }
 
 ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING}
@@ -2210,14 +2209,13 @@ elif page == "🤰 Maternal Dashboard":
             
     st.markdown("<br>", unsafe_allow_html=True)
     
-    mat_tab1, mat_tab2, mat_tab3, mat_tab4, mat_tab5, mat_tab6, mat_tab7 = st.tabs([
+    mat_tab1, mat_tab2, mat_tab3, mat_tab4, mat_tab5, mat_tab6 = st.tabs([
         "🩺 Antenatal Care", 
         "🥗 Nutritional & Td",
         "💊 Calcium & Deworming",
         "🦠 Syphilis & Hep B",
         "🩸 CBC & Gestational",
-        "👶 Postpartum Care",
-        "👩‍🍼 Adolescent Birth Rate"
+        "👶 Postpartum Care"
     ])
     
     with mat_tab1: render_maternal_tab("Antenatal Care (ANC)", "ANC", start_month, end_month, selected_year, age_filter)
@@ -2226,7 +2224,6 @@ elif page == "🤰 Maternal Dashboard":
     with mat_tab4: render_maternal_tab("Syphilis & Hep B", "Syphilis_HepB", start_month, end_month, selected_year, age_filter)
     with mat_tab5: render_maternal_tab("CBC & Gestational Diabetes", "CBC_Gestational", start_month, end_month, selected_year, age_filter)
     with mat_tab6: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter)
-    with mat_tab7: render_maternal_tab("Adolescent Birth Rate", "Adolescent_Birth", start_month, end_month, selected_year, age_filter)
 
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
@@ -2239,7 +2236,7 @@ elif page == "📈 YoY Comparison":
             "Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer",
             "Antenatal Care (ANC)", "Nutritional Status & Td", "Calcium, MMS & Deworming", 
             "Syphilis & Hep B", "CBC & Gestational Diabetes", "Postpartum Care (PPC)", 
-            "Livebirths & Deliveries", "Adolescent Birth Rate"
+            "Livebirths & Deliveries"
         ])
     with col_y2:
         year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2)
@@ -2265,14 +2262,12 @@ elif page == "📈 YoY Comparison":
             "Syphilis & Hep B": ("Syphilis_HepB", ["screened for syphilis", "tested positive for syphilis", "screened for hepatitis b", "reactive to hepatitis b", "screened for hiv", "reactive to hiv"]),
             "CBC & Gestational Diabetes": ("CBC_Gestational", ["tested for cbc/hgb/hct", "diagnosed with anemia", "screened for gestational diabetes", "positive for gestational diabetes"]),
             "Postpartum Care (PPC)": ("PPC", ['2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 'iron with folic', 'vitamin a']),
-            "Livebirths & Deliveries": ("Livebirths", ["total deliveries", "total livebirths"]),
-            "Adolescent Birth Rate": ("Adolescent_Birth", ["adolescent women 10-14", "adolescent women 15-19", "adolescent women 10-19"])
+            "Livebirths & Deliveries": ("Livebirths", ["total deliveries", "total livebirths"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
-        is_maternal = yoy_dataset in ["Antenatal Care (ANC)", "Postpartum Care (PPC)", "Livebirths & Deliveries", "Nutritional Status & Td", "Calcium, MMS & Deworming", "Syphilis & Hep B", "CBC & Gestational Diabetes", "Adolescent Birth Rate"]
-        is_cancer_dataset = "Cancer" in yoy_dataset
+        is_maternal = yoy_dataset in ["Antenatal Care (ANC)", "Postpartum Care (PPC)", "Livebirths & Deliveries", "Nutritional Status & Td", "Calcium, MMS & Deworming", "Syphilis & Hep B", "CBC & Gestational Diabetes"]
 
         if is_cancer_dataset and gender_filter == "Male":
             st.info("🎗️ Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -2480,7 +2475,6 @@ elif page == "📁 Data Uploader":
             file_ppc = st.file_uploader("Upload: 7 Postpartum Care", type=["csv", "xlsx"])
         with col7:
             file_lb = st.file_uploader("Upload: 6 Livebirths & Deliveries", type=["csv", "xlsx"])
-            file_adolescent = st.file_uploader("Upload: 8 Adolescent Birth Rate", type=["csv", "xlsx"])
             
         if st.button("☁️ Save Maternal Data to Cloud", type="primary", use_container_width=True):
             upload_dict = {}
@@ -2491,7 +2485,6 @@ elif page == "📁 Data Uploader":
             if file_cbc: upload_dict["CBC_Gestational"] = load_and_clean_maternal_data(file_cbc, upload_year, "CBC")
             if file_ppc: upload_dict["PPC"] = load_and_clean_maternal_data(file_ppc, upload_year, "PPC")
             if file_lb: upload_dict["Livebirths"] = load_and_clean_maternal_data(file_lb, upload_year, "Livebirths")
-            if file_adolescent: upload_dict["Adolescent_Birth"] = load_and_clean_maternal_data(file_adolescent, upload_year, "Adolescent")
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
