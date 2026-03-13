@@ -857,6 +857,18 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
     elif clean_name in ["10. PP women who completed iron with folic acid", "11. PP women given Vitamin A supplementation"]:
         denom_col = f"Total Deliveries_{suffix}"
         
+    # --- Nutritional & Td Denominators ---
+    elif clean_name in [
+        '1. Assessed Nutritional Status (Normal BMI)',
+        '1. Assessed Nutritional Status (Low BMI)',
+        '1. Assessed Nutritional Status (High BMI)',
+        '1. Assessed Nutritional Status',
+        '2. Given at least 2 doses of Td (1st time)',
+        '3. Given at least 3 doses of Td (2nd+ time)',
+        '4. Completed Iron w/ Folic Acid'
+    ]:
+        denom_col = "Elig. Pop."
+        
     # --- New Template Denominators ---
     elif clean_name == "2. Tested Positive for Syphilis":
         denom_col = f"Pregnant women screened for syphilis_{suffix}"
@@ -1740,6 +1752,11 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
             if is_match:
                 mapped_name = get_clean_indicator_name(col)
                 if mapped_name and mapped_name.split('.')[0].isdigit():
+                    
+                    # Prevent Total Deliveries from being plotted as a main metric in unrelated tabs
+                    if "Total Deliveries" in mapped_name and tab_title not in ["Antenatal Care (ANC)", "Postpartum Care (PPC)"]:
+                        continue
+                        
                     if col not in cols_to_plot:
                         cols_to_plot.append(col)
         
