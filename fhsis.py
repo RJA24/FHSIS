@@ -1793,6 +1793,17 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                         if not selected_cols:
                             st.info("💡 In Percentage view, the ANC dashboard strictly tracks **ANC 4** and **ANC 8**. Please select them from the dropdown above.")
                     
+                    elif "PPC" in tab_title:
+                        allowed_perc_indicators = [
+                            "2. Completed at least 2 PP check-ups",
+                            "9. Women gave birth completed at least 4PNC =(a+b)",
+                            "10. PP women who completed iron with folic acid",
+                            "11. PP women given Vitamin A supplementation"
+                        ]
+                        selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) in allowed_perc_indicators]
+                        if not selected_cols:
+                            st.info("💡 In Percentage view, the PPC dashboard strictly tracks **PP 2**, **PNC 4**, **Iron w/ Folic Acid**, and **Vitamin A**. Please select them from the dropdown above.")
+                    
                     # Universally remove "Total Deliveries" from ANY percentage view (since it's just 100%)
                     selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) != "0. Total Deliveries"]
 
