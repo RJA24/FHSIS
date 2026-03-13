@@ -294,7 +294,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
             sheet_lower = sheet.lower().strip()
             months_found = [m for m in valid_months if m in sheet_lower]
             if len(months_found) != 1: continue
-            if any(inv in sheet_lower for invalid_keywords): continue
+            if any(inv in sheet_lower for inv in invalid_keywords): continue
             sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
