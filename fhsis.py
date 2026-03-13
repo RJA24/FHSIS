@@ -1781,19 +1781,20 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
             if selected_cols:
                 view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_mat_{safe_filename}_{year}_{age_filter}")
                 
-               # --- STRICT ANC PERCENTAGE OVERRIDE ---
-                if view_mode == "Percentage (%) Coverage" and "ANC" in tab_title:
-                    allowed_perc_indicators = [
-                        "2. Delivered with at least 4 ANC visits",
-                        "9. Delivered & completed at least 8ANC (a+b)"
-                    ]
-                    # Automatically wipe out any selected indicator that isn't one of the targets
-                    selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) in allowed_perc_indicators]
+                # --- STRICT PERCENTAGE OVERRIDE ---
+                if view_mode == "Percentage (%) Coverage":
+                    if "ANC" in tab_title:
+                        allowed_perc_indicators = [
+                            "2. Delivered with at least 4 ANC visits",
+                            "9. Delivered & completed at least 8ANC (a+b)"
+                        ]
+                        selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) in allowed_perc_indicators]
+                        if not selected_cols:
+                            st.info("💡 In Percentage view, the ANC dashboard strictly tracks **ANC 4** and **ANC 8**. Please select them from the dropdown above.")
                     
-                    if not selected_cols:
-                        st.info("💡 In Percentage view, the ANC dashboard strictly tracks **ANC 4** and **ANC 8**. Please select them from the dropdown above.")
-                
-                # Re-check selected_cols in case the override emptied the list
+                    # Universally remove "Total Deliveries" from ANY percentage view (since it's just 100%)
+                    selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) != "0. Total Deliveries"]
+
                 if selected_cols:
                     st.markdown(f"#### 🏆 Provincial {tab_title} Highlights ({age_filter})")
                     cols_per_row = 4
@@ -1903,6 +1904,16 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                         fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
                         fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
                         st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}_{age_filter}")
+                
+            else:
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
+                
+        with st.expander(f"📄 View & Download Raw {tab_title} Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_{age_filter}_Data.csv", mime="text/csv")
+    else:
+        st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
 
 
 # --- PAGES ---
