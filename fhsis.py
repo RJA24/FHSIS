@@ -31,8 +31,13 @@ WASH_MAPPING = {
 
 MATERNAL_MAPPING = {
     "ANC": "ANC_Data",
+    "Nutritional_Status": "Nutritional_Status_Data",
+    "Calcium_MMS": "Calcium_MMS_Data",
+    "Syphilis_HepB": "Syphilis_HepB_Data",
+    "CBC_Gestational": "CBC_Gestational_Data",
     "PPC": "PPC_Data",
-    "Livebirths": "Livebirths_Data"
+    "Livebirths": "Livebirths_Data",
+    "Adolescent_Birth": "Adolescent_Birth_Data"
 }
 
 ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING}
@@ -792,6 +797,36 @@ def get_clean_indicator_name(col_name):
     elif 'at least 4pnc =(a+b)' in c_low: return '9. Women gave birth completed at least 4PNC =(a+b)'
     elif 'iron with folic' in c_low: return '10. PP women who completed iron with folic acid'
     elif 'vitamin a' in c_low: return '11. PP women given Vitamin A supplementation'
+
+    # --- Nutritional Status (File 2) ---
+    elif 'assessed of their nutritional status' in c_low: return '1. Assessed for Nutritional Status'
+    elif '1st time given at least 2 doses of td' in c_low: return '2. Given at least 2 doses of Td (1st time)'
+    elif '2nd or more times given at least 3 doses of td' in c_low: return '3. Given at least 3 doses of Td (2nd+ time)'
+    elif 'completed the dose of iron w/ folic acid' in c_low: return '4. Completed Iron w/ Folic Acid'
+
+    # --- Calcium & Deworming (File 3) ---
+    elif 'completed doses of calcium carbonate' in c_low: return '1. Completed Calcium Carbonate'
+    elif 'completed the dose multiple micronutrient' in c_low: return '2. Completed MMS'
+    elif 'given 1 dose of deworming tablet' in c_low: return '3. Given 1 dose of Deworming Tablet'
+
+    # --- Syphilis & Hep B (File 4) ---
+    elif 'screened for syphilis' in c_low: return '1. Screened for Syphilis'
+    elif 'tested positive for syphilis' in c_low: return '2. Tested Positive for Syphilis'
+    elif 'screened for hepatitis b' in c_low: return '3. Screened for Hepatitis B'
+    elif 'screened reactive to hepatitis b' in c_low: return '4. Screened Reactive to Hepatitis B'
+    elif 'screened for hiv' in c_low: return '5. Screened for HIV'
+    elif 'screened reactive to hiv' in c_low: return '6. Screened Reactive to HIV'
+
+    # --- CBC & Gestational Diabetes (File 5) ---
+    elif 'tested for cbc/hgb/hct' in c_low and 'anemia' not in c_low: return '1. Tested for CBC/Hgb/Hct'
+    elif 'diagnosed with anemia' in c_low: return '2. Diagnosed with Anemia'
+    elif 'screened for gestational diabetes' in c_low: return '3. Screened for Gestational Diabetes'
+    elif 'tested positive for gestational diabetes' in c_low: return '4. Tested Positive for Gestational Diabetes'
+
+    # --- Adolescent Birth Rate (File 8) ---
+    elif 'adolescent women 10-14' in c_low and 'rate' not in c_low: return '1. Adolescent Women (10-14)'
+    elif 'adolescent women 15-19' in c_low and 'rate' not in c_low: return '2. Adolescent Women (15-19)'
+    elif 'adolescent women 10-19' in c_low and 'rate' not in c_low: return '3. Adolescent Women (10-19)'
     
     name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
     if "_" in name: name = name.split("_")[0]
@@ -813,6 +848,24 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
         denom_col = f"PP Women who were tracked during pregnancy =(a+b)-c_{suffix}"
     elif clean_name in ["10. PP women who completed iron with folic acid", "11. PP women given Vitamin A supplementation"]:
         denom_col = f"Total Deliveries_{suffix}"
+        
+    # --- New Template Denominators ---
+    elif clean_name == "2. Tested Positive for Syphilis":
+        denom_col = f"Pregnant women screened for syphilis_{suffix}"
+    elif clean_name == "4. Screened Reactive to Hepatitis B":
+        denom_col = f"Pregnant Women screened for Hepatitis B_{suffix}"
+    elif clean_name == "6. Screened Reactive to HIV":
+        denom_col = f"Pregnant Women Screened for HIV_{suffix}"
+    elif clean_name == "2. Diagnosed with Anemia":
+        denom_col = f"Pregnant women tested for CBC/Hgb/Hct_{suffix}"
+    elif clean_name == "4. Tested Positive for Gestational Diabetes":
+        denom_col = f"Pregnant women screened for gestational diabetes_{suffix}"
+    elif clean_name == "1. Adolescent Women (10-14)":
+        denom_col = "Pop. (10-14 years old Women)_Total"
+    elif clean_name == "2. Adolescent Women (15-19)":
+        denom_col = "Pop. (15-19 years old Women)_Total"
+    elif clean_name == "3. Adolescent Women (10-19)":
+        denom_col = "Pop. (10-19 years old Women)_Total"
         
     if denom_col and denom_col in all_cols:
         return denom_col
@@ -1663,7 +1716,19 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                 continue
                 
             filter_suffix = str(age_filter).lower()
-            if col.lower().endswith(filter_suffix) or f"_{filter_suffix}" in col.lower():
+            
+            is_match = False
+            if filter_suffix == "total":
+                if col.lower().endswith("_total") or "total" in col.lower():
+                    is_match = True
+            else:
+                if col.lower().endswith(filter_suffix) or f"_{filter_suffix}" in col.lower():
+                    is_match = True
+                elif filter_suffix in col.lower() and "adolescent" in col.lower():
+                    if "total" in col.lower():
+                        is_match = True
+                        
+            if is_match:
                 mapped_name = get_clean_indicator_name(col)
                 if mapped_name and mapped_name.split('.')[0].isdigit():
                     if col not in cols_to_plot:
@@ -2090,10 +2155,23 @@ elif page == "🤰 Maternal Dashboard":
             
     st.markdown("<br>", unsafe_allow_html=True)
     
-    mat_tab1, mat_tab2 = st.tabs(["🩺 Antenatal Care (ANC)", "👶 Postpartum Care (PPC)"])
+    mat_tab1, mat_tab2, mat_tab3, mat_tab4, mat_tab5, mat_tab6, mat_tab7 = st.tabs([
+        "🩺 Antenatal Care", 
+        "🥗 Nutritional & Td",
+        "💊 Calcium & Deworming",
+        "🦠 Syphilis & Hep B",
+        "🩸 CBC & Gestational",
+        "👶 Postpartum Care",
+        "👩‍🍼 Adolescent Birth Rate"
+    ])
     
     with mat_tab1: render_maternal_tab("Antenatal Care (ANC)", "ANC", start_month, end_month, selected_year, age_filter)
-    with mat_tab2: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter)
+    with mat_tab2: render_maternal_tab("Nutritional Status", "Nutritional_Status", start_month, end_month, selected_year, age_filter)
+    with mat_tab3: render_maternal_tab("Calcium & Deworming", "Calcium_MMS", start_month, end_month, selected_year, age_filter)
+    with mat_tab4: render_maternal_tab("Syphilis & Hep B", "Syphilis_HepB", start_month, end_month, selected_year, age_filter)
+    with mat_tab5: render_maternal_tab("CBC & Gestational Diabetes", "CBC_Gestational", start_month, end_month, selected_year, age_filter)
+    with mat_tab6: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter)
+    with mat_tab7: render_maternal_tab("Adolescent Birth Rate", "Adolescent_Birth", start_month, end_month, selected_year, age_filter)
 
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
@@ -2104,7 +2182,9 @@ elif page == "📈 YoY Comparison":
         yoy_dataset = st.selectbox("Select Data Category", [
             "Birth Doses", "Pentavalent", "Polio", "Pneumococcal (PCV)", "MMR, FIC & CIC",
             "Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer",
-            "Antenatal Care (ANC)", "Postpartum Care (PPC)", "Livebirths & Deliveries"
+            "Antenatal Care (ANC)", "Nutritional Status & Td", "Calcium, MMS & Deworming", 
+            "Syphilis & Hep B", "CBC & Gestational Diabetes", "Postpartum Care (PPC)", 
+            "Livebirths & Deliveries", "Adolescent Birth Rate"
         ])
     with col_y2:
         year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2)
@@ -2125,13 +2205,18 @@ elif page == "📈 YoY Comparison":
             "Cervical Cancer": ("Cervical_Cancer", ["screened", "suspicious", "positive", "lesions"]),
             "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"]),
             "Antenatal Care (ANC)": ("ANC", ['new pregnant', 'least 4 anc', 'tracked during pregnancy (a)', '8th anc on schedule', 'least 8anc (a+b)']),
+            "Nutritional Status & Td": ("Nutritional_Status", ["assessed of their nutritional status", "1st time given at least 2 doses of td", "2nd or more times given at least 3 doses of td", "iron w/ folic acid"]),
+            "Calcium, MMS & Deworming": ("Calcium_MMS", ["calcium carbonate", "multiple micronutrient", "deworming tablet"]),
+            "Syphilis & Hep B": ("Syphilis_HepB", ["screened for syphilis", "tested positive for syphilis", "screened for hepatitis b", "reactive to hepatitis b", "screened for hiv", "reactive to hiv"]),
+            "CBC & Gestational Diabetes": ("CBC_Gestational", ["tested for cbc/hgb/hct", "diagnosed with anemia", "screened for gestational diabetes", "positive for gestational diabetes"]),
             "Postpartum Care (PPC)": ("PPC", ['2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 'iron with folic', 'vitamin a']),
-            "Livebirths & Deliveries": ("Livebirths", ["total deliveries", "total livebirths"])
+            "Livebirths & Deliveries": ("Livebirths", ["total deliveries", "total livebirths"]),
+            "Adolescent Birth Rate": ("Adolescent_Birth", ["adolescent women 10-14", "adolescent women 15-19", "adolescent women 10-19"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
-        is_maternal = yoy_dataset in ["Antenatal Care (ANC)", "Postpartum Care (PPC)", "Livebirths & Deliveries"]
+        is_maternal = yoy_dataset in ["Antenatal Care (ANC)", "Postpartum Care (PPC)", "Livebirths & Deliveries", "Nutritional Status & Td", "Calcium, MMS & Deworming", "Syphilis & Hep B", "CBC & Gestational Diabetes", "Adolescent Birth Rate"]
         is_cancer_dataset = "Cancer" in yoy_dataset
 
         if is_cancer_dataset and gender_filter == "Male":
@@ -2150,7 +2235,7 @@ elif page == "📈 YoY Comparison":
                             if is_cancer_dataset:
                                 is_valid_gender = True
                             elif is_maternal:
-                                if col.lower().endswith("total") or "_total" in col.lower():
+                                if col.lower().endswith("total") or "_total" in col.lower() or not (col.endswith("_10-14") or col.endswith("_15-19") or col.endswith("_20-49")):
                                     is_valid_gender = True
                             else:
                                 if gender_filter == "Total":
@@ -2332,16 +2417,26 @@ elif page == "📁 Data Uploader":
         col5, col6, col7 = st.columns(3)
         with col5:
             file_anc = st.file_uploader("Upload: 1 4ANC and 8ANC", type=["csv", "xlsx"])
+            file_nutri = st.file_uploader("Upload: 2 Nutritional Status, Td & Iron", type=["csv", "xlsx"])
+            file_calcium = st.file_uploader("Upload: 3 Calcium, MMS & Deworming", type=["csv", "xlsx"])
         with col6:
+            file_syphilis = st.file_uploader("Upload: 4 Syphilis & Hep B", type=["csv", "xlsx"])
+            file_cbc = st.file_uploader("Upload: 5 CBC & Gestational Diabetes", type=["csv", "xlsx"])
             file_ppc = st.file_uploader("Upload: 7 Postpartum Care", type=["csv", "xlsx"])
         with col7:
             file_lb = st.file_uploader("Upload: 6 Livebirths & Deliveries", type=["csv", "xlsx"])
+            file_adolescent = st.file_uploader("Upload: 8 Adolescent Birth Rate", type=["csv", "xlsx"])
             
         if st.button("☁️ Save Maternal Data to Cloud", type="primary", use_container_width=True):
             upload_dict = {}
             if file_anc: upload_dict["ANC"] = load_and_clean_maternal_data(file_anc, upload_year, "ANC")
+            if file_nutri: upload_dict["Nutritional_Status"] = load_and_clean_maternal_data(file_nutri, upload_year, "Nutritional")
+            if file_calcium: upload_dict["Calcium_MMS"] = load_and_clean_maternal_data(file_calcium, upload_year, "Calcium")
+            if file_syphilis: upload_dict["Syphilis_HepB"] = load_and_clean_maternal_data(file_syphilis, upload_year, "Syphilis")
+            if file_cbc: upload_dict["CBC_Gestational"] = load_and_clean_maternal_data(file_cbc, upload_year, "CBC")
             if file_ppc: upload_dict["PPC"] = load_and_clean_maternal_data(file_ppc, upload_year, "PPC")
             if file_lb: upload_dict["Livebirths"] = load_and_clean_maternal_data(file_lb, upload_year, "Livebirths")
+            if file_adolescent: upload_dict["Adolescent_Birth"] = load_and_clean_maternal_data(file_adolescent, upload_year, "Adolescent")
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
