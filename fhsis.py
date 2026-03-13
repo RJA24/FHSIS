@@ -771,9 +771,13 @@ def get_clean_indicator_name(col_name):
     if "hypertensive" in c_low: return "Identified Hypertensive"
     if "type 2 dm" in c_low or "diabetes" in c_low: return "Identified Type 2 DM"
     
-    # --- Maternal Care (Livebirths Base) ---
+   # --- Maternal Care (Livebirths Base) ---
     if 'total livebirths' in c_low: return 'Total Livebirths'
-    elif 'total deliveries' in c_low: return '0. Total Deliveries'
+    elif 'total deliveries' in c_low:
+        if '10 14' in c_low: return '0. Total Deliveries (10-14)'
+        elif '15 19' in c_low: return '0. Total Deliveries (15-19)'
+        elif '20 49' in c_low: return '0. Total Deliveries (20-49)'
+        else: return '0. Total Deliveries'
     
     # --- Maternal Care (ANC) Exact Mapping ---
     elif 'new pregnant' in c_low: return '1. New Pregnant Women Seen'
@@ -1723,7 +1727,8 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
             
             is_match = False
             if filter_suffix == "total":
-                if col.lower().endswith("_total") or "total" in col.lower():
+                # Ensures we don't accidentally grab age-specific columns when "Total" is selected
+                if col.lower().endswith("_total") or ("total" in col.lower() and not any(age in col for age in ["10-14", "15-19", "20-49"])):
                     is_match = True
             else:
                 if col.lower().endswith(filter_suffix) or f"_{filter_suffix}" in col.lower():
