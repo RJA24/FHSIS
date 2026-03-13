@@ -1781,17 +1781,17 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
             if selected_cols:
                 view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_mat_{safe_filename}_{year}_{age_filter}")
                 
-                # --- STRICT ANC PERCENTAGE OVERRIDE ---
+               # --- STRICT ANC PERCENTAGE OVERRIDE ---
                 if view_mode == "Percentage (%) Coverage" and "ANC" in tab_title:
                     allowed_perc_indicators = [
                         "2. Delivered with at least 4 ANC visits",
                         "9. Delivered & completed at least 8ANC (a+b)"
                     ]
-                    # Automatically wipe out any selected indicator that isn't one of the 3 targets
+                    # Automatically wipe out any selected indicator that isn't one of the targets
                     selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) in allowed_perc_indicators]
                     
                     if not selected_cols:
-                        st.info("💡 In Percentage view, the ANC dashboard strictly tracks **Total Deliveries**, **ANC 4**, and **ANC 8**. Please select them from the dropdown above.")
+                        st.info("💡 In Percentage view, the ANC dashboard strictly tracks **ANC 4** and **ANC 8**. Please select them from the dropdown above.")
                 
                 # Re-check selected_cols in case the override emptied the list
                 if selected_cols:
