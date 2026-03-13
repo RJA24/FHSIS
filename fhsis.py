@@ -1784,7 +1784,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                 # --- STRICT ANC PERCENTAGE OVERRIDE ---
                 if view_mode == "Percentage (%) Coverage" and "ANC" in tab_title:
                     allowed_perc_indicators = [
-                        "0. Total Deliveries",
                         "2. Delivered with at least 4 ANC visits",
                         "9. Delivered & completed at least 8ANC (a+b)"
                     ]
