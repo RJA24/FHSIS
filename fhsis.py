@@ -769,9 +769,10 @@ def get_clean_indicator_name(col_name):
     if "physical activity" in c_low: return "Insufficient Physical Activity"
     if "unhealthy diet" in c_low: return "Unhealthy Diet"
     if "hypertensive" in c_low: return "Identified Hypertensive"
-    if "type 2 dm" in c_low or "diabetes" in c_low: return "Identified Type 2 DM"
+    # FIXED: Prevent NCD mapping from hijacking Gestational Diabetes
+    if "type 2 dm" in c_low or ("diabetes" in c_low and "gestational" not in c_low): return "Identified Type 2 DM"
     
-   # --- Maternal Care (Livebirths Base) ---
+    # --- Maternal Care (Livebirths Base) ---
     if 'total livebirths' in c_low: return 'Total Livebirths'
     elif 'total deliveries' in c_low:
         if '10 14' in c_low: return '0. Total Deliveries (10-14)'
@@ -832,9 +833,9 @@ def get_clean_indicator_name(col_name):
     elif 'tested positive for gestational diabetes' in c_low: return '4. Tested Positive for Gestational Diabetes'
 
     # --- Adolescent Birth Rate (File 8) ---
-    elif 'adolescent women 10-14' in c_low and 'rate' not in c_low: return '1. Adolescent Women (10-14)'
-    elif 'adolescent women 15-19' in c_low and 'rate' not in c_low: return '2. Adolescent Women (15-19)'
-    elif 'adolescent women 10-19' in c_low and 'rate' not in c_low: return '3. Adolescent Women (10-19)'
+    elif 'adolescent women 10 14' in c_low and 'rate' not in c_low: return '1. Adolescent Women (10-14)'
+    elif 'adolescent women 15 19' in c_low and 'rate' not in c_low: return '2. Adolescent Women (15-19)'
+    elif 'adolescent women 10 19' in c_low and 'rate' not in c_low: return '3. Adolescent Women (10-19)'
     
     name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
     if "_" in name: name = name.split("_")[0]
