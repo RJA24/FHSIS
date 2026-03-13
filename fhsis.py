@@ -294,7 +294,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
             sheet_lower = sheet.lower().strip()
             months_found = [m for m in valid_months if m in sheet_lower]
             if len(months_found) != 1: continue
-            if any(inv in sheet_lower for inv in invalid_keywords): continue
+            if any(inv in sheet_lower for invalid_keywords): continue
             sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
@@ -655,6 +655,10 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
         st.error(f"Maternal Template Parsing Error for {uploaded_file.name}: {e}")
         return None
 
+@st.cache_data
+def convert_df_to_csv(df):
+    return df.to_csv(index=False).encode('utf-8')
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("FHSIS Portal")
@@ -768,7 +772,6 @@ def get_clean_indicator_name(col_name):
     if "physical activity" in c_low: return "Insufficient Physical Activity"
     if "unhealthy diet" in c_low: return "Unhealthy Diet"
     if "hypertensive" in c_low: return "Identified Hypertensive"
-    # FIXED: Prevent NCD mapping from hijacking Gestational Diabetes
     if "type 2 dm" in c_low or ("diabetes" in c_low and "gestational" not in c_low): return "Identified Type 2 DM"
     
     # --- Maternal Care (Livebirths Base) ---
@@ -855,7 +858,6 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
     elif clean_name == "9. Women gave birth completed at least 4PNC =(a+b)":
         denom_col = f"PP Women who were tracked during pregnancy =(a+b)-c_{suffix}"
         
-    # FIXED: Iron with Folic Acid and Vitamin A now use Elig. Pop.
     elif clean_name in ["10. PP women who completed iron with folic acid", "11. PP women given Vitamin A supplementation"]:
         denom_col = "Elig. Pop."
         
@@ -898,10 +900,6 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
                 return c
                 
     return "Elig. Pop." if "Elig. Pop." in all_cols else None
-
-@st.cache_data
-def convert_df_to_csv(df):
-    return df.to_csv(index=False).encode('utf-8')
 
 # --- UI RENDERERS ---
 def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
@@ -1832,24 +1830,34 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                     
                     st.markdown("---")
                     
-                    if "ANC" in tab_title:
-                        st.markdown(f"#### 🌪️ Antenatal Care (ANC) Cascade")
-                        st.markdown("Tracking the drop-off rate of pregnant women throughout their prenatal care journey.")
-                    else:
-                        st.markdown(f"#### 🌪️ {tab_title} Funnel")
-                        st.markdown("Tracking the volume of women across different maternal care stages.")
+                    # --- DYNAMIC CHART GENERATION BASED ON TAB ---
+                    chart_title = f"Provincial Summary ({start_m} - {end_m}) | Group: {age_filter}"
                     
                     cascade_data = pd.DataFrame({
-                        'Stage': [get_clean_indicator_name(c) for c in selected_cols],
+                        'Indicator': [get_clean_indicator_name(c) for c in selected_cols],
                         'Count': [agg_df[c].sum() for c in selected_cols]
                     })
                     
-                    cascade_data['Stage_Num'] = cascade_data['Stage'].apply(lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 99)
-                    cascade_data = cascade_data.sort_values(by='Stage_Num', ascending=True)
-                    
-                    fig_funnel = px.funnel(cascade_data, x='Count', y='Stage', title=f"Provincial Retention ({start_m} - {end_m}) | Group: {age_filter}", color_discrete_sequence=["#9B59B6"])
-                    fig_funnel.update_traces(textposition="inside")
-                    st.plotly_chart(fig_funnel, use_container_width=True, key=f"mat_funnel_{safe_filename}_{year}_{age_filter}")
+                    # Sort by the numeric prefix if it exists (e.g., "1. Screened", "2. Positive")
+                    cascade_data['Sort_Key'] = cascade_data['Indicator'].apply(lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 99)
+                    cascade_data = cascade_data.sort_values(by='Sort_Key', ascending=True)
+
+                    if "ANC" in tab_title or "PPC" in tab_title:
+                        st.markdown(f"#### 🌪️ {tab_title} Cascade")
+                        st.markdown("Tracking the retention and drop-off rate of women throughout their maternal care journey.")
+                        
+                        fig_main = px.funnel(cascade_data, x='Count', y='Indicator', title=chart_title, color_discrete_sequence=["#9B59B6"])
+                        fig_main.update_traces(textposition="inside")
+                    else:
+                        st.markdown(f"#### 📊 {tab_title} Interventions & Screenings")
+                        st.markdown("Comparing the total volume of specific interventions or screening yields.")
+                        
+                        # Use a standard bar chart for non-sequential data (Nutritional, Syphilis, CBC, etc.)
+                        fig_main = px.bar(cascade_data, x='Indicator', y='Count', title=chart_title, text_auto=True, color='Indicator', color_discrete_sequence=px.colors.qualitative.Pastel)
+                        fig_main.update_traces(textposition="outside", cliponaxis=False)
+                        fig_main.update_layout(showlegend=False, xaxis_title="", yaxis_title="Total Women", margin=dict(t=40))
+
+                    st.plotly_chart(fig_main, use_container_width=True, key=f"mat_main_chart_{safe_filename}_{year}_{age_filter}")
                     
                     st.markdown("---")
                     st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
