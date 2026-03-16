@@ -1115,38 +1115,42 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
                 st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{uid}")
 
-                st.markdown("---")
-                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
-                melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
-                melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
-                fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
-                if view_mode == "Percentage (%) Coverage" and elig_cols:
-                    fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
-                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
-                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
-                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
+                # --- SMART HIDE LOGIC FOR SINGLE RHU ---
+                is_single_rhu = filter_rhus and "Abra (Total)" not in filter_rhus and len(filter_rhus) == 1
                 
-                st.markdown("---")
-                st.markdown(f"#### 🏆 Top Performing RHUs (Average)")
-                top5_df = chart_df.copy()
-                top5_df['Rank_Metric'] = top5_df[valid_selected].mean(axis=1)
-                top5_df = top5_df.sort_values(by='Rank_Metric', ascending=True).tail(5)
-                fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h', title=f"Top RHUs ({start_m} - {end_m})", text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True, color='Rank_Metric', color_continuous_scale="Greens")
-                fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
-                st.plotly_chart(fig_top5, use_container_width=True, key=f"top5_{uid}")
-                
-                st.markdown("---")
-                st.markdown(f"#### 🗺️ Heatmap")
-                map_df = chart_df.copy()
-                map_df['Rank_Metric'] = map_df[valid_selected].mean(axis=1)
-                map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
-                map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
-                map_df = map_df[map_df['Lat'] != 0] 
-                color_scale = "RdYlGn" if view_mode == "Percentage (%) Coverage" else "Blues"
-                map_title = f"Geospatial View: Average {y_axis_label}"
-                fig_map = px.scatter_mapbox(map_df, lat="Lat", lon="Lon", hover_name="Area", hover_data={"Lat": False, "Lon": False, "Rank_Metric": ':.1f'}, color="Rank_Metric", size="Rank_Metric", color_continuous_scale=color_scale, size_max=20, zoom=8.5, center={"lat": 17.55, "lon": 120.75}, mapbox_style="carto-positron", title=map_title)
-                fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
-                st.plotly_chart(fig_map, use_container_width=True, key=f"map_{uid}")
+                if not is_single_rhu:
+                    st.markdown("---")
+                    st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                    melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
+                    melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
+                    if view_mode == "Percentage (%) Coverage" and elig_cols:
+                        fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                    fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                    fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
+                    st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 🏆 Top Performing RHUs (Average)")
+                    top5_df = chart_df.copy()
+                    top5_df['Rank_Metric'] = top5_df[valid_selected].mean(axis=1)
+                    top5_df = top5_df.sort_values(by='Rank_Metric', ascending=True).tail(5)
+                    fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h', title=f"Top RHUs ({start_m} - {end_m})", text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True, color='Rank_Metric', color_continuous_scale="Greens")
+                    fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
+                    st.plotly_chart(fig_top5, use_container_width=True, key=f"top5_{uid}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 🗺️ Heatmap")
+                    map_df = chart_df.copy()
+                    map_df['Rank_Metric'] = map_df[valid_selected].mean(axis=1)
+                    map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
+                    map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
+                    map_df = map_df[map_df['Lat'] != 0] 
+                    color_scale = "RdYlGn" if view_mode == "Percentage (%) Coverage" else "Blues"
+                    map_title = f"Geospatial View: Average {y_axis_label}"
+                    fig_map = px.scatter_mapbox(map_df, lat="Lat", lon="Lon", hover_name="Area", hover_data={"Lat": False, "Lon": False, "Rank_Metric": ':.1f'}, color="Rank_Metric", size="Rank_Metric", color_continuous_scale=color_scale, size_max=20, zoom=8.5, center={"lat": 17.55, "lon": 120.75}, mapbox_style="carto-positron", title=map_title)
+                    fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
+                    st.plotly_chart(fig_map, use_container_width=True, key=f"map_{uid}")
                 
                 st.markdown("---")
                 st.markdown(f"#### 📉 Monthly Trend Analysis")
