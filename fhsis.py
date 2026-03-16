@@ -661,7 +661,106 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
         st.error(f"Maternal Template Parsing Error for {uploaded_file.name}: {e}")
         return None
 
-v
+@st.cache_data
+def load_and_clean_mortality_data(uploaded_file, year):
+    try:
+        name_low = uploaded_file.name.lower()
+        is_premature_ncd = "plus 1" in name_low or "premature" in name_low
+        is_traffic_death = "plus 2" in name_low or "traffic injuries" in name_low or "traffic death" in name_low
+        is_traffic_acc = "plus 3" in name_low or "traffic accident" in name_low
+        
+        valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "q1", "q2", "q3", "q4", "2025"]
+        month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
+                     "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec",
+                     "q1": "Q1", "q2": "Q2", "q3": "Q3", "q4": "Q4", "2025": "Annual"}
+
+        sheets_to_process = {}
+        if uploaded_file.name.endswith('.csv'):
+            df_raw = pd.read_csv(uploaded_file, header=None)
+            month_found = "Jan" 
+            for m in valid_months:
+                if m in name_low:
+                    month_found = month_map[m]
+                    break
+            sheets_to_process = {month_found: df_raw}
+        else:
+            xls = pd.ExcelFile(uploaded_file)
+            for sheet in xls.sheet_names:
+                sheet_lower = sheet.lower().strip()
+                months_found = [m for m in valid_months if m in sheet_lower]
+                if len(months_found) != 1: continue
+                sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+
+        all_months_data = []
+
+        for month_val, df in sheets_to_process.items():
+            df = df.dropna(how='all').reset_index(drop=True)
+            
+            # Find the exact column index by anchoring onto "BANGUED"
+            area_col_idx = -1
+            for r_idx, row in df.iterrows():
+                for c_idx, val in enumerate(row):
+                    if pd.notna(val) and "BANGUED" in str(val).upper():
+                        area_col_idx = c_idx
+                        break
+                if area_col_idx != -1:
+                    break
+                    
+            if area_col_idx == -1:
+                continue # Skip sheet if no RHU data found
+            
+            # Map the exact offsets from the Area column
+            if is_premature_ncd:
+                offsets = [2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20]
+                col_names = [
+                    'Total Premature Deaths_Male', 'Total Premature Deaths_Female', 'Total Premature Deaths_Total',
+                    'CVD Deaths_Male', 'CVD Deaths_Female', 'CVD Deaths_Total',
+                    'Cancer Deaths_Male', 'Cancer Deaths_Female', 'Cancer Deaths_Total',
+                    'Diabetes Deaths_Male', 'Diabetes Deaths_Female', 'Diabetes Deaths_Total',
+                    'Respiratory Disease Deaths_Male', 'Respiratory Disease Deaths_Female', 'Respiratory Disease Deaths_Total'
+                ]
+            elif is_traffic_death:
+                offsets = [2, 3, 4]
+                col_names = ['Traffic Injury Deaths_Male', 'Traffic Injury Deaths_Female', 'Traffic Injury Deaths_Total']
+            elif is_traffic_acc:
+                offsets = [1]
+                col_names = ['Total Road Accidents_Total'] # Road Accidents are not tracked by gender in the DOH template
+            else:
+                continue 
+                
+            def extract_rhu(area_val):
+                area_up = str(area_val).upper()
+                for rhu in ABRA_RHUS:
+                    if rhu.upper() in area_up:
+                        return rhu
+                return None
+                
+            mapped_df = pd.DataFrame()
+            mapped_df['Matched_RHU'] = df[area_col_idx].apply(extract_rhu)
+            mapped_df['Area'] = mapped_df['Matched_RHU']
+            
+            # Extract data dynamically using the offsets
+            for i, offset in enumerate(offsets):
+                target_idx = area_col_idx + offset
+                if target_idx < df.shape[1]:
+                    mapped_df[col_names[i]] = pd.to_numeric(df[target_idx], errors='coerce').fillna(0)
+                else:
+                    mapped_df[col_names[i]] = 0
+                    
+            mapped_df = mapped_df.dropna(subset=['Area'])
+            mapped_df = mapped_df.drop(columns=['Matched_RHU'])
+            mapped_df['Month'] = month_val
+            mapped_df['Year'] = year
+            
+            all_months_data.append(mapped_df)
+            
+        if not all_months_data: raise ValueError("Could not locate RHU data in the file.")
+        return pd.concat(all_months_data, ignore_index=True)
+    except Exception as e:
+        import traceback
+        st.error(f"Mortality Template Error processing {uploaded_file.name}: {e}")
+        st.code(traceback.format_exc())
+        return None
         
 @st.cache_data
 def convert_df_to_csv(df):
