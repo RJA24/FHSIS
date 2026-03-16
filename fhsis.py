@@ -1115,12 +1115,22 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
                 st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{uid}")
 
-                # --- SMART HIDE LOGIC FOR SINGLE RHU ---
                 is_single_rhu = filter_rhus and "Abra (Total)" not in filter_rhus and len(filter_rhus) == 1
                 
                 if not is_single_rhu:
                     st.markdown("---")
                     st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                    
+                    # --- SMART SORTING LOGIC ---
+                    if len(valid_selected) == 1:
+                        sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_{uid}")
+                        if sort_order == "Highest to Lowest":
+                            chart_df = chart_df.sort_values(by=valid_selected[0], ascending=False)
+                        else:
+                            chart_df = chart_df.sort_values(by='Area', ascending=True)
+                    else:
+                        chart_df = chart_df.sort_values(by='Area', ascending=True)
+
                     melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
                     melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                     fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
@@ -1128,6 +1138,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                         fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                     fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                     fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
+                    fig_rhu.update_xaxes(categoryorder='array', categoryarray=chart_df['Area'].tolist())
                     st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
                     
                     st.markdown("---")
@@ -1321,11 +1332,23 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 
                 chart_df = agg_df[['Area'] + valid_selected].copy()
                 
+                # --- SMART SORTING LOGIC ---
+                if len(valid_selected) == 1:
+                    sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_{uid}")
+                    if sort_order == "Highest to Lowest":
+                        chart_df = chart_df.sort_values(by=valid_selected[0], ascending=False)
+                    else:
+                        chart_df = chart_df.sort_values(by='Area', ascending=True)
+                else:
+                    chart_df = chart_df.sort_values(by='Area', ascending=True)
+                
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
+                
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Count", legend_title="Indicator", margin=dict(t=60))
+                fig_rhu.update_xaxes(categoryorder='array', categoryarray=chart_df['Area'].tolist())
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
                 
             else:
@@ -1436,6 +1459,16 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                         chart_df[col] = chart_df[col].round(3)
                     y_axis_label = "Mortality Rate (%)"
                 
+                # --- SMART SORTING LOGIC ---
+                if len(valid_selected) == 1:
+                    sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_{uid}")
+                    if sort_order == "Highest to Lowest":
+                        chart_df = chart_df.sort_values(by=valid_selected[0], ascending=False)
+                    else:
+                        chart_df = chart_df.sort_values(by='Area', ascending=True)
+                else:
+                    chart_df = chart_df.sort_values(by='Area', ascending=True)
+
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
                 
@@ -1446,6 +1479,7 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                     fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                     
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=60))
+                fig_rhu.update_xaxes(categoryorder='array', categoryarray=chart_df['Area'].tolist())
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
 
                 st.markdown("---")
@@ -1569,17 +1603,21 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
             if c_scr_tot:
                 st.markdown("---")
                 prov_tot = int(agg_df[c_scr_tot].sum())
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
                 fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title=f"Total Women Screened for Cervical Cancer (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"])
                 fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                fig_scr.update_xaxes(categoryorder='array', categoryarray=agg_df['Area'].tolist())
                 st.plotly_chart(fig_scr, use_container_width=True, key=f"cerv_leg_1_{year}")
                 
             if c_pos_suspect_tot:
                 st.markdown("---")
                 prov_tot = int(agg_df[c_pos_suspect_tot].sum())
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
                 fig_pos = px.bar(agg_df, x='Area', y=c_pos_suspect_tot, title=f"Found Positive or Suspect (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
                 fig_pos.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_pos.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                fig_pos.update_xaxes(categoryorder='array', categoryarray=agg_df['Area'].tolist())
                 st.plotly_chart(fig_pos, use_container_width=True, key=f"cerv_leg_2_{year}")
                 
             with st.expander("📄 View & Download Formatted Data"):
@@ -1623,6 +1661,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
         st.markdown("#### 📊 RHU Breakdown: Screening Yield")
         cols_to_melt = [c for c in [c_scr_tot, c_susp_no, c_pos_tot] if c]
         if cols_to_melt:
+            agg_df = agg_df.sort_values(by='Area', ascending=True)
             melted_rhu = agg_df[['Area'] + cols_to_melt].melt(id_vars='Area', var_name='Metric_Raw', value_name='Patients')
             clean_metric_names = {c_scr_tot: "Screened", c_susp_no: "Suspicious", c_pos_tot: "Positive"}
             melted_rhu['Metric'] = melted_rhu['Metric_Raw'].map(clean_metric_names)
@@ -1630,6 +1669,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
             fig_rhu = px.bar(melted_rhu, x='Area', y='Patients', color='Metric', barmode='group', title="Screening Yield vs Abnormal Findings per RHU", text_auto=True, color_discrete_sequence=["#66B2FF", "#FFA15A", "#EF553B"])
             fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig_rhu.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+            fig_rhu.update_xaxes(categoryorder='array', categoryarray=agg_df['Area'].tolist())
             st.plotly_chart(fig_rhu, use_container_width=True, key=f"cerv_rhu_bar_{year}")
 
         with st.expander("📄 View & Download Formatted Cervical Data"):
@@ -1716,17 +1756,21 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
             if b_leg_scr:
                 st.markdown("---")
                 prov_tot = int(agg_df[b_leg_scr].sum())
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
                 fig_scr = px.bar(agg_df, x='Area', y=b_leg_scr, title=f"Screened for Breast Mass (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC"])
                 fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                fig_scr.update_xaxes(categoryorder='array', categoryarray=agg_df['Area'].tolist())
                 st.plotly_chart(fig_scr, use_container_width=True, key=f"br_leg_1_{year}")
                 
             if b_leg_susp:
                 st.markdown("---")
                 prov_tot = int(agg_df[b_leg_susp].sum())
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
                 fig_susp = px.bar(agg_df, x='Area', y=b_leg_susp, title=f"With Suspicious Breast Mass (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
                 fig_susp.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_susp.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                fig_susp.update_xaxes(categoryorder='array', categoryarray=agg_df['Area'].tolist())
                 st.plotly_chart(fig_susp, use_container_width=True, key=f"br_leg_2_{year}")
                 
             with st.expander("📄 View & Download Formatted Data"):
@@ -1757,12 +1801,14 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
 
         with hr_col2:
             st.markdown("#### 📊 RHU Screening Breakdown (Stacked)")
-            hr_scr_cols = [c for c in [b_hr_scr_cbe, b_hr_scr_mam] if c] 
-            if hr_scr_cols:
-                m = agg_df[['Area'] + hr_scr_cols].melt(id_vars='Area')
+            as_scr_cols = [c for c in [b_hr_scr_cbe, b_hr_scr_mam] if c] 
+            if as_scr_cols:
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
+                m = agg_df[['Area'] + as_scr_cols].melt(id_vars='Area')
                 m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_scr_cbe else "Mammogram")
                 fig_hr_bar = px.bar(m, x='Area', y='value', color='variable', barmode='stack', title="Screenings by Methodology", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF"])
                 fig_hr_bar.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=30))
+                fig_hr_bar.update_xaxes(categoryorder='array', categoryarray=agg_df['Area'].tolist())
                 st.plotly_chart(fig_hr_bar, use_container_width=True, key=f"breast_hr_bar_{year}")
 
         st.markdown("<br><br>", unsafe_allow_html=True)
@@ -1793,10 +1839,12 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
             st.markdown("#### 📊 RHU Screening Breakdown (Stacked)")
             as_scr_cols = [c for c in [b_as_scr_cbe, b_as_scr_mam] if c] 
             if as_scr_cols:
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
                 m = agg_df[['Area'] + as_scr_cols].melt(id_vars='Area')
                 m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_scr_cbe else "Mammogram")
                 fig_as_bar = px.bar(m, x='Area', y='value', color='variable', barmode='stack', title="Screenings by Methodology", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF"])
                 fig_as_bar.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=30))
+                fig_as_bar.update_xaxes(categoryorder='array', categoryarray=agg_df['Area'].tolist())
                 st.plotly_chart(fig_as_bar, use_container_width=True, key=f"breast_as_bar_{year}")
 
         with st.expander("📄 View & Download Formatted Breast Cancer Data (RHU Breakdown)"):
@@ -1919,6 +1967,16 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
                             chart_df[col] = chart_df[col].round(1)
                     y_axis_label = "Coverage (%)"
                 
+                # --- SMART SORTING LOGIC ---
+                if len(selected_cols) == 1:
+                    sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_wash_{safe_filename}_{year}")
+                    if sort_order == "Highest to Lowest":
+                        chart_df = chart_df.sort_values(by=selected_cols[0], ascending=False)
+                    else:
+                        chart_df = chart_df.sort_values(by='Area', ascending=True)
+                else:
+                    chart_df = chart_df.sort_values(by='Area', ascending=True)
+
                 melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator', value_name='Count')
                 
                 fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"{tab_title} Performance ({', '.join(selected_quarters)})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Safe)
@@ -1928,6 +1986,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
                     
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
+                fig_rhu.update_xaxes(categoryorder='array', categoryarray=chart_df['Area'].tolist())
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_wash_{safe_filename}_{year}")
                 
                 if has_primary:
@@ -2176,6 +2235,16 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                             valid_chart_cols.append(col)
                     
                     if valid_chart_cols:
+                        # --- SMART SORTING LOGIC ---
+                        if len(valid_chart_cols) == 1:
+                            sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_mat_{safe_filename}_{year}_{age_filter}")
+                            if sort_order == "Highest to Lowest":
+                                chart_df = chart_df.sort_values(by=valid_chart_cols[0], ascending=False)
+                            else:
+                                chart_df = chart_df.sort_values(by='Area', ascending=True)
+                        else:
+                            chart_df = chart_df.sort_values(by='Area', ascending=True)
+
                         melted = chart_df.melt(id_vars='Area', value_vars=valid_chart_cols, var_name='Indicator', value_name='Count')
                         melted['Indicator'] = melted['Indicator'].apply(get_clean_indicator_name)
                         
@@ -2184,6 +2253,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                             fig_rhu.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="100% Target")
                         fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                         fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
+                        fig_rhu.update_xaxes(categoryorder='array', categoryarray=chart_df['Area'].tolist())
                         st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_mat_{safe_filename}_{year}_{age_filter}")
                     
                     st.markdown("---")
