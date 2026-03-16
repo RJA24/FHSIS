@@ -2490,7 +2490,7 @@ elif page == "💀 Mortality Dashboard":
         "💥 Traffic Accidents"
     ])
     
-    with mort_tab1: render_mortality_tab("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total premature", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year, chart_type="line")
+    with mort_tab1: render_mortality_tab("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total premature", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year, chart_type="bar")
     with mort_tab2: render_mortality_tab("Traffic Injury Deaths", "Traffic_Deaths", ["traffic injuries", "death"], start_month, end_month, gender_filter, selected_year)
     with mort_tab3: render_mortality_tab("Traffic Accidents", "Traffic_Accidents", ["road accidents"], start_month, end_month, gender_filter, selected_year)
 
