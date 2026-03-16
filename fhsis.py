@@ -754,7 +754,7 @@ def convert_df_to_csv(df):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("FHSIS Portal")
-    page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
+    page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "💀 Mortality Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
     st.markdown("---")
     
     if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard"]:
@@ -2320,7 +2320,8 @@ elif page == "📈 YoY Comparison":
             "Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer",
             "Antenatal Care (ANC)", "Nutritional Status & Td", "Calcium, MMS & Deworming", 
             "Syphilis & Hep B", "CBC & Gestational Diabetes", "Postpartum Care (PPC)", 
-            "Livebirths & Deliveries"
+            "Livebirths & Deliveries",
+            "Premature NCD Deaths", "Traffic Deaths", "Traffic Accidents"
         ])
     with col_y2:
         year_a = st.selectbox("Baseline Year (Year A)", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=2)
@@ -2346,7 +2347,10 @@ elif page == "📈 YoY Comparison":
             "Syphilis & Hep B": ("Syphilis_HepB", ["screened for syphilis", "tested positive for syphilis", "screened for hepatitis b", "reactive to hepatitis b", "screened for hiv", "reactive to hiv"]),
             "CBC & Gestational Diabetes": ("CBC_Gestational", ["tested for cbc/hgb/hct", "diagnosed with anemia", "screened for gestational diabetes", "positive for gestational diabetes"]),
             "Postpartum Care (PPC)": ("PPC", ['2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 'iron with folic', 'vitamin a']),
-            "Livebirths & Deliveries": ("Livebirths", ["total deliveries", "total livebirths"])
+            "Livebirths & Deliveries": ("Livebirths", ["total deliveries", "total livebirths"]),
+            "Premature NCD Deaths": ("Premature_NCD", ["deaths", "premature"]),
+            "Traffic Deaths": ("Traffic_Deaths", ["deaths", "traffic", "injury"]),
+            "Traffic Accidents": ("Traffic_Accidents", ["accidents", "traffic", "road"])
         }
         df_key, base_mets = dataset_keys[yoy_dataset]
         
@@ -2479,6 +2483,39 @@ elif page == "📈 YoY Comparison":
         else:
             st.info("No data available for this category yet. Go to Data Uploader to push your FHSIS files.")
 
+elif page == "💀 Mortality Dashboard":
+    st.title("💀 Mortality & Injuries Dashboard")
+    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown("---")
+    
+    st.markdown("##### ⏳ Time Filter")
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed", key="mort_time")
+    with col_t2:
+        if time_view == "Monthly":
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed", key="mort_m")
+        else:
+            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed", key="mort_q")
+            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
+            start_month = q_map[start_q][0]
+            end_month = q_map[end_q][1]
+            
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    mort_tab1, mort_tab2, mort_tab3 = st.tabs([
+        "💔 Premature NCD Deaths", 
+        "🚗 Traffic Deaths",
+        "💥 Traffic Accidents"
+    ])
+    
+    # We can reuse the robust NCD renderer because it handles raw counts beautifully without forcing a 100% target coverage limit
+    with mort_tab1: render_ncd_tab_content("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["deaths", "total", "premature"], start_month, end_month, gender_filter, selected_year)
+    with mort_tab2: render_ncd_tab_content("Traffic Injury Deaths", "Traffic_Deaths", ["deaths", "traffic", "injury"], start_month, end_month, gender_filter, selected_year)
+    with mort_tab3: render_ncd_tab_content("Traffic Accidents", "Traffic_Accidents", ["accidents", "traffic", "road"], start_month, end_month, gender_filter, selected_year)
+
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
     
@@ -2490,7 +2527,7 @@ elif page == "📁 Data Uploader":
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
     
-    upload_tab_imm, upload_tab_ncd, upload_tab_wash, upload_tab_mat = st.tabs(["👶 Child Immunization", "🩺 NCD", "🚰 WASH", "🤰 Maternal Health"])
+    upload_tab_imm, upload_tab_ncd, upload_tab_wash, upload_tab_mat, upload_tab_mort = st.tabs(["👶 Child Immunization", "🩺 NCD", "🚰 WASH", "🤰 Maternal Health", "💀 Mortality & Injuries"])
     
     with upload_tab_imm:
         st.markdown("##### Upload Immunization Excel Templates")
@@ -2590,6 +2627,25 @@ elif page == "📁 Data Uploader":
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
                 st.success(f"✅ {upload_year} Maternal Files safely merged into Google Sheets!")
+            else:
+                st.error("No valid data uploaded yet to save.")
+                
+    with upload_tab_mort:
+        st.markdown("##### Upload F1 Plus Mortality & Injury Templates")
+        file_prem_ncd = st.file_uploader("Upload: F1 Plus 1 Premature NCD Deaths", type=["csv", "xlsx"])
+        file_traf_death = st.file_uploader("Upload: F1 Plus 2 Death due to Traffic Injuries", type=["csv", "xlsx"])
+        file_traf_acc = st.file_uploader("Upload: F1 Plus 3 No. of Traffic Accidents", type=["csv", "xlsx"])
+        
+        if st.button("☁️ Save Mortality Data to Cloud", type="primary", use_container_width=True):
+            upload_dict = {}
+            if file_prem_ncd: upload_dict["Premature_NCD"] = load_and_clean_mortality_data(file_prem_ncd, upload_year)
+            if file_traf_death: upload_dict["Traffic_Deaths"] = load_and_clean_mortality_data(file_traf_death, upload_year)
+            if file_traf_acc: upload_dict["Traffic_Accidents"] = load_and_clean_mortality_data(file_traf_acc, upload_year)
+            
+            clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
+            if clean_dict:
+                save_data_to_gsheets(clean_dict)
+                st.success(f"✅ {upload_year} Mortality Files safely merged into Google Sheets!")
             else:
                 st.error("No valid data uploaded yet to save.")
 
