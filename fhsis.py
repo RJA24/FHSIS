@@ -884,6 +884,17 @@ def get_ncd_col(df, include_words, exclude_words=None):
 def get_clean_indicator_name(col_name):
     c_low = col_name.lower().replace('\n', ' ').replace('-', ' ')
     
+    # --- Mortality & Injuries Mapping ---
+    if "death" in c_low or "deaths" in c_low:
+        if "cvd" in c_low or "cardiovascular" in c_low: return "CVD Deaths"
+        if "cancer" in c_low: return "Cancer Deaths"
+        if "diabetes" in c_low: return "Diabetes Deaths"
+        if "respiratory" in c_low: return "Respiratory Disease Deaths"
+        if "traffic" in c_low: return "Traffic Injury Deaths"
+        if "total" in c_low: return "Total Premature Deaths"
+    elif "road accidents" in c_low: return "Total Road Accidents"
+
+    
     # --- NCD Mapping ---
     if "risk assessed" in c_low: return "Total Risk Assessed"
     if "smoking" in c_low or "smoker" in c_low: return "History of Smoking (Current Smoker)"
@@ -2541,11 +2552,10 @@ elif page == "💀 Mortality Dashboard":
         "💥 Traffic Accidents"
     ])
     
-    # We can reuse the robust NCD renderer because it handles raw counts beautifully without forcing a 100% target coverage limit
-    with mort_tab1: render_ncd_tab_content("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["deaths", "total", "premature"], start_month, end_month, gender_filter, selected_year)
-    with mort_tab2: render_ncd_tab_content("Traffic Injury Deaths", "Traffic_Deaths", ["deaths", "traffic", "injury"], start_month, end_month, gender_filter, selected_year)
-    with mort_tab3: render_ncd_tab_content("Traffic Accidents", "Traffic_Accidents", ["accidents", "traffic", "road"], start_month, end_month, gender_filter, selected_year)
-
+    # We pass the exact keywords found in your screenshot so the engine grabs the right columns
+    with mort_tab1: render_ncd_tab_content("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total deaths", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year)
+    with mort_tab2: render_ncd_tab_content("Traffic Injury Deaths", "Traffic_Deaths", ["traffic injuries", "death"], start_month, end_month, gender_filter, selected_year)
+    with mort_tab3: render_ncd_tab_content("Traffic Accidents", "Traffic_Accidents", ["road accidents"], start_month, end_month, gender_filter, selected_year)
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
     
