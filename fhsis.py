@@ -713,7 +713,6 @@ def load_and_clean_mortality_data(uploaded_file, year):
             if area_col_idx == -1:
                 continue 
             
-            # --- ADDED 'ELIG. POP.' AND OFFSET 1 TO GRAB DENOMINATOR ---
             if is_premature_ncd:
                 offsets = [1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20]
                 col_names = [
@@ -780,6 +779,14 @@ with st.sidebar:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
+        rhu_filter = st.multiselect("Select RHU(s)", options=["Abra (Total)"] + ABRA_RHUS, default=["Abra (Total)"])
+        
+        # Determine the location header dynamically
+        if not rhu_filter or "Abra (Total)" in rhu_filter:
+            location_header = "📍 Abra Province (Total)"
+        else:
+            loc_text = ", ".join(rhu_filter)
+            location_header = f"📍 {loc_text}" if len(loc_text) < 45 else f"📍 {len(rhu_filter)} Selected RHUs"
 
 # --- INITIALIZE SESSION STATE ---
 if 'fhsis_data' not in st.session_state:
@@ -1023,11 +1030,14 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
     return "Elig. Pop." if "Elig. Pop." in all_cols else None
 
 # --- UI RENDERERS ---
-def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
+def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_data(raw_df, start_m, end_m, gender, year)
         
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+            
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
         
@@ -1066,7 +1076,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
-                st.markdown("#### 🏆 Province-Wide Summary")
+                st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
                 kpi_cols = st.columns(len(valid_selected))
                 for i, col in enumerate(valid_selected):
                     total_val = provincial_antigens[col]
@@ -1095,10 +1105,10 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     abra_total_df['Count'] = [provincial_antigens[c] for c in valid_selected]
                     y_axis_label = "Number of Children"
 
-                st.markdown(f"#### 📈 {tab_title} - Abra Province Total")
+                st.markdown(f"#### 📈 {tab_title} - Aggregate Total")
                 abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 uid = f"{safe_filename}_{year}_{gender}_{int(time.time())}"
-                fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen', title=f"Abra Province Total ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen', title=f"Aggregate Total ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
                     fig_abra.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                 fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
@@ -1109,7 +1119,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
                 melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
-                fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
                     fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
@@ -1117,16 +1127,16 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
                 
                 st.markdown("---")
-                st.markdown(f"#### 🏆 Top 5 Performing RHUs (Average)")
+                st.markdown(f"#### 🏆 Top Performing RHUs (Average)")
                 top5_df = chart_df.copy()
                 top5_df['Rank_Metric'] = top5_df[valid_selected].mean(axis=1)
                 top5_df = top5_df.sort_values(by='Rank_Metric', ascending=True).tail(5)
-                fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h', title=f"Top 5 RHUs ({start_m} - {end_m})", text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True, color='Rank_Metric', color_continuous_scale="Greens")
+                fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h', title=f"Top RHUs ({start_m} - {end_m})", text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True, color='Rank_Metric', color_continuous_scale="Greens")
                 fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
                 st.plotly_chart(fig_top5, use_container_width=True, key=f"top5_{uid}")
                 
                 st.markdown("---")
-                st.markdown(f"#### 🗺️ Provincial Heatmap")
+                st.markdown(f"#### 🗺️ Heatmap")
                 map_df = chart_df.copy()
                 map_df['Rank_Metric'] = map_df[valid_selected].mean(axis=1)
                 map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
@@ -1155,7 +1165,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                     y_trend_label = "Number of Children"
                 trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
                 trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
-                fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True, title=f"Provincial Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True, title=f"Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols: fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                 fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40))
                 st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
@@ -1185,7 +1195,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year):
+def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -1204,6 +1214,9 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
         
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
@@ -1245,7 +1258,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 c_dm = next((c for c in valid_selected if "type 2 dm" in c.lower() or "diabetes" in c.lower()), None)
                 lifestyle_cols = [c for c in valid_selected if c not in [c_assessed, c_hyper, c_dm] and c not in elig_cols]
                 
-                st.markdown("#### 🏆 Provincial NCD Summary (With Prevalence Yield)")
+                st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
                 
                 cols_per_row = 5
                 rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
@@ -1265,7 +1278,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                 st.markdown("---")
                 
                 if c_assessed or lifestyle_cols:
-                    st.markdown(f"#### 🧬 {tab_title} : Provincial Health Footprint")
+                    st.markdown(f"#### 🧬 {tab_title} : Health Footprint")
                     v_col1, v_col2 = st.columns(2)
                     
                     with v_col1:
@@ -1300,13 +1313,13 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                             st.info("Select 'Risk Assessed' and at least one disease (Hypertension/DM) to view the Diagnostic Yield.")
                 
                 st.markdown("---")
-                st.markdown(f"#### 📊 {tab_title} - Raw RHU Breakdown")
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
                 
                 chart_df = agg_df[['Area'] + valid_selected].copy()
                 
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
-                fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2)
                 fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Count", legend_title="Indicator", margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
@@ -1323,7 +1336,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender, year, chart_type="bar"):
+def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus, chart_type="bar"):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -1343,6 +1356,9 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
         
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+        
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
         
@@ -1355,7 +1371,7 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
-            for ec in elig_cols: agg_dict[ec] = 'max' # Ensure denominators carry over properly
+            for ec in elig_cols: agg_dict[ec] = 'max' 
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
             with st.expander("⚙️ Add / Remove Indicators"):
@@ -1365,7 +1381,6 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
             uid = f"mort_{safe_filename}_{year}_{gender}_{int(time.time())}"
 
             if valid_selected:
-                # --- TOGGLE SWITCH FOR PERCENTAGE VIEW ---
                 view_mode = "Raw Counts"
                 if elig_cols:
                     view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%)"], horizontal=True, key=f"toggle_view_mort_{safe_filename}_{year}_{gender}")
@@ -1373,7 +1388,7 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                 provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
-                st.markdown("#### 🏆 Provincial Summary")
+                st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
                 cols_per_row = 5
                 rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
                 
@@ -1389,7 +1404,6 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                     else:
                         rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}")
 
-                # --- 1. CAUSE OF DEATH DONUT CHART (Tab 1 Only) ---
                 if "Premature NCD" in tab_title:
                     disease_cols = [c for c in valid_selected if "total" not in c.lower() and "pop" not in c.lower()]
                     if disease_cols:
@@ -1397,10 +1411,10 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                             'Cause': [get_clean_indicator_name(c) for c in disease_cols],
                             'Deaths': [provincial_antigens[c] for c in disease_cols]
                         })
-                        donut_data = donut_data[donut_data['Deaths'] > 0] # Hide zeroes for a cleaner chart
+                        donut_data = donut_data[donut_data['Deaths'] > 0] 
                         if not donut_data.empty:
                             st.markdown("<br>", unsafe_allow_html=True)
-                            fig_donut = px.pie(donut_data, values='Deaths', names='Cause', hole=0.4, title="🍩 Province-Wide Cause of Death Breakdown", color_discrete_sequence=px.colors.qualitative.Pastel)
+                            fig_donut = px.pie(donut_data, values='Deaths', names='Cause', hole=0.4, title="🍩 Cause of Death Breakdown", color_discrete_sequence=px.colors.qualitative.Pastel)
                             fig_donut.update_traces(textposition='inside', textinfo='percent+label')
                             fig_donut.update_layout(margin=dict(t=40, b=0))
                             st.plotly_chart(fig_donut, use_container_width=True, key=f"donut_{uid}")
@@ -1422,25 +1436,23 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
                 
                 if chart_type == "line":
-                    fig_rhu = px.line(melted, x='Area', y='Count', color='Indicator', markers=True, title=f"All RHUs ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
+                    fig_rhu = px.line(melted, x='Area', y='Count', color='Indicator', markers=True, title=f"Breakdown ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
                 else:
-                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set1)
+                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set1)
                     fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                     
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
 
-                # --- 2 & 3. HIGH-RISK LEADERBOARD & HOTSPOT MAP ---
                 st.markdown("---")
                 st.markdown("#### 🚨 High-Risk Hotspots & Leaderboard")
                 col_m1, col_m2 = st.columns(2)
                 
-                # We use the very first selected metric (usually "Total Deaths") as the anchor for the Map and Leaderboard
                 primary_col = valid_selected[0]
                 metric_name = get_clean_indicator_name(primary_col)
                 
                 with col_m1:
-                    st.markdown(f"**Top 5 RHUs (Highest {metric_name})**")
+                    st.markdown(f"**Top RHUs (Highest {metric_name})**")
                     leader_df = chart_df.copy()
                     leader_df = leader_df.sort_values(by=primary_col, ascending=True).tail(5)
                     fig_lead = px.bar(leader_df, x=primary_col, y='Area', orientation='h', text_auto=True if view_mode == "Raw Counts" else '.3f', color=primary_col, color_continuous_scale="Reds")
@@ -1462,7 +1474,6 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                     fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
                     st.plotly_chart(fig_map, use_container_width=True, key=f"map_hotspot_{uid}")
                 
-                # --- MONTHLY TREND ANALYSIS ---
                 if len(filtered_df['Month'].unique()) > 1:
                     st.markdown("---")
                     st.markdown(f"#### 📈 Monthly Trend")
@@ -1481,7 +1492,7 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                     trend_melted = trend_agg.melt(id_vars='Month', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                     trend_melted['Indicator'] = trend_melted['Indicator_Raw'].apply(get_clean_indicator_name)
                     
-                    fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
+                    fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
                     fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=40))
                     st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
                 
@@ -1497,7 +1508,7 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
+def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
     if gender == "Male":
         st.info("🎗️ Cervical Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
         return
@@ -1519,6 +1530,9 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
         
         c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred", "suspect"])
         c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
@@ -1551,7 +1565,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             if c_scr_tot:
                 st.markdown("---")
                 prov_tot = int(agg_df[c_scr_tot].sum())
-                fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title=f"Total Women Screened for Cervical Cancer (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"])
+                fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title=f"Total Women Screened for Cervical Cancer (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"])
                 fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
                 st.plotly_chart(fig_scr, use_container_width=True, key=f"cerv_leg_1_{year}")
@@ -1559,7 +1573,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             if c_pos_suspect_tot:
                 st.markdown("---")
                 prov_tot = int(agg_df[c_pos_suspect_tot].sum())
-                fig_pos = px.bar(agg_df, x='Area', y=c_pos_suspect_tot, title=f"Found Positive or Suspect (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
+                fig_pos = px.bar(agg_df, x='Area', y=c_pos_suspect_tot, title=f"Found Positive or Suspect (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
                 fig_pos.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_pos.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
                 st.plotly_chart(fig_pos, use_container_width=True, key=f"cerv_leg_2_{year}")
@@ -1569,7 +1583,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             return
 
         st.markdown("### 🎗️ Cervical Cancer Screening & Linkage to Care")
-        st.markdown("##### Provincial Medical Totals")
+        st.markdown(f"##### Medical Totals ({location_header.replace('📍 ', '')})")
         c1, c2, c3, c4, c5 = st.columns(5)
         if c_scr_tot: c1.metric("1. Total Screened", f"{int(agg_df[c_scr_tot].sum()):,}")
         if c_susp_no: c2.metric("2. Found Suspicious", f"{int(agg_df[c_susp_no].sum()):,}")
@@ -1577,7 +1591,6 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
         if c_pos_tot: c4.metric("4. Found Positive", f"{int(agg_df[c_pos_tot].sum()):,}")
         if c_pos_link_tot: c5.metric("5. Positive & Linked", f"{int(agg_df[c_pos_link_tot].sum()):,}")
         
-        # CONSOLIDATED PROVINCIAL FUNNEL
         st.markdown("---")
         col_f1, col_f2 = st.columns(2)
         with col_f1:
@@ -1602,7 +1615,6 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
             fig_f2 = px.funnel(pd.DataFrame({'Stage': pos_stages, 'Count': pos_counts}), x='Count', y='Stage', color_discrete_sequence=["#EF553B"])
             st.plotly_chart(fig_f2, use_container_width=True, key=f"cerv_funnel_pos_{year}")
 
-        # CONSOLIDATED GROUPED BAR FOR RHUS
         st.markdown("---")
         st.markdown("#### 📊 RHU Breakdown: Screening Yield")
         cols_to_melt = [c for c in [c_scr_tot, c_susp_no, c_pos_tot] if c]
@@ -1630,7 +1642,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     else:
         st.info("No Cervical Cancer data uploaded yet.")
 
-def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
+def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
     if gender == "Male":
         st.info("🎀 Breast Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
         return
@@ -1652,6 +1664,9 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
         
         b_leg_scr = get_ncd_col(filtered_df, ["screened for breast mass"], ["%", "suspicious"])
         b_leg_susp = get_ncd_col(filtered_df, ["suspicious breast mass"], ["%", "screened"])
@@ -1682,7 +1697,6 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
         
         if not cols_to_agg:
             st.warning("Could not identify specific Breast Cancer columns from the template.")
-            st.info("💡 **Tip:** If you are using the 2024 combined 'Cervical & Breast' template, make sure you uploaded that exact same file into BOTH the Cervical and Breast Cancer upload slots on the Data Uploader page!")
             return
             
         agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
@@ -1698,7 +1712,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
             if b_leg_scr:
                 st.markdown("---")
                 prov_tot = int(agg_df[b_leg_scr].sum())
-                fig_scr = px.bar(agg_df, x='Area', y=b_leg_scr, title=f"Screened for Breast Mass (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC"])
+                fig_scr = px.bar(agg_df, x='Area', y=b_leg_scr, title=f"Screened for Breast Mass (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC"])
                 fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
                 st.plotly_chart(fig_scr, use_container_width=True, key=f"br_leg_1_{year}")
@@ -1706,7 +1720,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
             if b_leg_susp:
                 st.markdown("---")
                 prov_tot = int(agg_df[b_leg_susp].sum())
-                fig_susp = px.bar(agg_df, x='Area', y=b_leg_susp, title=f"With Suspicious Breast Mass (Provincial Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
+                fig_susp = px.bar(agg_df, x='Area', y=b_leg_susp, title=f"With Suspicious Breast Mass (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"])
                 fig_susp.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_susp.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
                 st.plotly_chart(fig_susp, use_container_width=True, key=f"br_leg_2_{year}")
@@ -1715,8 +1729,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
                 st.dataframe(agg_df, use_container_width=True, hide_index=True)
             return
 
-        # HIGH RISK WOMEN SECTION
-        st.markdown("### 🎀 High Risk Women (30-69 y.o.)")
+        st.markdown(f"### 🎀 High Risk Women (30-69 y.o.) | {location_header.replace('📍 ', '')}")
         hr_c1, hr_c2, hr_c3 = st.columns(3)
         if b_hr_scr_tot: hr_c1.metric("1. Screened (Total)", f"{int(agg_df[b_hr_scr_tot].sum()):,}")
         if b_hr_rem_tot: hr_c2.metric("2. Found Remarkable (Total)", f"{int(agg_df[b_hr_rem_tot].sum()):,}")
@@ -1740,7 +1753,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
 
         with hr_col2:
             st.markdown("#### 📊 RHU Screening Breakdown (Stacked)")
-            hr_scr_cols = [c for c in [b_hr_scr_cbe, b_hr_scr_mam] if c] # Removed Total to use stack
+            hr_scr_cols = [c for c in [b_hr_scr_cbe, b_hr_scr_mam] if c] 
             if hr_scr_cols:
                 m = agg_df[['Area'] + hr_scr_cols].melt(id_vars='Area')
                 m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_scr_cbe else "Mammogram")
@@ -1750,7 +1763,6 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
 
         st.markdown("<br><br>", unsafe_allow_html=True)
         
-        # ASYMPTOMATIC WOMEN SECTION
         st.markdown("### 🎗️ Asymptomatic Women (50-69 y.o.)")
         as_c1, as_c2, as_c3 = st.columns(3)
         if b_as_scr_tot: as_c1.metric("1. Screened (Total)", f"{int(agg_df[b_as_scr_tot].sum()):,}")
@@ -1775,7 +1787,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
 
         with as_col2:
             st.markdown("#### 📊 RHU Screening Breakdown (Stacked)")
-            as_scr_cols = [c for c in [b_as_scr_cbe, b_as_scr_mam] if c] # Removed Total to use stack
+            as_scr_cols = [c for c in [b_as_scr_cbe, b_as_scr_mam] if c] 
             if as_scr_cols:
                 m = agg_df[['Area'] + as_scr_cols].melt(id_vars='Area')
                 m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_scr_cbe else "Mammogram")
@@ -1799,7 +1811,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year):
     else:
         st.info("No Breast Cancer data uploaded yet.")
 
-def render_wash_tab(tab_title, df_key, selected_quarters, year):
+def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -1820,6 +1832,9 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
         
         cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
         filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
         
         safe_filename = tab_title.replace(" ", "_")
         
@@ -1844,7 +1859,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                         flagged_rhus = over_100_df['Area'].tolist()
                         st.warning(f"🕵️‍♂️ **Data Quality Audit:** The following RHUs reported more covered households than their projected total, exceeding 100% coverage: **{', '.join(flagged_rhus)}**. Please verify their submissions.")
 
-                st.markdown(f"#### 🏆 Provincial {tab_title} Highlights")
+                st.markdown(f"#### 🏆 Highlights ({location_header.replace('📍 ', '')})")
                 
                 cols_per_row = 4
                 rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
@@ -1873,14 +1888,14 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                     
                     col_l1, col_l2 = st.columns(2)
                     with col_l1:
-                        st.markdown("**Top 3 Performing RHUs**")
+                        st.markdown("**Top Performing RHUs**")
                         top3 = leader_sorted.head(3)
                         fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
                         fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=10, b=0), height=300)
                         st.plotly_chart(fig_top3, use_container_width=True, key=f"wash_top3_{safe_filename}_{year}")
                     
                     with col_l2:
-                        st.markdown("**Action Required: Bottom 3 RHUs**")
+                        st.markdown("**Action Required: Bottom RHUs**")
                         bot3 = leader_sorted.tail(3).sort_values(by='Coverage', ascending=True)
                         fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
                         fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=10, b=0), height=300)
@@ -1916,7 +1931,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                     col_m1, col_m2 = st.columns(2)
                     
                     with col_m1:
-                        st.markdown(f"#### 🗺️ Provincial Coverage Heatmap")
+                        st.markdown(f"#### 🗺️ Coverage Heatmap")
                         map_df = agg_df.copy()
                         map_df['Coverage (%)'] = np.where(map_df['Projected No. of HHs'] > 0, (map_df[primary_metric] / map_df['Projected No. of HHs']) * 100, 0).clip(0, 100)
                         map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
@@ -1939,7 +1954,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                         gap_sorted = gap_df.sort_values('Unserved', ascending=True).tail(10) 
                         
                         fig_gap = px.bar(gap_sorted, x='Unserved', y='Area', orientation='h', text_auto=True, 
-                                         title=f"Top 10 RHUs with Highest Absolute Unserved HHs",
+                                         title=f"RHUs with Highest Absolute Unserved HHs",
                                          color='Unserved', color_continuous_scale="Reds")
                         fig_gap.update_layout(xaxis_title="Number of Households Without Access", yaxis_title="RHU", margin=dict(t=40, b=0, l=0, r=0))
                         st.plotly_chart(fig_gap, use_container_width=True, key=f"wash_gap_{safe_filename}_{year}")
@@ -1962,7 +1977,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
                         y_label = "Households with Access"
                         
                     fig_trend = px.line(trend_df, x='Month', y='Value', markers=True, 
-                                        title=f"Provincial Trend: {primary_metric} ({year})", 
+                                        title=f"Trend: {primary_metric} ({year})", 
                                         color_discrete_sequence=["#1f77b4"])
                     
                     if view_mode == "Percentage (%) Coverage":
@@ -1981,7 +1996,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year):
     else:
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
 
-def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
+def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, filter_rhus):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -2006,6 +2021,9 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                     filtered_df = pd.merge(filtered_df, lb_filt[['Area', 'Month'] + lb_cols], on=['Area', 'Month'], how='left').fillna(0)
         # --------------------------------------------------------------------------------
         
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+        
         elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
         
         cols_to_plot = []
@@ -2017,7 +2035,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
             
             is_match = False
             if filter_suffix == "total":
-                # Ensures we don't accidentally grab age-specific columns when "Total" is selected
                 if col.lower().endswith("_total") or ("total" in col.lower() and not any(age in col for age in ["10-14", "15-19", "20-49"])):
                     is_match = True
             else:
@@ -2031,7 +2048,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                 mapped_name = get_clean_indicator_name(col)
                 if mapped_name and mapped_name.split('.')[0].isdigit():
                     
-                    # Prevent Total Deliveries from being plotted as a main metric in unrelated tabs
                     if "Total Deliveries" in mapped_name and tab_title not in ["Antenatal Care (ANC)", "Postpartum Care (PPC)"]:
                         continue
                         
@@ -2081,11 +2097,10 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                         if not selected_cols:
                             st.info("💡 In Percentage view, the PPC dashboard strictly tracks **PP 2**, **PNC 4**, **Iron w/ Folic Acid**, and **Vitamin A**. Please select them from the dropdown above.")
                     
-                    # Universally remove "Total Deliveries" from ANY percentage view (since it's just 100%)
                     selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) != "0. Total Deliveries"]
 
                 if selected_cols:
-                    st.markdown(f"#### 🏆 Provincial {tab_title} Highlights ({age_filter})")
+                    st.markdown(f"#### 🏆 Highlights ({location_header.replace('📍 ', '')}) | {age_filter}")
                     cols_per_row = 4
                     rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
                     
@@ -2107,16 +2122,13 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                             rows[row_idx][col_idx].metric(label=clean_name, value=f"{int(total_val):,}")
                     
                     st.markdown("---")
-                    
-                    # --- DYNAMIC CHART GENERATION BASED ON TAB ---
-                    chart_title = f"Provincial Summary ({start_m} - {end_m}) | Group: {age_filter}"
+                    chart_title = f"Summary ({start_m} - {end_m}) | Group: {age_filter}"
                     
                     cascade_data = pd.DataFrame({
                         'Indicator': [get_clean_indicator_name(c) for c in selected_cols],
                         'Count': [agg_df[c].sum() for c in selected_cols]
                     })
                     
-                    # Sort by the numeric prefix if it exists (e.g., "1. Screened", "2. Positive")
                     cascade_data['Sort_Key'] = cascade_data['Indicator'].apply(lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 99)
                     cascade_data = cascade_data.sort_values(by='Sort_Key', ascending=True)
 
@@ -2130,7 +2142,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                         st.markdown(f"#### 📊 {tab_title} Interventions & Screenings")
                         st.markdown("Comparing the total volume of specific interventions or screening yields.")
                         
-                        # Use a standard bar chart for non-sequential data (Nutritional, Syphilis, CBC, etc.)
                         fig_main = px.bar(cascade_data, x='Indicator', y='Count', title=chart_title, text_auto=True, color='Indicator', color_discrete_sequence=px.colors.qualitative.Pastel)
                         fig_main.update_traces(textposition="outside", cliponaxis=False)
                         fig_main.update_layout(showlegend=False, xaxis_title="", yaxis_title="Total Women", margin=dict(t=40))
@@ -2200,7 +2211,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter):
                         trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=valid_trend_cols, var_name='Indicator', value_name='Count')
                         trend_melted['Indicator'] = trend_melted['Indicator'].apply(get_clean_indicator_name)
                         
-                        fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
+                        fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
                         fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
                         st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}_{age_filter}")
                 
@@ -2242,7 +2253,7 @@ if page == "🏠 Home":
 
 elif page == "👶 Immunization Dashboard":
     st.title("💉 Child Immunization Dashboard")
-    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
     st.markdown("---")
     
     st.markdown("##### ⏳ Time Filter")
@@ -2272,12 +2283,16 @@ elif page == "👶 Immunization Dashboard":
     ])
     
     with tab_exec:
-        st.markdown("### 🏆 Provincial Executive Overview")
+        st.markdown(f"### 🏆 Executive Overview ({location_header.replace('📍 ', '')})")
         st.markdown("High-level snapshot of critical DOH performance metrics and forecasting.")
         
         if "MMR" in st.session_state['fhsis_data'] and "Penta" in st.session_state['fhsis_data']:
             mmr_df = filter_data(st.session_state['fhsis_data']["MMR"], start_month, end_month, gender_filter, selected_year)
             penta_df = filter_data(st.session_state['fhsis_data']["Penta"], start_month, end_month, gender_filter, selected_year)
+            
+            if rhu_filter and "Abra (Total)" not in rhu_filter:
+                mmr_df = mmr_df[mmr_df['Area'].isin(rhu_filter)]
+                penta_df = penta_df[penta_df['Area'].isin(rhu_filter)]
             
             fic_col = next((c for c in mmr_df.columns if "FIC" in c and "%" not in c and "DEFICIT" not in c.upper() and "PREVIOUS" not in c.upper()), None)
             cic_col = next((c for c in mmr_df.columns if "CIC" in c and "%" not in c and "DEFICIT" not in c.upper() and "PREVIOUS" not in c.upper()), None)
@@ -2312,7 +2327,7 @@ elif page == "👶 Immunization Dashboard":
                 dq_warnings = []
                 fic_label = "Fully Immunized Child (FIC)"
                 cic_label = "Completely Immunized (CIC)"
-                drop_label = "Provincial Dropout (Penta 1-3)"
+                drop_label = "Dropout (Penta 1-3)"
                 
                 if curr_cov > 110:
                     fic_label += " ⚠️"
@@ -2349,10 +2364,11 @@ elif page == "👶 Immunization Dashboard":
 
                 with st.expander("🖨️ Generate Printable PHO Report", expanded=False):
                     st.markdown(f"### Abra Provincial Health Office - Immunization Report")
+                    st.markdown(f"**Location Filter:** {location_header.replace('📍 ', '')}")
                     st.markdown(f"**Reporting Period:** {start_month} to {end_month} {selected_year} | **Demographic:** {gender_filter}")
                     st.markdown("---")
                     st.markdown(f"""
-                    **1. Provincial Performance Summary**
+                    **1. Performance Summary**
                     * **Total Fully Immunized Children (FIC):** {prov_fic:,.0f} 
                     * **Current FIC Coverage Rate:** {curr_cov:.1f}% (DOH Target: 95%)
                     * **Year-End FIC Forecast:** {projected_cov:.1f}%
@@ -2383,14 +2399,14 @@ elif page == "👶 Immunization Dashboard":
                 col_lead1, col_lead2 = st.columns(2)
                 
                 with col_lead1:
-                    st.markdown("#### 🌟 Top 3 RHUs (FIC)")
+                    st.markdown("#### 🌟 Top RHUs (FIC)")
                     top3 = rhu_sorted.head(3)
                     fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
                     fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
                     st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
                     
                 with col_lead2:
-                    st.markdown("#### ⚠️ Bottom 3 RHUs (FIC)")
+                    st.markdown("#### ⚠️ Bottom RHUs (FIC)")
                     bot3 = rhu_sorted.tail(3).sort_values(by='Coverage', ascending=True)
                     fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
                     fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
@@ -2412,15 +2428,15 @@ elif page == "👶 Immunization Dashboard":
         else:
             st.info("Upload both 'Pentavalent' and 'MMR/FIC' data via the Data Uploader to unlock the Executive Summary.")
 
-    with tab1: render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"], start_month, end_month, gender_filter, selected_year)
-    with tab2: render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3", "Penta 1", "Penta 2", "Penta 3"], start_month, end_month, gender_filter, selected_year)
-    with tab3: render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter, selected_year)
-    with tab4: render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter, selected_year)
-    with tab5: render_tab_content("MMR/MCV, FIC and CIC", "MMR", ["MMR", "MCV", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year)
+    with tab1: render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with tab2: render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3", "Penta 1", "Penta 2", "Penta 3"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with tab3: render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with tab4: render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with tab5: render_tab_content("MMR/MCV, FIC and CIC", "MMR", ["MMR", "MCV", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year, rhu_filter)
 
 elif page == "🩺 NCD Dashboard":
     st.title("🩺 Non-Communicable Disease (NCD) Dashboard")
-    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
     st.markdown("---")
     
     st.markdown("##### ⏳ Time Filter")
@@ -2447,14 +2463,14 @@ elif page == "🩺 NCD Dashboard":
         "🎀 Breast Cancer"
     ])
     
-    with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive", "type 2 dm"], start_month, end_month, gender_filter, selected_year)
-    with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive", "type 2 dm"], start_month, end_month, gender_filter, selected_year)
-    with ncd_tab3: render_cervical_cancer_tab("Cervical_Cancer", start_month, end_month, gender_filter, selected_year)
-    with ncd_tab4: render_breast_cancer_tab("Breast_Cancer", start_month, end_month, gender_filter, selected_year)
+    with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive", "type 2 dm"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive", "type 2 dm"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with ncd_tab3: render_cervical_cancer_tab("Cervical_Cancer", start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with ncd_tab4: render_breast_cancer_tab("Breast_Cancer", start_month, end_month, gender_filter, selected_year, rhu_filter)
 
 elif page == "🚰 WASH Dashboard":
     st.title("🚰 Water, Sanitation, and Hygiene (WASH) Dashboard")
-    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
     st.markdown("---")
     
     st.markdown("##### ⏳ Quarterly Time Filter")
@@ -2467,12 +2483,12 @@ elif page == "🚰 WASH Dashboard":
         st.markdown("<br>", unsafe_allow_html=True)
         wash_tab1, wash_tab2 = st.tabs(["🚰 Safe Water", "🚽 Sanitation"])
         
-        with wash_tab1: render_wash_tab("Safe Water", "Safe_Water", selected_quarters, selected_year)
-        with wash_tab2: render_wash_tab("Sanitation", "Sanitation", selected_quarters, selected_year)
+        with wash_tab1: render_wash_tab("Safe Water", "Safe_Water", selected_quarters, selected_year, rhu_filter)
+        with wash_tab2: render_wash_tab("Sanitation", "Sanitation", selected_quarters, selected_year, rhu_filter)
 
 elif page == "🤰 Maternal Dashboard":
     st.title("🤰 Maternal Health Dashboard")
-    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
     st.markdown("---")
     
     st.markdown("##### ⏳ Time Filter")
@@ -2504,16 +2520,16 @@ elif page == "🤰 Maternal Dashboard":
         "👶 Postpartum Care"
     ])
     
-    with mat_tab1: render_maternal_tab("Antenatal Care (ANC)", "ANC", start_month, end_month, selected_year, age_filter)
-    with mat_tab2: render_maternal_tab("Nutritional Status", "Nutritional_Status", start_month, end_month, selected_year, age_filter)
-    with mat_tab3: render_maternal_tab("Calcium & Deworming", "Calcium_MMS", start_month, end_month, selected_year, age_filter)
-    with mat_tab4: render_maternal_tab("Syphilis & Hep B", "Syphilis_HepB", start_month, end_month, selected_year, age_filter)
-    with mat_tab5: render_maternal_tab("CBC & Gestational Diabetes", "CBC_Gestational", start_month, end_month, selected_year, age_filter)
-    with mat_tab6: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter)
+    with mat_tab1: render_maternal_tab("Antenatal Care (ANC)", "ANC", start_month, end_month, selected_year, age_filter, rhu_filter)
+    with mat_tab2: render_maternal_tab("Nutritional Status", "Nutritional_Status", start_month, end_month, selected_year, age_filter, rhu_filter)
+    with mat_tab3: render_maternal_tab("Calcium & Deworming", "Calcium_MMS", start_month, end_month, selected_year, age_filter, rhu_filter)
+    with mat_tab4: render_maternal_tab("Syphilis & Hep B", "Syphilis_HepB", start_month, end_month, selected_year, age_filter, rhu_filter)
+    with mat_tab5: render_maternal_tab("CBC & Gestational Diabetes", "CBC_Gestational", start_month, end_month, selected_year, age_filter, rhu_filter)
+    with mat_tab6: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter, rhu_filter)
 
 elif page == "💀 Mortality Dashboard":
     st.title("💀 Mortality & Injuries Dashboard")
-    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
     st.markdown("---")
     
     st.markdown("##### ⏳ Time Filter")
@@ -2539,12 +2555,14 @@ elif page == "💀 Mortality Dashboard":
         "💥 Traffic Accidents"
     ])
     
-    with mort_tab1: render_mortality_tab("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total premature", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year, chart_type="bar")
-    with mort_tab2: render_mortality_tab("Traffic Injury Deaths", "Traffic_Deaths", ["traffic injuries", "death"], start_month, end_month, gender_filter, selected_year)
-    with mort_tab3: render_mortality_tab("Traffic Accidents", "Traffic_Accidents", ["road accidents"], start_month, end_month, gender_filter, selected_year)
+    with mort_tab1: render_mortality_tab("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total premature", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year, rhu_filter, chart_type="bar")
+    with mort_tab2: render_mortality_tab("Traffic Injury Deaths", "Traffic_Deaths", ["traffic injury deaths"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with mort_tab3: render_mortality_tab("Traffic Accidents", "Traffic_Accidents", ["total road accidents"], start_month, end_month, gender_filter, selected_year, rhu_filter)
 
 elif page == "📈 YoY Comparison":
     st.title("⚖️ Year-Over-Year (YoY) Performance")
+    if rhu_filter and "Abra (Total)" not in rhu_filter:
+        st.markdown(f"**{location_header}**")
     st.markdown("Compare metric performance between two different years to instantly track regional growth or decline.")
     
     col_y1, col_y2, col_y3 = st.columns(3)
@@ -2649,10 +2667,16 @@ elif page == "📈 YoY Comparison":
                     df_a = raw_df[raw_df['Year'] == year_a]
                     df_b = raw_df[raw_df['Year'] == year_b]
                     
+                    rhu_list = ABRA_RHUS
+                    if rhu_filter and "Abra (Total)" not in rhu_filter:
+                        df_a = df_a[df_a['Area'].isin(rhu_filter)]
+                        df_b = df_b[df_b['Area'].isin(rhu_filter)]
+                        rhu_list = rhu_filter
+                    
                     agg_a = df_a.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_a}'})
                     agg_b = df_b.groupby('Area')[compare_col].sum().reset_index().rename(columns={compare_col: f'{year_b}'})
 
-                    merged = pd.merge(pd.DataFrame({'Area': ABRA_RHUS}), agg_a, on='Area', how='left').fillna(0)
+                    merged = pd.merge(pd.DataFrame({'Area': rhu_list}), agg_a, on='Area', how='left').fillna(0)
                     merged = pd.merge(merged, agg_b, on='Area', how='left').fillna(0)
                     merged['Variance'] = merged[f'{year_b}'] - merged[f'{year_a}']
                     
@@ -2665,7 +2689,7 @@ elif page == "📈 YoY Comparison":
                     
                     top_improvers = merged.nlargest(3, 'Variance')
                     with c_win:
-                        st.success("**Top 3 Most Improved RHUs (Absolute Increase)**")
+                        st.success("**Top Most Improved RHUs (Absolute Increase)**")
                         for idx, row in top_improvers.iterrows():
                             if row['Variance'] > 0:
                                 st.markdown(f"- **{row['Area']}:** +{int(row['Variance'])} counts ({row['% Change']:+.1f}%)")
