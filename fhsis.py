@@ -697,7 +697,7 @@ def load_and_clean_mortality_data(uploaded_file, year):
             # 1. Scan exactly for the new DOH header row
             for idx, row in df.iterrows():
                 row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
-                # Matches "Name of Municipality/Component City"
+                # Expanded to catch any combination of the DOH's naming conventions for the Area column
                 if any('MUNICIPALITY' in v or 'CITY' in v or 'AREA' in v for v in row_str):
                     area_row_idx = idx
                     sub_row_idx = idx + 1
@@ -741,11 +741,9 @@ def load_and_clean_mortality_data(uploaded_file, year):
             clean.columns = unique_cols
             clean = clean.loc[:, clean.columns != '']
             
-            # Identify the Area column
-            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY'])), unique_cols[0])
-            if area_col != 'Area':
-                if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
-                clean.rename(columns={area_col: 'Area'}, inplace=True)
+            # FIX: Forcefully grab the first column regardless of its name and rename it to 'Area'
+            first_col_name = clean.columns[0]
+            clean.rename(columns={first_col_name: 'Area'}, inplace=True)
             
             clean.dropna(subset=['Area'], inplace=True)
             
