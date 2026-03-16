@@ -688,54 +688,46 @@ def load_and_clean_mortality_data(uploaded_file, year):
                 sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
-        abra_rhus_upper = [rhu.upper() for rhu in ABRA_RHUS]
 
         for month_val, df in sheets_to_process.items():
+            area_row_idx = -1
+            sub_row_idx = -1
+            data_start_idx = -1
             
-            # 1. Find the absolute first row that contains data (an Abra RHU or Region marker)
-            first_rhu_idx = -1
+            # 1. Scan exactly for the new DOH header row
             for idx, row in df.iterrows():
                 row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
-                
-                # Check if the row contains Region markers OR any of the 27 municipalities
-                if any(v in ['C A R', 'CAR', 'ABRA'] for v in row_str) or any(rhu in v for rhu in abra_rhus_upper for v in row_str):
-                    first_rhu_idx = idx
-                    break
-                    
-            if first_rhu_idx == -1: 
-                continue # Skip sheet if completely empty or no RHUs found
-                
-            # 2. Trace UPWARDS to find the header row
-            area_row_idx = -1
-            for idx in range(first_rhu_idx - 1, -1, -1):
-                row_str = [str(val).strip().upper() for val in df.iloc[idx].values if pd.notna(val)]
-                if any(k in v for v in row_str for k in ['AREA', 'MUNICIPALITY', 'CITY', 'PROVINCE', 'LGU', 'REGION', 'INDICATOR']):
+                # Matches "Name of Municipality/Component City"
+                if any('MUNICIPALITY' in v or 'CITY' in v or 'AREA' in v for v in row_str):
                     area_row_idx = idx
+                    sub_row_idx = idx + 1
+                    data_start_idx = idx + 2
                     break
                     
-            if area_row_idx == -1:
-                area_row_idx = max(0, first_rhu_idx - 1) # Fallback to exactly 1 row above if keywords are missing
-
-            # 3. Extract headers spanning from area_row_idx to first_rhu_idx
-            headers_df = df.iloc[area_row_idx:first_rhu_idx].copy()
-            for i in range(len(headers_df)):
-                headers_df.iloc[i] = headers_df.iloc[i].ffill() 
+            if area_row_idx == -1: 
+                continue
+            
+            # 2. Extract and forward-fill the main headers (Row 4) and sub headers (Row 5)
+            main_headers = df.iloc[area_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], np.nan, regex=True).ffill()
+            sub_headers = df.iloc[sub_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True)
             
             flat_cols = []
-            for col_idx in range(headers_df.shape[1]):
-                parts = []
-                for row_idx in range(headers_df.shape[0]):
-                    val = str(headers_df.iloc[row_idx, col_idx]).strip().replace('\n', ' ')
-                    if val and val != 'nan' and "Unnamed:" not in val:
-                        if not parts or val != parts[-1]:
-                            parts.append(val)
-                col_name = "_".join(parts)
-                if not col_name: col_name = f"Empty_{col_idx}"
-                flat_cols.append(col_name)
+            for top, bot in zip(main_headers, sub_headers):
+                top_str = str(top).strip().replace('\n', ' ') if pd.notna(top) and str(top) != 'nan' else ""
+                bot_str = str(bot).strip().replace('\n', ' ') if bot and str(bot) != 'nan' else ""
+                if bot_str and bot_str not in top_str and top_str: 
+                    flat_cols.append(f"{top_str}_{bot_str}")
+                elif top_str: 
+                    flat_cols.append(top_str)
+                else: 
+                    flat_cols.append(bot_str)
                 
             seen = set()
             unique_cols = []
             for c in flat_cols:
+                if not c:
+                    unique_cols.append("")
+                    continue
                 new_c = c
                 counter = 1
                 while new_c in seen:
@@ -744,31 +736,31 @@ def load_and_clean_mortality_data(uploaded_file, year):
                 seen.add(new_c)
                 unique_cols.append(new_c)
 
-            # 4. Clean the data
-            clean = df.iloc[first_rhu_idx:].copy()
+            # 3. Clean the data payload
+            clean = df.iloc[data_start_idx:].copy()
             clean.columns = unique_cols
+            clean = clean.loc[:, clean.columns != '']
             
             # Identify the Area column
-            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY', 'PROVINCE', 'LGU'])), unique_cols[0])
+            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY'])), unique_cols[0])
             if area_col != 'Area':
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 clean.rename(columns={area_col: 'Area'}, inplace=True)
             
             clean.dropna(subset=['Area'], inplace=True)
-            clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
             
-            # 5. Fuzzy Matching: Safely extract "Bangued" from strings like "1. Bangued" or "Bangued "
+            # 4. Fuzzy Matching: Safely extract "Bangued" from strings like "1. Bangued"
             def extract_rhu(area_val):
-                area_up = area_val.upper()
+                area_up = str(area_val).upper()
                 for rhu in ABRA_RHUS:
                     if rhu.upper() in area_up:
                         return rhu
                 return None
                 
-            clean['Matched_RHU'] = clean['Area_Clean'].apply(extract_rhu)
-            clean = clean.dropna(subset=['Matched_RHU']) # Drop any rows that aren't our 27 RHUs
+            clean['Matched_RHU'] = clean['Area'].apply(extract_rhu)
+            clean = clean.dropna(subset=['Matched_RHU']) # Drop any provincial total rows at the bottom
             clean['Area'] = clean['Matched_RHU']
-            clean.drop(columns=['Area_Clean', 'Matched_RHU'], inplace=True)
+            clean.drop(columns=['Matched_RHU'], inplace=True)
             
             clean['Month'] = month_val
             clean['Year'] = year
@@ -781,7 +773,9 @@ def load_and_clean_mortality_data(uploaded_file, year):
         if not all_months_data: raise ValueError("Could not find properly formatted monthly sheets.")
         return pd.concat(all_months_data, ignore_index=True)
     except Exception as e:
+        import traceback
         st.error(f"Mortality Template Error processing {uploaded_file.name}: {e}")
+        st.code(traceback.format_exc())
         return None
         
 @st.cache_data
