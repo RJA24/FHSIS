@@ -660,6 +660,7 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
     except Exception as e:
         st.error(f"Maternal Template Parsing Error for {uploaded_file.name}: {e}")
         return None
+
 @st.cache_data
 def load_and_clean_mortality_data(uploaded_file, year):
     try:
@@ -786,12 +787,11 @@ with st.sidebar:
     page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "💀 Mortality Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
     st.markdown("---")
     
-    # ADDED "💀 Mortality Dashboard" to this list!
     if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "💀 Mortality Dashboard"]:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
-        
+
 # --- INITIALIZE SESSION STATE ---
 if 'fhsis_data' not in st.session_state:
     st.session_state['fhsis_data'] = load_data_from_gsheets()
@@ -884,17 +884,6 @@ def get_ncd_col(df, include_words, exclude_words=None):
 def get_clean_indicator_name(col_name):
     c_low = col_name.lower().replace('\n', ' ').replace('-', ' ')
     
-    # --- Mortality & Injuries Mapping ---
-    if "death" in c_low or "deaths" in c_low:
-        if "cvd" in c_low or "cardiovascular" in c_low: return "CVD Deaths"
-        if "cancer" in c_low: return "Cancer Deaths"
-        if "diabetes" in c_low: return "Diabetes Deaths"
-        if "respiratory" in c_low: return "Respiratory Disease Deaths"
-        if "traffic" in c_low: return "Traffic Injury Deaths"
-        if "total" in c_low: return "Total Premature Deaths"
-    elif "road accidents" in c_low: return "Total Road Accidents"
-
-    
     # --- NCD Mapping ---
     if "risk assessed" in c_low: return "Total Risk Assessed"
     if "smoking" in c_low or "smoker" in c_low: return "History of Smoking (Current Smoker)"
@@ -906,6 +895,16 @@ def get_clean_indicator_name(col_name):
     if "unhealthy diet" in c_low: return "Unhealthy Diet"
     if "hypertensive" in c_low: return "Identified Hypertensive"
     if "type 2 dm" in c_low or ("diabetes" in c_low and "gestational" not in c_low): return "Identified Type 2 DM"
+    
+    # --- Mortality & Injuries Mapping ---
+    if "death" in c_low or "deaths" in c_low:
+        if "cvd" in c_low or "cardiovascular" in c_low: return "CVD Deaths"
+        if "cancer" in c_low: return "Cancer Deaths"
+        if "diabetes" in c_low: return "Diabetes Deaths"
+        if "respiratory" in c_low: return "Respiratory Disease Deaths"
+        if "traffic" in c_low: return "Traffic Injury Deaths"
+        if "total" in c_low: return "Total Premature Deaths"
+    elif "road accidents" in c_low: return "Total Road Accidents"
     
     # --- Maternal Care (Livebirths Base) ---
     if 'total livebirths' in c_low: return 'Total Livebirths'
@@ -1293,7 +1292,6 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
                             st.info("Select lifestyle indicators (Smoking, Alcohol, etc.) to view the Risk Profile.")
                             
                     with v_col2:
-                        # REPLACED FUNNEL WITH A BAR CHART FOR ACCURATE CLINICAL REPRESENTATION
                         if c_assessed and (c_hyper or c_dm):
                             bar_stages = ["Total Risk Assessed"]
                             bar_counts = [provincial_antigens[c_assessed]]
@@ -1335,6 +1333,102 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_NCD_{safe_filename}_Data.csv", mime="text/csv")
     else:
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
+
+def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender, year, chart_type="bar"):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        year_df = raw_df[raw_df['Year'] == year]
+        
+        valid_year_cols = ['Area', 'Month', 'Year']
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+        
+        filtered_df = filter_ncd_data(raw_df, start_m, end_m, gender, year, is_cancer=False)
+        
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        
+        safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+        
+        cols_to_plot = []
+        for base in base_metrics:
+            for col in filtered_df.columns:
+                clean_col_name = col.replace('\n', ' ')
+                if base.lower() in clean_col_name.lower() and col not in ['Area', 'Month', 'Year']:
+                    if col not in cols_to_plot: cols_to_plot.append(col)
+        
+        if cols_to_plot:
+            agg_dict = {col: 'sum' for col in cols_to_plot}
+            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            
+            with st.expander("⚙️ Add / Remove Indicators"):
+                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot, key=f"ms_mort_{safe_filename}_{year}_{gender}", format_func=get_clean_indicator_name)
+
+            valid_selected = [c for c in selected_cols if c in agg_df.columns]
+            uid = f"mort_{safe_filename}_{year}_{gender}_{int(time.time())}"
+
+            if valid_selected:
+                provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
+                
+                st.markdown("#### 🏆 Provincial Summary")
+                cols_per_row = 5
+                rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
+                
+                for i, col in enumerate(valid_selected):
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
+                    total_val = provincial_antigens[col]
+                    short_name = get_clean_indicator_name(col)
+                    rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}")
+                
+                st.markdown("---")
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                
+                chart_df = agg_df[['Area'] + valid_selected].copy()
+                melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
+                melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
+                
+                # --- THIS IS WHERE THE LINE CHART HAPPENS ---
+                if chart_type == "line":
+                    fig_rhu = px.line(melted, x='Area', y='Count', color='Indicator', markers=True, title=f"All RHUs ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
+                else:
+                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set1)
+                    fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                    
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Reported Cases", legend_title="Indicator", margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
+                
+                # --- MONTHLY TREND FOR MORTALITY ---
+                if len(filtered_df['Month'].unique()) > 1:
+                    st.markdown("---")
+                    st.markdown(f"#### 📈 Monthly Trend")
+                    trend_agg = filtered_df.groupby('Month')[valid_selected].sum().reset_index()
+                    months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                    trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
+                    trend_agg = trend_agg.sort_values('Month').dropna()
+                    
+                    trend_melted = trend_agg.melt(id_vars='Month', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
+                    trend_melted['Indicator'] = trend_melted['Indicator_Raw'].apply(get_clean_indicator_name)
+                    
+                    fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
+                    fig_trend.update_layout(xaxis_title="Month", yaxis_title="Cases", legend_title="Indicator", margin=dict(t=40))
+                    st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
+                
+            else:
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
+        else:
+            st.warning("Could not find graphing columns for the selected demographic.")
+            
+        with st.expander("📄 View & Download Raw Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
+    else:
+        st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year):
     if gender == "Male":
@@ -2350,8 +2444,40 @@ elif page == "🤰 Maternal Dashboard":
     with mat_tab5: render_maternal_tab("CBC & Gestational Diabetes", "CBC_Gestational", start_month, end_month, selected_year, age_filter)
     with mat_tab6: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter)
 
+elif page == "💀 Mortality Dashboard":
+    st.title("💀 Mortality & Injuries Dashboard")
+    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown("---")
+    
+    st.markdown("##### ⏳ Time Filter")
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed", key="mort_time")
+    with col_t2:
+        if time_view == "Monthly":
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed", key="mort_m")
+        else:
+            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed", key="mort_q")
+            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
+            start_month = q_map[start_q][0]
+            end_month = q_map[end_q][1]
+            
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    mort_tab1, mort_tab2, mort_tab3 = st.tabs([
+        "💔 Premature NCD Deaths", 
+        "🚗 Traffic Deaths",
+        "💥 Traffic Accidents"
+    ])
+    
+    with mort_tab1: render_mortality_tab("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total deaths", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year, chart_type="line")
+    with mort_tab2: render_mortality_tab("Traffic Injury Deaths", "Traffic_Deaths", ["traffic injuries", "death"], start_month, end_month, gender_filter, selected_year)
+    with mort_tab3: render_mortality_tab("Traffic Accidents", "Traffic_Accidents", ["road accidents"], start_month, end_month, gender_filter, selected_year)
+
 elif page == "📈 YoY Comparison":
-    st    .title("⚖️ Year-Over-Year (YoY) Performance")
+    st.title("⚖️ Year-Over-Year (YoY) Performance")
     st.markdown("Compare metric performance between two different years to instantly track regional growth or decline.")
     
     col_y1, col_y2, col_y3 = st.columns(3)
@@ -2524,39 +2650,6 @@ elif page == "📈 YoY Comparison":
         else:
             st.info("No data available for this category yet. Go to Data Uploader to push your FHSIS files.")
 
-elif page == "💀 Mortality Dashboard":
-    st.title("💀 Mortality & Injuries Dashboard")
-    st.markdown(f"**📍 Abra Province** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
-    st.markdown("---")
-    
-    st.markdown("##### ⏳ Time Filter")
-    col_t1, col_t2 = st.columns([1, 2])
-    with col_t1:
-        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed", key="mort_time")
-    with col_t2:
-        if time_view == "Monthly":
-            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed", key="mort_m")
-        else:
-            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
-            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed", key="mort_q")
-            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
-            start_month = q_map[start_q][0]
-            end_month = q_map[end_q][1]
-            
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    mort_tab1, mort_tab2, mort_tab3 = st.tabs([
-        "💔 Premature NCD Deaths", 
-        "🚗 Traffic Deaths",
-        "💥 Traffic Accidents"
-    ])
-    
-    # We pass the exact keywords found in your screenshot so the engine grabs the right columns
-    with mort_tab1: render_ncd_tab_content("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total deaths", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year, chart_type="line")
-    with mort_tab2: render_ncd_tab_content("Traffic Injury Deaths", "Traffic_Deaths", ["traffic injuries", "death"], start_month, end_month, gender_filter, selected_year)
-    with mort_tab3: render_ncd_tab_content("Traffic Accidents", "Traffic_Accidents", ["road accidents"], start_month, end_month, gender_filter, selected_year)
-        
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
     
