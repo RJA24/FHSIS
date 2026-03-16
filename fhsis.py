@@ -791,7 +791,7 @@ with st.sidebar:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
-
+        
 # --- INITIALIZE SESSION STATE ---
 if 'fhsis_data' not in st.session_state:
     st.session_state['fhsis_data'] = load_data_from_gsheets()
