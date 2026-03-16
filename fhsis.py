@@ -669,7 +669,6 @@ def load_and_clean_mortality_data(uploaded_file, year):
         month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                      "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
 
-        # Added CSV fallback just in case
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
             name_low = uploaded_file.name.lower()
@@ -689,31 +688,38 @@ def load_and_clean_mortality_data(uploaded_file, year):
                 sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
+        abra_rhus_upper = [rhu.upper() for rhu in ABRA_RHUS]
+
         for month_val, df in sheets_to_process.items():
-            area_row_idx = -1
-            data_start_idx = -1
             
-            abra_rhus_upper = [rhu.upper() for rhu in ABRA_RHUS]
-            
+            # 1. Find the absolute first row that contains data (an Abra RHU or Region marker)
+            first_rhu_idx = -1
             for idx, row in df.iterrows():
                 row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
                 
-                # Broadened search to include Municipality, City, or Province
-                if area_row_idx == -1 and any(k in v for v in row_str for k in ['AREA', 'MUNICIPALITY', 'CITY', 'PROVINCE']):
-                    area_row_idx = idx
+                # Check if the row contains Region markers OR any of the 27 municipalities
+                if any(v in ['C A R', 'CAR', 'ABRA'] for v in row_str) or any(rhu in v for rhu in abra_rhus_upper for v in row_str):
+                    first_rhu_idx = idx
+                    break
                     
-                if area_row_idx != -1 and idx > area_row_idx:
-                    # Broadened search to trigger the moment it sees ANY recognized RHU (like 'BANGUED')
-                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] + abra_rhus_upper for v in row_str):
-                        data_start_idx = idx
-                        break
-                        
-            if area_row_idx == -1 or data_start_idx == -1: 
-                continue
-            
-            headers_df = df.iloc[area_row_idx:data_start_idx].copy()
-            headers_df.iloc[0] = headers_df.iloc[0].ffill() 
-            if len(headers_df) > 1: headers_df.iloc[1] = headers_df.iloc[1].ffill() 
+            if first_rhu_idx == -1: 
+                continue # Skip sheet if completely empty or no RHUs found
+                
+            # 2. Trace UPWARDS to find the header row
+            area_row_idx = -1
+            for idx in range(first_rhu_idx - 1, -1, -1):
+                row_str = [str(val).strip().upper() for val in df.iloc[idx].values if pd.notna(val)]
+                if any(k in v for v in row_str for k in ['AREA', 'MUNICIPALITY', 'CITY', 'PROVINCE', 'LGU', 'REGION', 'INDICATOR']):
+                    area_row_idx = idx
+                    break
+                    
+            if area_row_idx == -1:
+                area_row_idx = max(0, first_rhu_idx - 1) # Fallback to exactly 1 row above if keywords are missing
+
+            # 3. Extract headers spanning from area_row_idx to first_rhu_idx
+            headers_df = df.iloc[area_row_idx:first_rhu_idx].copy()
+            for i in range(len(headers_df)):
+                headers_df.iloc[i] = headers_df.iloc[i].ffill() 
             
             flat_cols = []
             for col_idx in range(headers_df.shape[1]):
@@ -738,19 +744,32 @@ def load_and_clean_mortality_data(uploaded_file, year):
                 seen.add(new_c)
                 unique_cols.append(new_c)
 
-            clean = df.iloc[data_start_idx:].copy()
+            # 4. Clean the data
+            clean = df.iloc[first_rhu_idx:].copy()
             clean.columns = unique_cols
             
-            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY'])), unique_cols[0])
+            # Identify the Area column
+            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY', 'PROVINCE', 'LGU'])), unique_cols[0])
             if area_col != 'Area':
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 clean.rename(columns={area_col: 'Area'}, inplace=True)
             
             clean.dropna(subset=['Area'], inplace=True)
             clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
-            clean = clean[clean['Area_Clean'].isin(ABRA_RHUS)]
-            clean['Area'] = clean['Area_Clean']
-            clean.drop(columns=['Area_Clean'], inplace=True)
+            
+            # 5. Fuzzy Matching: Safely extract "Bangued" from strings like "1. Bangued" or "Bangued "
+            def extract_rhu(area_val):
+                area_up = area_val.upper()
+                for rhu in ABRA_RHUS:
+                    if rhu.upper() in area_up:
+                        return rhu
+                return None
+                
+            clean['Matched_RHU'] = clean['Area_Clean'].apply(extract_rhu)
+            clean = clean.dropna(subset=['Matched_RHU']) # Drop any rows that aren't our 27 RHUs
+            clean['Area'] = clean['Matched_RHU']
+            clean.drop(columns=['Area_Clean', 'Matched_RHU'], inplace=True)
+            
             clean['Month'] = month_val
             clean['Year'] = year
             
