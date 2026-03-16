@@ -2218,9 +2218,9 @@ elif page == "🤰 Maternal Dashboard":
     with mat_tab6: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter)
 
 elif page == "📈 YoY Comparison":
-    st.title("⚖️ Year-Over-Year (YoY) Performance")
+    st    .title("⚖️ Year-Over-Year (YoY) Performance")
     st.markdown("Compare metric performance between two different years to instantly track regional growth or decline.")
-
+    
     col_y1, col_y2, col_y3 = st.columns(3)
     with col_y1:
         yoy_dataset = st.selectbox("Select Data Category", [
@@ -2329,39 +2329,54 @@ elif page == "📈 YoY Comparison":
                     st.markdown("#### 🏆 Performance Insights")
                     c_win, c_loss = st.columns(2)
                     
+                    # Calculate Percentage Change for better context
+                    merged['% Change'] = np.where(merged[f'{year_a}'] > 0, (merged['Variance'] / merged[f'{year_a}']) * 100, 0)
+                    
                     top_improvers = merged.nlargest(3, 'Variance')
                     with c_win:
-                        st.success("**Top 3 Most Improved RHUs (Increase)**")
+                        st.success("**Top 3 Most Improved RHUs (Absolute Increase)**")
                         for idx, row in top_improvers.iterrows():
                             if row['Variance'] > 0:
-                                st.markdown(f"- **{row['Area']}:** +{int(row['Variance'])} counts")
+                                st.markdown(f"- **{row['Area']}:** +{int(row['Variance'])} counts ({row['% Change']:+.1f}%)")
                             
                     bottom_drops = merged.nsmallest(3, 'Variance')
                     with c_loss:
                         st.error("**Action Required: Steepest Declines**")
                         for idx, row in bottom_drops.iterrows():
                             if row['Variance'] < 0:
-                                st.markdown(f"- **{row['Area']}:** {int(row['Variance'])} counts")
+                                st.markdown(f"- **{row['Area']}:** {int(row['Variance'])} counts ({row['% Change']:+.1f}%)")
 
                     st.markdown("---")
                     st.markdown(f"#### 📊 {get_clean_indicator_name(compare_col)} : {year_a} vs {year_b}")
 
-                    melted_yoy = merged.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Counts')
+                    # Sort by Year B volume for a clean descending staircase effect
+                    merged_sorted_vol = merged.sort_values(by=f'{year_b}', ascending=False)
+                    melted_yoy = merged_sorted_vol.melt(id_vars='Area', value_vars=[f'{year_a}', f'{year_b}'], var_name='Year', value_name='Counts')
+                    
                     fig_yoy = px.bar(melted_yoy, x='Area', y='Counts', color='Year', barmode='group',
-                                     title=f"Head-to-Head Comparison: {year_a} vs {year_b}", text_auto=True, color_discrete_sequence=["#1f77b4", "#ff7f0e"])
+                                     title=f"Head-to-Head Comparison: {year_a} vs {year_b} (Sorted by {year_b} Volume)", 
+                                     text_auto=True, color_discrete_sequence=["#1f77b4", "#ff7f0e"])
+                    fig_yoy.update_traces(textfont_size=11, textposition="outside", cliponaxis=False)
                     fig_yoy.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Number of Counts", margin=dict(t=40))
                     st.plotly_chart(fig_yoy, use_container_width=True, key=f"yoy_bar_{compare_col}_{year_a}_{year_b}")
 
                     st.markdown(f"#### 📈 Growth / Decline (Variance)")
-                    merged['Color'] = np.where(merged['Variance'] >= 0, 'Growth (Positive)', 'Decline (Negative)')
-                    fig_var = px.bar(merged, x='Area', y='Variance', color='Color', text_auto=True,
-                                     color_discrete_map={'Growth (Positive)': 'green', 'Decline (Negative)': 'red'},
+                    
+                    # Sort by Variance and flip horizontally for a readable Diverging Bar Chart
+                    merged_sorted_var = merged.sort_values('Variance', ascending=True)
+                    merged_sorted_var['Color'] = np.where(merged_sorted_var['Variance'] >= 0, 'Growth (Positive)', 'Decline (Negative)')
+                    
+                    fig_var = px.bar(merged_sorted_var, x='Variance', y='Area', orientation='h', color='Color', 
+                                     text='Variance', hover_data={'% Change': ':.1f'},
+                                     color_discrete_map={'Growth (Positive)': '#2CA02C', 'Decline (Negative)': '#D62728'},
                                      title=f"Net Change in Counts ({year_b} minus {year_a})")
-                    fig_var.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Difference in Counts", margin=dict(t=40))
+                    fig_var.update_traces(textposition="outside", cliponaxis=False)
+                    fig_var.update_layout(xaxis_title="Difference in Counts", yaxis_title="Rural Health Unit (RHU)", margin=dict(t=40, l=0, r=0), height=700)
                     st.plotly_chart(fig_var, use_container_width=True, key=f"yoy_var_{compare_col}_{year_a}_{year_b}")
 
                     with st.expander("📄 View Detailed YoY Data Table", expanded=True):
-                        display_df = merged[['Area', f'{year_a}', f'{year_b}', 'Variance']].copy()
+                        display_df = merged[['Area', f'{year_a}', f'{year_b}', 'Variance', '% Change']].copy()
+                        display_df['% Change'] = display_df['% Change'].round(1).astype(str) + '%'
                         display_df['Trend'] = np.where(display_df['Variance'] > 0, '🟢 Improved', np.where(display_df['Variance'] < 0, '🔴 Declined', '⚫ Stable'))
                         st.dataframe(display_df, use_container_width=True, hide_index=True)
                 else:
