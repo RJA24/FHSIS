@@ -2553,9 +2553,10 @@ elif page == "💀 Mortality Dashboard":
     ])
     
     # We pass the exact keywords found in your screenshot so the engine grabs the right columns
-    with mort_tab1: render_ncd_tab_content("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total deaths", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year)
+    with mort_tab1: render_ncd_tab_content("Premature NCD Deaths (30-69 y.o.)", "Premature_NCD", ["total deaths", "cvd", "cancer", "diabetes", "respiratory"], start_month, end_month, gender_filter, selected_year, chart_type="line")
     with mort_tab2: render_ncd_tab_content("Traffic Injury Deaths", "Traffic_Deaths", ["traffic injuries", "death"], start_month, end_month, gender_filter, selected_year)
     with mort_tab3: render_ncd_tab_content("Traffic Accidents", "Traffic_Accidents", ["road accidents"], start_month, end_month, gender_filter, selected_year)
+        
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
     
