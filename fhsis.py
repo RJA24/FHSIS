@@ -663,35 +663,53 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
 @st.cache_data
 def load_and_clean_mortality_data(uploaded_file, year):
     try:
-        xls = pd.ExcelFile(uploaded_file)
         sheets_to_process = {}
         valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
         invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem", "pop"]
         month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
                      "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
-        
-        for sheet in xls.sheet_names:
-            sheet_lower = sheet.lower().strip()
-            months_found = [m for m in valid_months if m in sheet_lower]
-            if len(months_found) != 1: continue
-            if any(inv in sheet_lower for inv in invalid_keywords): continue
-            sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+
+        # Added CSV fallback just in case
+        if uploaded_file.name.endswith('.csv'):
+            df_raw = pd.read_csv(uploaded_file, header=None)
+            name_low = uploaded_file.name.lower()
+            month_found = "Jan" 
+            for m in valid_months:
+                if m in name_low:
+                    month_found = month_map[m]
+                    break
+            sheets_to_process = {month_found: df_raw}
+        else:
+            xls = pd.ExcelFile(uploaded_file)
+            for sheet in xls.sheet_names:
+                sheet_lower = sheet.lower().strip()
+                months_found = [m for m in valid_months if m in sheet_lower]
+                if len(months_found) != 1: continue
+                if any(inv in sheet_lower for inv in invalid_keywords): continue
+                sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
         for month_val, df in sheets_to_process.items():
             area_row_idx = -1
             data_start_idx = -1
             
+            abra_rhus_upper = [rhu.upper() for rhu in ABRA_RHUS]
+            
             for idx, row in df.iterrows():
                 row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
-                if any('AREA' in v for v in row_str) and area_row_idx == -1:
+                
+                # Broadened search to include Municipality, City, or Province
+                if area_row_idx == -1 and any(k in v for v in row_str for k in ['AREA', 'MUNICIPALITY', 'CITY', 'PROVINCE']):
                     area_row_idx = idx
+                    
                 if area_row_idx != -1 and idx > area_row_idx:
-                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] for v in row_str):
+                    # Broadened search to trigger the moment it sees ANY recognized RHU (like 'BANGUED')
+                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] + abra_rhus_upper for v in row_str):
                         data_start_idx = idx
                         break
                         
-            if area_row_idx == -1 or data_start_idx == -1: continue
+            if area_row_idx == -1 or data_start_idx == -1: 
+                continue
             
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
             headers_df.iloc[0] = headers_df.iloc[0].ffill() 
@@ -723,7 +741,7 @@ def load_and_clean_mortality_data(uploaded_file, year):
             clean = df.iloc[data_start_idx:].copy()
             clean.columns = unique_cols
             
-            area_col = next((c for c in unique_cols if "AREA" in c.upper()), unique_cols[0])
+            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY'])), unique_cols[0])
             if area_col != 'Area':
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 clean.rename(columns={area_col: 'Area'}, inplace=True)
