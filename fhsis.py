@@ -1388,6 +1388,22 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                         rows[row_idx][col_idx].metric(label=f"{short_name} (%)", value=f"{perc:.3f}%")
                     else:
                         rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}")
+
+                # --- 1. CAUSE OF DEATH DONUT CHART (Tab 1 Only) ---
+                if "Premature NCD" in tab_title:
+                    disease_cols = [c for c in valid_selected if "total" not in c.lower() and "pop" not in c.lower()]
+                    if disease_cols:
+                        donut_data = pd.DataFrame({
+                            'Cause': [get_clean_indicator_name(c) for c in disease_cols],
+                            'Deaths': [provincial_antigens[c] for c in disease_cols]
+                        })
+                        donut_data = donut_data[donut_data['Deaths'] > 0] # Hide zeroes for a cleaner chart
+                        if not donut_data.empty:
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            fig_donut = px.pie(donut_data, values='Deaths', names='Cause', hole=0.4, title="🍩 Province-Wide Cause of Death Breakdown", color_discrete_sequence=px.colors.qualitative.Pastel)
+                            fig_donut.update_traces(textposition='inside', textinfo='percent+label')
+                            fig_donut.update_layout(margin=dict(t=40, b=0))
+                            st.plotly_chart(fig_donut, use_container_width=True, key=f"donut_{uid}")
                 
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
@@ -1413,7 +1429,40 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                     
                 fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
+
+                # --- 2 & 3. HIGH-RISK LEADERBOARD & HOTSPOT MAP ---
+                st.markdown("---")
+                st.markdown("#### 🚨 High-Risk Hotspots & Leaderboard")
+                col_m1, col_m2 = st.columns(2)
                 
+                # We use the very first selected metric (usually "Total Deaths") as the anchor for the Map and Leaderboard
+                primary_col = valid_selected[0]
+                metric_name = get_clean_indicator_name(primary_col)
+                
+                with col_m1:
+                    st.markdown(f"**Top 5 RHUs (Highest {metric_name})**")
+                    leader_df = chart_df.copy()
+                    leader_df = leader_df.sort_values(by=primary_col, ascending=True).tail(5)
+                    fig_lead = px.bar(leader_df, x=primary_col, y='Area', orientation='h', text_auto=True if view_mode == "Raw Counts" else '.3f', color=primary_col, color_continuous_scale="Reds")
+                    fig_lead.update_layout(xaxis_title=y_axis_label, yaxis_title="", margin=dict(t=0, b=0))
+                    st.plotly_chart(fig_lead, use_container_width=True, key=f"lead_{uid}")
+                    
+                with col_m2:
+                    st.markdown(f"**Geospatial Hotspots ({metric_name})**")
+                    map_df = chart_df.copy()
+                    map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
+                    map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
+                    map_df = map_df[map_df['Lat'] != 0] 
+                    
+                    fig_map = px.scatter_mapbox(map_df, lat="Lat", lon="Lon", hover_name="Area", 
+                                                hover_data={"Lat": False, "Lon": False, primary_col: True if view_mode == "Raw Counts" else ':.3f'}, 
+                                                color=primary_col, size=primary_col, 
+                                                color_continuous_scale="Reds", size_max=20, zoom=8.5, 
+                                                center={"lat": 17.595, "lon": 120.613}, mapbox_style="carto-positron")
+                    fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+                    st.plotly_chart(fig_map, use_container_width=True, key=f"map_hotspot_{uid}")
+                
+                # --- MONTHLY TREND ANALYSIS ---
                 if len(filtered_df['Month'].unique()) > 1:
                     st.markdown("---")
                     st.markdown(f"#### 📈 Monthly Trend")
