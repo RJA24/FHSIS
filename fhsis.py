@@ -2260,6 +2260,7 @@ elif page == "📈 YoY Comparison":
         
         is_ncd = yoy_dataset in ["Adults Risk (20-59)", "Seniors Risk (≥60)", "Cervical Cancer", "Breast Cancer"]
         is_maternal = yoy_dataset in ["Antenatal Care (ANC)", "Postpartum Care (PPC)", "Livebirths & Deliveries", "Nutritional Status & Td", "Calcium, MMS & Deworming", "Syphilis & Hep B", "CBC & Gestational Diabetes"]
+        is_cancer_dataset = yoy_dataset in ["Cervical Cancer", "Breast Cancer"]
 
         if is_cancer_dataset and gender_filter == "Male":
             st.info("🎗️ Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
