@@ -786,7 +786,8 @@ with st.sidebar:
     page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "💀 Mortality Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
     st.markdown("---")
     
-    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard"]:
+    # ADDED "💀 Mortality Dashboard" to this list!
+    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "💀 Mortality Dashboard"]:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
