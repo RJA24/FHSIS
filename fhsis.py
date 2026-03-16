@@ -661,7 +661,6 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
         st.error(f"Maternal Template Parsing Error for {uploaded_file.name}: {e}")
         return None
 
-@st.cache_data
 def load_and_clean_mortality_data(uploaded_file, year):
     try:
         name_low = uploaded_file.name.lower()
@@ -696,7 +695,12 @@ def load_and_clean_mortality_data(uploaded_file, year):
         for month_val, df in sheets_to_process.items():
             df = df.dropna(how='all').reset_index(drop=True)
             
-            # Find the exact column index by anchoring onto "BANGUED"
+            if not (is_premature_ncd or is_traffic_death or is_traffic_acc):
+                head_str = str(df.head(15).values).lower()
+                if "cardiovascular" in head_str or "cancer" in head_str: is_premature_ncd = True
+                elif "due to traffic injuries" in head_str: is_traffic_death = True
+                elif "road accidents" in head_str: is_traffic_acc = True
+            
             area_col_idx = -1
             for r_idx, row in df.iterrows():
                 for c_idx, val in enumerate(row):
@@ -707,12 +711,13 @@ def load_and_clean_mortality_data(uploaded_file, year):
                     break
                     
             if area_col_idx == -1:
-                continue # Skip sheet if no RHU data found
+                continue 
             
-            # Map the exact offsets from the Area column
+            # --- ADDED 'ELIG. POP.' AND OFFSET 1 TO GRAB DENOMINATOR ---
             if is_premature_ncd:
-                offsets = [2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20]
+                offsets = [1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20]
                 col_names = [
+                    'Elig. Pop.',
                     'Total Premature Deaths_Male', 'Total Premature Deaths_Female', 'Total Premature Deaths_Total',
                     'CVD Deaths_Male', 'CVD Deaths_Female', 'CVD Deaths_Total',
                     'Cancer Deaths_Male', 'Cancer Deaths_Female', 'Cancer Deaths_Total',
@@ -720,11 +725,11 @@ def load_and_clean_mortality_data(uploaded_file, year):
                     'Respiratory Disease Deaths_Male', 'Respiratory Disease Deaths_Female', 'Respiratory Disease Deaths_Total'
                 ]
             elif is_traffic_death:
-                offsets = [2, 3, 4]
-                col_names = ['Traffic Injury Deaths_Male', 'Traffic Injury Deaths_Female', 'Traffic Injury Deaths_Total']
+                offsets = [1, 2, 3, 4]
+                col_names = ['Elig. Pop.', 'Traffic Injury Deaths_Male', 'Traffic Injury Deaths_Female', 'Traffic Injury Deaths_Total']
             elif is_traffic_acc:
                 offsets = [1]
-                col_names = ['Total Road Accidents_Total'] # Road Accidents are not tracked by gender in the DOH template
+                col_names = ['Total Road Accidents_Total'] 
             else:
                 continue 
                 
@@ -739,7 +744,6 @@ def load_and_clean_mortality_data(uploaded_file, year):
             mapped_df['Matched_RHU'] = df[area_col_idx].apply(extract_rhu)
             mapped_df['Area'] = mapped_df['Matched_RHU']
             
-            # Extract data dynamically using the offsets
             for i, offset in enumerate(offsets):
                 target_idx = area_col_idx + offset
                 if target_idx < df.shape[1]:
@@ -1328,7 +1332,9 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
         valid_year_cols = ['Area', 'Month', 'Year']
         for col in year_df.columns:
             if col not in valid_year_cols:
-                if pd.api.types.is_numeric_dtype(year_df[col]):
+                if 'elig' in col.lower() or 'pop' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
                     if year_df[col].sum() > 0:
                         valid_year_cols.append(col)
         
@@ -1338,16 +1344,18 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
         filtered_df = filtered_df[cols_to_keep_final]
         
         safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
         
         cols_to_plot = []
         for base in base_metrics:
             for col in filtered_df.columns:
                 clean_col_name = col.replace('\n', ' ')
-                if base.lower() in clean_col_name.lower() and col not in ['Area', 'Month', 'Year']:
+                if base.lower() in clean_col_name.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
                     if col not in cols_to_plot: cols_to_plot.append(col)
         
         if cols_to_plot:
             agg_dict = {col: 'sum' for col in cols_to_plot}
+            for ec in elig_cols: agg_dict[ec] = 'max' # Ensure denominators carry over properly
             agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             
             with st.expander("⚙️ Add / Remove Indicators"):
@@ -1357,7 +1365,13 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
             uid = f"mort_{safe_filename}_{year}_{gender}_{int(time.time())}"
 
             if valid_selected:
+                # --- TOGGLE SWITCH FOR PERCENTAGE VIEW ---
+                view_mode = "Raw Counts"
+                if elig_cols:
+                    view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%)"], horizontal=True, key=f"toggle_view_mort_{safe_filename}_{year}_{gender}")
+                    
                 provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
+                provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
                 st.markdown("#### 🏆 Provincial Summary")
                 cols_per_row = 5
@@ -1368,39 +1382,58 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
                     col_idx = i % cols_per_row
                     total_val = provincial_antigens[col]
                     short_name = get_clean_indicator_name(col)
-                    rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}")
+                    
+                    if view_mode == "Percentage (%)" and elig_cols:
+                        perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
+                        rows[row_idx][col_idx].metric(label=f"{short_name} (%)", value=f"{perc:.3f}%")
+                    else:
+                        rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}")
                 
                 st.markdown("---")
                 st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
                 
-                chart_df = agg_df[['Area'] + valid_selected].copy()
+                chart_df = agg_df[['Area'] + valid_selected + elig_cols].copy()
+                y_axis_label = "Reported Cases"
+                
+                if view_mode == "Percentage (%)" and elig_cols:
+                    main_elig_col = elig_cols[0]
+                    for col in valid_selected:
+                        chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
+                        chart_df[col] = chart_df[col].round(3)
+                    y_axis_label = "Mortality Rate (%)"
+                
                 melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                 melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
                 
-                # --- THIS IS WHERE THE LINE CHART HAPPENS ---
                 if chart_type == "line":
                     fig_rhu = px.line(melted, x='Area', y='Count', color='Indicator', markers=True, title=f"All RHUs ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
                 else:
                     fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set1)
                     fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
                     
-                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Reported Cases", legend_title="Indicator", margin=dict(t=60))
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=60))
                 st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
                 
-                # --- MONTHLY TREND FOR MORTALITY ---
                 if len(filtered_df['Month'].unique()) > 1:
                     st.markdown("---")
                     st.markdown(f"#### 📈 Monthly Trend")
-                    trend_agg = filtered_df.groupby('Month')[valid_selected].sum().reset_index()
+                    trend_agg_dict = {col: 'sum' for col in valid_selected}
+                    for ec in elig_cols: trend_agg_dict[ec] = 'max'
+                    trend_agg = filtered_df.groupby('Month').agg(trend_agg_dict).reset_index()
+
                     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                     trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
                     trend_agg = trend_agg.sort_values('Month').dropna()
+                    
+                    if view_mode == "Percentage (%)" and elig_cols:
+                        for col in valid_selected:
+                            trend_agg[col] = np.where(provincial_elig > 0, (trend_agg[col] / provincial_elig) * 100, 0).round(3)
                     
                     trend_melted = trend_agg.melt(id_vars='Month', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
                     trend_melted['Indicator'] = trend_melted['Indicator_Raw'].apply(get_clean_indicator_name)
                     
                     fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Provincial Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
-                    fig_trend.update_layout(xaxis_title="Month", yaxis_title="Cases", legend_title="Indicator", margin=dict(t=40))
+                    fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=40))
                     st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
                 
             else:
