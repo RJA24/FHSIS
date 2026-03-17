@@ -986,9 +986,9 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 
             st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
                 
-                # CHUNK CARDS INTO A GRID (Max 4 per row)
-                cols_per_row = 4
-                rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
+            # CHUNK CARDS INTO A GRID (Max 4 per row)
+            cols_per_row = 4
+            rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
                 
                 for i, col in enumerate(valid_selected):
                     row_idx = i // cols_per_row
