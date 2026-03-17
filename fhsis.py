@@ -23,25 +23,27 @@ def apply_custom_css():
             border: 1px solid rgba(130, 130, 130, 0.2); 
             border-left: 5px solid #1f77b4;
             box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+            height: 100% !important; /* Forces the card to stretch vertically */
+            display: flex !important;
+            flex-direction: column !important;
         }
         
-        /* BRUTE FORCE TEXT WRAPPING (Fixes the "..." cutoff) */
-        [data-testid="stMetricLabel"] {
+        /* ULTIMATE TEXT WRAPPING - Drills into every nested layer */
+        [data-testid="stMetricLabel"], 
+        [data-testid="stMetricLabel"] > div, 
+        [data-testid="stMetricLabel"] p, 
+        [data-testid="stMetricLabel"] span {
             white-space: normal !important;
-            overflow: visible !important;
-        }
-        
-        [data-testid="stMetricLabel"] > div {
-            white-space: normal !important;
-            overflow: visible !important;
-            text-overflow: clip !important;
-            line-height: 1.3;
-            padding-bottom: 5px;
+            word-wrap: break-word !important;
+            overflow-wrap: break-word !important;
+            text-overflow: unset !important;
+            line-height: 1.3 !important;
+            height: auto !important;
         }
         
         /* Adaptive text colors */
         [data-testid="stMetricLabel"] p {
-            font-size: 0.95rem !important;
+            font-size: 0.90rem !important; /* Slightly smaller to fit long DOH names */
             font-weight: 600 !important;
             color: var(--text-color);
         }
@@ -51,7 +53,7 @@ def apply_custom_css():
             font-weight: 700 !important;
             color: var(--text-color);
             white-space: normal !important;
-            overflow: visible !important;
+            margin-top: auto !important; /* Pushes the number to the bottom */
         }
         
         .streamlit-expanderHeader {
