@@ -6,7 +6,7 @@ from streamlit_gsheets import GSheetsConnection
 import time
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="https://github.com/RJA24/FHSIS/blob/main/Abra_provincial_seal.png?raw=true", layout="wide")
+st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
 
 def apply_custom_css():
     st.markdown("""
