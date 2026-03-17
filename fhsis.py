@@ -15,29 +15,49 @@ st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="�
 def apply_custom_css():
     st.markdown("""
         <style>
-        /* Metric Card Styling */
+        /* Adaptive Metric Card Styling */
         [data-testid="stMetric"] {
-            background-color: #ffffff;
+            background-color: var(--secondary-background-color);
             border-radius: 8px;
             padding: 15px 20px;
-            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05);
-            border: 1px solid #f0f2f6;
+            border: 1px solid rgba(130, 130, 130, 0.2); 
             border-left: 5px solid #1f77b4;
+            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
         }
+        
+        /* BRUTE FORCE TEXT WRAPPING (Fixes the "..." cutoff) */
         [data-testid="stMetricLabel"] {
-            font-size: 1rem !important;
-            font-weight: 600 !important;
-            color: #555555;
+            white-space: normal !important;
+            overflow: visible !important;
         }
-        [data-testid="stMetricValue"] {
+        
+        [data-testid="stMetricLabel"] > div {
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            line-height: 1.3;
+            padding-bottom: 5px;
+        }
+        
+        /* Adaptive text colors */
+        [data-testid="stMetricLabel"] p {
+            font-size: 0.95rem !important;
+            font-weight: 600 !important;
+            color: var(--text-color);
+        }
+        
+        [data-testid="stMetricValue"], [data-testid="stMetricValue"] > div {
             font-size: 1.8rem !important;
             font-weight: 700 !important;
-            color: #2c3e50;
+            color: var(--text-color);
+            white-space: normal !important;
+            overflow: visible !important;
         }
+        
         .streamlit-expanderHeader {
             font-weight: 600;
             border-radius: 5px;
-            background-color: #f8f9fa;
+            background-color: var(--secondary-background-color);
         }
         </style>
     """, unsafe_allow_html=True)
@@ -965,15 +985,23 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
                 st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
-                kpi_cols = st.columns(len(valid_selected))
+                
+                # CHUNK CARDS INTO A GRID (Max 4 per row)
+                cols_per_row = 4
+                rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
+                
                 for i, col in enumerate(valid_selected):
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
+                    
                     total_val = provincial_antigens[col]
                     clean_name = col.replace(f"_{gender}", "")
+                    
                     if view_mode == "Percentage (%) Coverage" and elig_cols:
                         perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
-                        kpi_cols[i].metric(label=f"{clean_name} Target Achieved", value=f"{perc:.1f}%")
+                        rows[row_idx][col_idx].metric(label=f"{clean_name} Target", value=f"{perc:.1f}%")
                     else:
-                        kpi_cols[i].metric(label=f"Total {clean_name}", value=f"{int(total_val):,}")
+                        rows[row_idx][col_idx].metric(label=f"{clean_name}", value=f"{int(total_val):,}")
                 
                 st.markdown("---")
                 chart_df = agg_df[['Area'] + valid_selected + elig_cols].copy()
