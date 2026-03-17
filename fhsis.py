@@ -80,16 +80,16 @@ def apply_custom_css():
                 color: black !important;
             }
             
-            /* Hide the sidebar, top UI header, and interactive widgets */
+            /* Aggressively hide interactive elements */
             [data-testid="stSidebar"], 
             header[data-testid="stHeader"], 
-            .stButton, 
-            .stSelectbox, 
-            .stRadio, 
-            .stMultiSelect, 
-            .stSlider, 
             [data-testid="stToolbar"],
-            .streamlit-expanderHeader {
+            [data-testid="stSlider"],
+            [data-testid="stRadio"],
+            [data-testid="stSelectbox"],
+            [data-testid="stMultiSelect"],
+            [data-testid="stButton"],
+            [data-testid="stExpander"] {
                 display: none !important;
             }
             
