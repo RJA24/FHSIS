@@ -2,12 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.io as pio
 from streamlit_gsheets import GSheetsConnection
 import time
-
-# --- GLOBAL UI POLISH ---
-pio.templates.default = "plotly_white"
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="🛡️", layout="wide")
@@ -23,12 +19,12 @@ def apply_custom_css():
             border: 1px solid rgba(130, 130, 130, 0.2); 
             border-left: 5px solid #1f77b4;
             box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
-            height: 100% !important; /* Forces the card to stretch vertically */
+            height: 100% !important;
             display: flex !important;
             flex-direction: column !important;
         }
         
-        /* ULTIMATE TEXT WRAPPING - Drills into every nested layer */
+        /* BRUTE FORCE TEXT WRAPPING */
         [data-testid="stMetricLabel"], 
         [data-testid="stMetricLabel"] > div, 
         [data-testid="stMetricLabel"] p, 
@@ -43,7 +39,7 @@ def apply_custom_css():
         
         /* Adaptive text colors */
         [data-testid="stMetricLabel"] p {
-            font-size: 0.90rem !important; /* Slightly smaller to fit long DOH names */
+            font-size: 0.90rem !important;
             font-weight: 600 !important;
             color: var(--text-color);
         }
@@ -53,13 +49,68 @@ def apply_custom_css():
             font-weight: 700 !important;
             color: var(--text-color);
             white-space: normal !important;
-            margin-top: auto !important; /* Pushes the number to the bottom */
+            margin-top: auto !important;
         }
         
         .streamlit-expanderHeader {
             font-weight: 600;
             border-radius: 5px;
             background-color: var(--secondary-background-color);
+        }
+        
+        /* --- HIDDEN PRINT HEADER --- */
+        .print-only-header {
+            display: none;
+        }
+
+        /* --- PRINT-PERFECT PDF ENGINE --- */
+        @media print {
+            /* Force white background to save ink */
+            body, .stApp {
+                background-color: white !important;
+                color: black !important;
+            }
+            
+            /* Show the official DOH Header only on paper */
+            .print-only-header {
+                display: block !important;
+                text-align: center;
+                margin-bottom: 30px;
+                font-family: 'Times New Roman', serif;
+                color: black !important;
+            }
+            
+            /* Hide the sidebar, top UI header, and interactive widgets */
+            [data-testid="stSidebar"], 
+            header[data-testid="stHeader"], 
+            .stButton, 
+            .stSelectbox, 
+            .stRadio, 
+            .stMultiSelect, 
+            .stSlider, 
+            [data-testid="stToolbar"],
+            .streamlit-expanderHeader {
+                display: none !important;
+            }
+            
+            /* Expand the main container to fill the paper */
+            .block-container {
+                max-width: 100% !important;
+                padding-top: 0 !important;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+            }
+            
+            /* Force cards to print clearly without dark-mode inversion */
+            [data-testid="stMetric"] {
+                background-color: #f8f9fa !important;
+                border: 1px solid #ccc !important;
+                -webkit-print-color-adjust: exact;
+                color-adjust: exact;
+            }
+            [data-testid="stMetricLabel"] p, [data-testid="stMetricValue"], [data-testid="stMetricValue"] > div {
+                color: black !important;
+            }
         }
         </style>
     """, unsafe_allow_html=True)
@@ -432,6 +483,155 @@ def load_and_clean_ncd_data(uploaded_file, year):
         return None
 
 @st.cache_data
+def load_and_clean_wash_data(uploaded_file, year):
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df_raw = pd.read_csv(uploaded_file, header=None)
+            q_val = "Q1"
+            name_low = uploaded_file.name.lower()
+            if "q2" in name_low or "qtr2" in name_low: q_val = "Q2"
+            elif "q3" in name_low or "qtr3" in name_low: q_val = "Q3"
+            elif "q4" in name_low or "qtr4" in name_low: q_val = "Q4"
+            sheets_to_process = {q_val: df_raw}
+        else:
+            xls = pd.ExcelFile(uploaded_file)
+            sheets_to_process = {}
+            valid_qs = ["qtr1", "q1", "qtr2", "q2", "qtr3", "q3", "qtr4", "q4"]
+            q_map = {"qtr1": "Q1", "q1": "Q1", "qtr2": "Q2", "q2": "Q2", 
+                     "qtr3": "Q3", "q3": "Q3", "qtr4": "Q4", "q4": "Q4"}
+            
+            for sheet in xls.sheet_names:
+                sheet_lower = sheet.lower().strip()
+                for q_key in valid_qs:
+                    if q_key in sheet_lower:
+                        sheets_to_process[q_map[q_key]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+                        break
+
+        all_q_data = []
+        for q_val, df in sheets_to_process.items():
+            area_row_idx = -1
+            data_start_idx = -1
+            
+            for idx, row in df.iterrows():
+                row_vals = [str(val).upper() for val in row.values if pd.notna(val)]
+                
+                if area_row_idx == -1 and any(k in v for v in row_vals for k in ['AREA', 'MUNICIPALITY', 'CITY']):
+                    area_row_idx = idx
+                    
+                if area_row_idx != -1 and idx > area_row_idx:
+                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] for v in row_vals):
+                        data_start_idx = idx
+                        break
+                        
+            if area_row_idx == -1 or data_start_idx == -1: 
+                continue
+            
+            headers_df = df.iloc[area_row_idx:data_start_idx].copy()
+            for i in range(len(headers_df)):
+                headers_df.iloc[i] = headers_df.iloc[i].ffill() 
+            
+            flat_cols = []
+            for col_idx in range(headers_df.shape[1]):
+                parts = []
+                for row_idx in range(headers_df.shape[0]):
+                    val = str(headers_df.iloc[row_idx, col_idx]).strip().replace('\n', ' ')
+                    if val and val != 'nan' and "Unnamed:" not in val:
+                        if not parts or val != parts[-1]:
+                            parts.append(val)
+                col_name = "_".join(parts)
+                if not col_name: col_name = f"Empty_{col_idx}"
+                flat_cols.append(col_name)
+                
+            seen = set()
+            unique_cols = []
+            for c in flat_cols:
+                new_c = c
+                counter = 1
+                while new_c in seen:
+                    new_c = f"{c}_{counter}"
+                    counter += 1
+                seen.add(new_c)
+                unique_cols.append(new_c)
+
+            clean = df.iloc[data_start_idx:].copy()
+            clean.columns = unique_cols
+            
+            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY'])), unique_cols[0])
+            
+            if area_col != 'Area':
+                if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
+                clean.rename(columns={area_col: 'Area'}, inplace=True)
+
+            renamed_cols = {}
+            found_targets = set()
+            
+            for c in clean.columns:
+                c_upper = c.upper()
+                target = None
+                
+                if "PROJECTED" in c_upper and "HH" in c_upper:
+                    target = "Projected No. of HHs"
+                elif "SAFELY MANAGED DRINKING" in c_upper and "%" not in c_upper:
+                    target = "HHs using Safely Managed Drinking-water Services"
+                elif "SAFELY MANAGED SANITATION" in c_upper and "%" not in c_upper:
+                    target = "HHs using Safely Managed Sanitation Service"
+                elif "LEVEL 1" in c_upper and "%" not in c_upper:
+                    target = "HH with Access to Basic Safe Water Supply_Lvl_1"
+                elif "LEVEL 2" in c_upper and "%" not in c_upper:
+                    target = "HH with Access to Basic Safe Water Supply_Lvl_2"
+                elif "LEVEL 3" in c_upper and "%" not in c_upper:
+                    target = "HH with Access to Basic Safe Water Supply_Lvl_3"
+                elif "SEPTIC TANK" in c_upper and "%" not in c_upper:
+                    target = "Pour / flush Toilet connected to Septic Tank"
+                elif "COMMUNITY SEWER" in c_upper and "%" not in c_upper:
+                    target = "Pour / flush Toilet connected to Community sewer/sewerage system"
+                elif "PIT LATRINE" in c_upper and "%" not in c_upper:
+                    target = "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"
+                elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
+                    target = "HH with Access to Basic Safe Water Supply"
+                elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
+                    target = "HH with Basic Sanitation Facility"
+
+                if target and target not in found_targets:
+                    renamed_cols[c] = target
+                    found_targets.add(target)
+
+            clean.rename(columns=renamed_cols, inplace=True)
+            
+            keep_cols = ['Area'] + list(found_targets)
+            clean = clean.loc[:, ~clean.columns.duplicated()]
+            clean = clean[[c for c in keep_cols if c in clean.columns]]
+            
+            clean.dropna(subset=['Area'], inplace=True)
+            clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
+            clean = clean[clean['Area_Clean'].isin(ABRA_RHUS)]
+            clean['Area'] = clean['Area_Clean']
+            clean.drop(columns=['Area_Clean'], inplace=True)
+            clean['Month'] = q_val  
+            clean['Year'] = year
+            
+            for col in clean.columns:
+                if col not in ['Area', 'Month', 'Year']:
+                    clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
+                    
+            if all(c in clean.columns for c in ["HH with Access to Basic Safe Water Supply_Lvl_1", "HH with Access to Basic Safe Water Supply_Lvl_2", "HH with Access to Basic Safe Water Supply_Lvl_3"]):
+                clean["HH with Access to Basic Safe Water Supply"] = clean["HH with Access to Basic Safe Water Supply_Lvl_1"] + clean["HH with Access to Basic Safe Water Supply_Lvl_2"] + clean["HH with Access to Basic Safe Water Supply_Lvl_3"]
+                
+            if all(c in clean.columns for c in ["Pour / flush Toilet connected to Septic Tank", "Pour / flush Toilet connected to Community sewer/sewerage system", "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"]):
+                clean["HH with Basic Sanitation Facility"] = clean["Pour / flush Toilet connected to Septic Tank"] + clean["Pour / flush Toilet connected to Community sewer/sewerage system"] + clean["Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"]
+
+            all_q_data.append(clean)
+            
+        if not all_q_data: 
+            st.error(f"Could not locate correct Municipality headers in {uploaded_file.name}.")
+            return None
+            
+        return pd.concat(all_q_data, ignore_index=True)
+    except Exception as e:
+        st.error(f"WASH Template Parsing Error processing {uploaded_file.name}: {e}")
+        return None
+
+@st.cache_data
 def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
     try:
         sheets_to_process = {}
@@ -678,10 +878,29 @@ def load_and_clean_mortality_data(uploaded_file, year):
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
-# --- SIDEBAR ---
+# --- SIDEBAR & RBAC ---
 with st.sidebar:
     st.title("FHSIS Portal")
-    page = st.radio("Navigation", ["🏠 Home", "👶 Immunization Dashboard", "🩺 NCD Dashboard", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "💀 Mortality Dashboard", "📈 YoY Comparison", "📁 Data Uploader"])
+    
+    # RBAC: Check for Admin Access in Session State
+    if "is_admin" not in st.session_state:
+        st.session_state["is_admin"] = False
+        
+    nav_options = [
+        "🏠 Home", 
+        "👶 Immunization Dashboard", 
+        "🩺 NCD Dashboard", 
+        "🚰 WASH Dashboard", 
+        "🤰 Maternal Dashboard", 
+        "💀 Mortality Dashboard", 
+        "📈 YoY Comparison"
+    ]
+    
+    # Only show the Uploader if unlocked
+    if st.session_state["is_admin"]:
+        nav_options.append("📁 Data Uploader")
+        
+    page = st.radio("Navigation", nav_options)
     st.markdown("---")
     
     if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "💀 Mortality Dashboard"]:
@@ -696,6 +915,21 @@ with st.sidebar:
         else:
             loc_text = ", ".join(rhu_filter)
             location_header = f"📍 {loc_text}" if len(loc_text) < 45 else f"📍 {len(rhu_filter)} Selected RHUs"
+            
+    # Admin Login Expander at the bottom of the sidebar
+    st.markdown("---")
+    if not st.session_state["is_admin"]:
+        with st.expander("🔒 Admin Access"):
+            admin_pw = st.text_input("Enter Password", type="password", key="sidebar_pw")
+            if admin_pw == st.secrets.get("admin_password", "AbraAdmin2026"):
+                st.session_state["is_admin"] = True
+                st.rerun()
+            elif admin_pw:
+                st.error("Incorrect password")
+    else:
+        if st.button("🔓 Logout Admin", use_container_width=True):
+            st.session_state["is_admin"] = False
+            st.rerun()
 
 # --- INITIALIZE SESSION STATE ---
 if 'fhsis_data' not in st.session_state:
@@ -1099,11 +1333,9 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True, title=f"Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols: fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
-                # Added Hovermode x unified here!
                 fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40), hovermode="x unified")
                 st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
                 
-                # --- FIXED: DROPOUT ANALYSIS NOW LIVES SAFELY INSIDE THE SELECTION BLOCK ---
                 dose_1_col = next((c for c in valid_selected if " 1" in c or "1_" in c), None)
                 dose_last_col = next((c for c in valid_selected if " 3" in c or "3_" in c), next((c for c in valid_selected if " 2" in c and ("MMR" in c.upper() or "MCV" in c.upper())), None))
                 
@@ -2340,7 +2572,17 @@ elif page == "👶 Immunization Dashboard":
                         st.markdown(f"- {w}")
 
                 with st.expander("🖨️ Generate Printable PHO Report", expanded=False):
-                    st.markdown(f"### Abra Provincial Health Office - Immunization Report")
+                    # --- ADDED: THE HIDDEN PRINT HEADER ---
+                    st.markdown("""
+                    <div class='print-only-header'>
+                        <h3>Republic of the Philippines</h3>
+                        <h3>Department of Health</h3>
+                        <h2>Abra Provincial Health Office</h2>
+                        <hr>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown(f"### Immunization Report")
                     st.markdown(f"**Location Filter:** {location_header.replace('📍 ', '')}")
                     st.markdown(f"**Reporting Period:** {start_month} to {end_month} {selected_year} | **Demographic:** {gender_filter}")
                     st.markdown("---")
@@ -2720,11 +2962,7 @@ elif page == "📈 YoY Comparison":
 
 elif page == "📁 Data Uploader":
     st.title("Secure Data Uploader")
-    
-    admin_password = st.text_input("Enter Admin Password", type="password")
-    if admin_password != st.secrets.get("admin_password", "AbraAdmin2026"):
-        st.warning("🔒 This section is restricted. Please enter the password to unlock the uploader.")
-        st.stop()
+    st.info("🔒 The Data Uploader is active. You are logged in as Admin.")
         
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
     upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
