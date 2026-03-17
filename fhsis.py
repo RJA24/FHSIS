@@ -2429,7 +2429,7 @@ if page == "🏠 Home":
         <hr>
     """, unsafe_allow_html=True)
     
-    sst.markdown("### 🏛️ Welcome to the Provincial Command Center")
+    st.markdown("### 🏛️ Welcome to the Provincial Command Center")
     st.markdown("""
     This application is an enterprise-grade reporting engine designed to automatically ingest, clean, and visualize Field Health Services Information System (FHSIS) data across all **27 Rural Health Units (RHUs)** in the province of Abra. 
 
