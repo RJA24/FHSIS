@@ -2406,16 +2406,6 @@ if page == "🏠 Home":
     st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO printable report.")
 
 elif page == "👶 Immunization Dashboard":
-    # --- ADDED: THE HIDDEN PRINT HEADER ---
-    st.markdown("""
-    <div class='print-only-header'>
-        <h3>Republic of the Philippines</h3>
-        <h3>Department of Health</h3>
-        <h2>Abra Provincial Health Office</h2>
-        <hr>
-    </div>
-    """, unsafe_allow_html=True)
-
     st.title("💉 Child Immunization Dashboard")
     st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
     st.markdown("---")
