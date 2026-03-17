@@ -2,11 +2,47 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.io as pio
 from streamlit_gsheets import GSheetsConnection
 import time
 
+# --- GLOBAL UI POLISH ---
+pio.templates.default = "plotly_white"
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="🛡️", layout="wide")
+
+def apply_custom_css():
+    st.markdown("""
+        <style>
+        /* Metric Card Styling */
+        [data-testid="stMetric"] {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 15px 20px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05);
+            border: 1px solid #f0f2f6;
+            border-left: 5px solid #1f77b4;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 1rem !important;
+            font-weight: 600 !important;
+            color: #555555;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.8rem !important;
+            font-weight: 700 !important;
+            color: #2c3e50;
+        }
+        .streamlit-expanderHeader {
+            font-weight: 600;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+apply_custom_css()
 
 # --- GSHEETS CONFIGURATION ---
 IMMUNIZATION_MAPPING = {
@@ -371,155 +407,6 @@ def load_and_clean_ncd_data(uploaded_file, year):
         return pd.concat(all_months_data, ignore_index=True)
     except Exception as e:
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
-        return None
-
-@st.cache_data
-def load_and_clean_wash_data(uploaded_file, year):
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df_raw = pd.read_csv(uploaded_file, header=None)
-            q_val = "Q1"
-            name_low = uploaded_file.name.lower()
-            if "q2" in name_low or "qtr2" in name_low: q_val = "Q2"
-            elif "q3" in name_low or "qtr3" in name_low: q_val = "Q3"
-            elif "q4" in name_low or "qtr4" in name_low: q_val = "Q4"
-            sheets_to_process = {q_val: df_raw}
-        else:
-            xls = pd.ExcelFile(uploaded_file)
-            sheets_to_process = {}
-            valid_qs = ["qtr1", "q1", "qtr2", "q2", "qtr3", "q3", "qtr4", "q4"]
-            q_map = {"qtr1": "Q1", "q1": "Q1", "qtr2": "Q2", "q2": "Q2", 
-                     "qtr3": "Q3", "q3": "Q3", "qtr4": "Q4", "q4": "Q4"}
-            
-            for sheet in xls.sheet_names:
-                sheet_lower = sheet.lower().strip()
-                for q_key in valid_qs:
-                    if q_key in sheet_lower:
-                        sheets_to_process[q_map[q_key]] = pd.read_excel(xls, sheet_name=sheet, header=None)
-                        break
-
-        all_q_data = []
-        for q_val, df in sheets_to_process.items():
-            area_row_idx = -1
-            data_start_idx = -1
-            
-            for idx, row in df.iterrows():
-                row_vals = [str(val).upper() for val in row.values if pd.notna(val)]
-                
-                if area_row_idx == -1 and any(k in v for v in row_vals for k in ['AREA', 'MUNICIPALITY', 'CITY']):
-                    area_row_idx = idx
-                    
-                if area_row_idx != -1 and idx > area_row_idx:
-                    if any(v in ['C A R', 'CAR', 'ABRA', 'BANGUED'] for v in row_vals):
-                        data_start_idx = idx
-                        break
-                        
-            if area_row_idx == -1 or data_start_idx == -1: 
-                continue
-            
-            headers_df = df.iloc[area_row_idx:data_start_idx].copy()
-            for i in range(len(headers_df)):
-                headers_df.iloc[i] = headers_df.iloc[i].ffill() 
-            
-            flat_cols = []
-            for col_idx in range(headers_df.shape[1]):
-                parts = []
-                for row_idx in range(headers_df.shape[0]):
-                    val = str(headers_df.iloc[row_idx, col_idx]).strip().replace('\n', ' ')
-                    if val and val != 'nan' and "Unnamed:" not in val:
-                        if not parts or val != parts[-1]:
-                            parts.append(val)
-                col_name = "_".join(parts)
-                if not col_name: col_name = f"Empty_{col_idx}"
-                flat_cols.append(col_name)
-                
-            seen = set()
-            unique_cols = []
-            for c in flat_cols:
-                new_c = c
-                counter = 1
-                while new_c in seen:
-                    new_c = f"{c}_{counter}"
-                    counter += 1
-                seen.add(new_c)
-                unique_cols.append(new_c)
-
-            clean = df.iloc[data_start_idx:].copy()
-            clean.columns = unique_cols
-            
-            area_col = next((c for c in unique_cols if any(k in c.upper() for k in ['AREA', 'MUNICIPALITY', 'CITY'])), unique_cols[0])
-            
-            if area_col != 'Area':
-                if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
-                clean.rename(columns={area_col: 'Area'}, inplace=True)
-
-            renamed_cols = {}
-            found_targets = set()
-            
-            for c in clean.columns:
-                c_upper = c.upper()
-                target = None
-                
-                if "PROJECTED" in c_upper and "HH" in c_upper:
-                    target = "Projected No. of HHs"
-                elif "SAFELY MANAGED DRINKING" in c_upper and "%" not in c_upper:
-                    target = "HHs using Safely Managed Drinking-water Services"
-                elif "SAFELY MANAGED SANITATION" in c_upper and "%" not in c_upper:
-                    target = "HHs using Safely Managed Sanitation Service"
-                elif "LEVEL 1" in c_upper and "%" not in c_upper:
-                    target = "HH with Access to Basic Safe Water Supply_Lvl_1"
-                elif "LEVEL 2" in c_upper and "%" not in c_upper:
-                    target = "HH with Access to Basic Safe Water Supply_Lvl_2"
-                elif "LEVEL 3" in c_upper and "%" not in c_upper:
-                    target = "HH with Access to Basic Safe Water Supply_Lvl_3"
-                elif "SEPTIC TANK" in c_upper and "%" not in c_upper:
-                    target = "Pour / flush Toilet connected to Septic Tank"
-                elif "COMMUNITY SEWER" in c_upper and "%" not in c_upper:
-                    target = "Pour / flush Toilet connected to Community sewer/sewerage system"
-                elif "PIT LATRINE" in c_upper and "%" not in c_upper:
-                    target = "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"
-                elif "BASIC SAFE WATER" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
-                    target = "HH with Access to Basic Safe Water Supply"
-                elif "BASIC SANITATION" in c_upper and "TOTAL" in c_upper and "%" not in c_upper:
-                    target = "HH with Basic Sanitation Facility"
-
-                if target and target not in found_targets:
-                    renamed_cols[c] = target
-                    found_targets.add(target)
-
-            clean.rename(columns=renamed_cols, inplace=True)
-            
-            keep_cols = ['Area'] + list(found_targets)
-            clean = clean.loc[:, ~clean.columns.duplicated()]
-            clean = clean[[c for c in keep_cols if c in clean.columns]]
-            
-            clean.dropna(subset=['Area'], inplace=True)
-            clean['Area_Clean'] = clean['Area'].astype(str).str.strip()
-            clean = clean[clean['Area_Clean'].isin(ABRA_RHUS)]
-            clean['Area'] = clean['Area_Clean']
-            clean.drop(columns=['Area_Clean'], inplace=True)
-            clean['Month'] = q_val  
-            clean['Year'] = year
-            
-            for col in clean.columns:
-                if col not in ['Area', 'Month', 'Year']:
-                    clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
-                    
-            if all(c in clean.columns for c in ["HH with Access to Basic Safe Water Supply_Lvl_1", "HH with Access to Basic Safe Water Supply_Lvl_2", "HH with Access to Basic Safe Water Supply_Lvl_3"]):
-                clean["HH with Access to Basic Safe Water Supply"] = clean["HH with Access to Basic Safe Water Supply_Lvl_1"] + clean["HH with Access to Basic Safe Water Supply_Lvl_2"] + clean["HH with Access to Basic Safe Water Supply_Lvl_3"]
-                
-            if all(c in clean.columns for c in ["Pour / flush Toilet connected to Septic Tank", "Pour / flush Toilet connected to Community sewer/sewerage system", "Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"]):
-                clean["HH with Basic Sanitation Facility"] = clean["Pour / flush Toilet connected to Septic Tank"] + clean["Pour / flush Toilet connected to Community sewer/sewerage system"] + clean["Pour / flush Toilet connected to Ventillated improved Pit Latrine (VIP)"]
-
-            all_q_data.append(clean)
-            
-        if not all_q_data: 
-            st.error(f"Could not locate correct Municipality headers in {uploaded_file.name}.")
-            return None
-            
-        return pd.concat(all_q_data, ignore_index=True)
-    except Exception as e:
-        st.error(f"WASH Template Parsing Error processing {uploaded_file.name}: {e}")
         return None
 
 @st.cache_data
@@ -1182,7 +1069,8 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
                 fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True, title=f"Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols: fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
-                fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40))
+                # Added Hovermode x unified here!
+                fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40), hovermode="x unified")
                 st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
                 
                 # --- FIXED: DROPOUT ANALYSIS NOW LIVES SAFELY INSIDE THE SELECTION BLOCK ---
