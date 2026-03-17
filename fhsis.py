@@ -2434,7 +2434,7 @@ if page == "🏠 Home":
         
         <div style="text-align: center; padding: 0.5rem 0;">
             <h1>Provincial Health Office (PHO)</h1>
-            <h2>FHSIS Health & Immunization Portal</h2>
+            <h2>FHSIS Health & Analytics Portal</h2>
             <p style="font-size: 1.2rem; color: gray;">Engineered for accuracy. Built for action.</p>
         </div>
         <hr>
