@@ -4,6 +4,8 @@ import numpy as np
 import plotly.express as px
 from streamlit_gsheets import GSheetsConnection
 import time
+import base64
+import os
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
@@ -2383,25 +2385,48 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
 # --- PAGES ---
 if page == "🏠 Home":
     
-    # --- OFFICIAL LOGOS SECTION ---
-    # We use 5 columns here: two large spacers on the outside to push the 3 logos into the center.
-    spacer1, col_logo1, col_logo2, col_logo3, spacer2 = st.columns([2, 1, 1, 1, 2])
-    
-    with col_logo1:
-        st.image("Abra_provincial_seal.png", use_container_width=True) # Change filename if yours is different
-    with col_logo2:
-        st.image("PHO logo.png", use_container_width=True) # Change filename if yours is different
-    with col_logo3:
-        st.image("DOH logo.png", use_container_width=True) # Change filename if yours is different
+    # Helper function to convert images so HTML can read them securely
+    def get_base64(img_path):
+        if os.path.exists(img_path):
+            with open(img_path, "rb") as img_file:
+                return base64.b64encode(img_file.read()).decode()
+        return ""
 
-    # --- MAIN TITLE ---
-    st.markdown("""
-        <div style="text-align: center; padding: 1rem 0;">
+    # CHANGE THESE FILENAMES IF YOURS ARE DIFFERENT!
+    abra_b64 = get_base64("Abra_provincial_seal.png")
+    pho_b64 = get_base64("PHO logo.png")
+    doh_b64 = get_base64("DOH logo.png")
+
+    # --- HTML FLEXBOX ROW & TOP PADDING FIX ---
+    st.markdown(f"""
+        <style>
+        /* 1. This pushes the entire app up higher on the screen */
+        .block-container {{
+            padding-top: 2.5rem !important; 
+        }}
+        
+        /* 2. This perfectly centers the logos and aligns their middles */
+        .logo-container {{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 40px; /* Space between the logos */
+            margin-bottom: 10px;
+        }}
+        </style>
+        
+        <div class="logo-container">
+            <img src="data:image/png;base64,{abra_b64}" style="height: 130px;">
+            <img src="data:image/png;base64,{pho_b64}" style="height: 145px;"> 
+            <img src="data:image/png;base64,{doh_b64}" style="height: 130px;">
+        </div>
+        
+        <div style="text-align: center; padding: 0.5rem 0;">
             <h1>Provincial Health Office (PHO)</h1>
             <h2>FHSIS Health & Immunization Portal</h2>
             <p style="font-size: 1.2rem; color: gray;">Engineered for accuracy. Built for action.</p>
         </div>
-        ---
+        <hr>
     """, unsafe_allow_html=True)
     
     st.markdown("### Welcome to the Abra Health Tracker")
