@@ -2411,17 +2411,17 @@ if page == "🏠 Home":
     # --- HTML FLEXBOX ROW & TOP PADDING FIX ---
     st.markdown(f"""
         <style>
-        /* 1. This pushes the entire app up higher on the screen */
+        /* Pushes the entire app up higher on the screen */
         .block-container {{
             padding-top: 2.5rem !important; 
         }}
         
-        /* 2. This perfectly centers the logos and aligns their middles */
+        /* Perfectly centers the logos and aligns their middles */
         .logo-container {{
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 40px; /* Space between the logos */
+            gap: 40px; 
             margin-bottom: 10px;
         }}
         </style>
@@ -2458,7 +2458,7 @@ if page == "🏠 Home":
 
     *Use the sidebar navigation to explore the provincial dashboards. Authorized PHO Admins can log in at the bottom of the sidebar to securely upload new DOH data.*
     """)
-    st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO printable report.")
+    st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO report.")
 
 elif page == "👶 Immunization Dashboard":
     st.title("💉 Child Immunization Dashboard")
