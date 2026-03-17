@@ -1072,6 +1072,9 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
 
             valid_selected = [c for c in selected_cols if c in agg_df.columns]
             
+            # --- FIX: DECLARE THE UID OUTSIDE THE IF STATEMENT SO IT ALWAYS EXISTS ---
+            uid = f"imm_{safe_filename}_{year}_{gender}"
+            
             if valid_selected:
                 provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
@@ -1107,7 +1110,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
 
                 st.markdown(f"#### 📈 {tab_title} - Aggregate Total")
                 abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
-                uid = f"imm_{safe_filename}_{year}_{gender}"
+                
                 fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen', title=f"Aggregate Total ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
                 if view_mode == "Percentage (%) Coverage" and elig_cols:
                     fig_abra.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
