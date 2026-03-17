@@ -15,29 +15,34 @@ st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="ð
 def apply_custom_css():
     st.markdown("""
         <style>
-        /* Metric Card Styling */
+        /* Metric Card Styling - Theme Aware */
         [data-testid="stMetric"] {
-            background-color: #ffffff;
+            background-color: var(--secondary-background-color);
             border-radius: 8px;
             padding: 15px 20px;
-            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05);
-            border: 1px solid #f0f2f6;
-            border-left: 5px solid #1f77b4;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+            border-left: 5px solid #1f77b4; /* Keeps the blue accent line */
         }
+        
+        /* Metric Label text */
         [data-testid="stMetricLabel"] {
             font-size: 1rem !important;
             font-weight: 600 !important;
-            color: #555555;
+            color: var(--text-color);
         }
+        
+        /* Metric Value text */
         [data-testid="stMetricValue"] {
             font-size: 1.8rem !important;
             font-weight: 700 !important;
-            color: #2c3e50;
+            color: var(--text-color);
         }
+        
+        /* Expander Styling */
         .streamlit-expanderHeader {
             font-weight: 600;
             border-radius: 5px;
-            background-color: #f8f9fa;
+            background-color: var(--secondary-background-color);
         }
         </style>
     """, unsafe_allow_html=True)
