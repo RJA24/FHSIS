@@ -24,7 +24,7 @@ def apply_custom_css():
             flex-direction: column !important;
         }
         
-        /* BRUTE FORCE TEXT WRAPPING */
+        /* ULTIMATE TEXT WRAPPING */
         [data-testid="stMetricLabel"], 
         [data-testid="stMetricLabel"] > div, 
         [data-testid="stMetricLabel"] p, 
@@ -56,61 +56,6 @@ def apply_custom_css():
             font-weight: 600;
             border-radius: 5px;
             background-color: var(--secondary-background-color);
-        }
-        
-        /* --- HIDDEN PRINT HEADER --- */
-        .print-only-header {
-            display: none;
-        }
-
-        /* --- PRINT-PERFECT PDF ENGINE --- */
-        @media print {
-            /* Force white background to save ink */
-            body, .stApp {
-                background-color: white !important;
-                color: black !important;
-            }
-            
-            /* Show the official DOH Header only on paper */
-            .print-only-header {
-                display: block !important;
-                text-align: center;
-                margin-bottom: 30px;
-                font-family: 'Times New Roman', serif;
-                color: black !important;
-            }
-            
-            /* Aggressively hide interactive elements */
-            [data-testid="stSidebar"], 
-            header[data-testid="stHeader"], 
-            [data-testid="stToolbar"],
-            [data-testid="stSlider"],
-            [data-testid="stRadio"],
-            [data-testid="stSelectbox"],
-            [data-testid="stMultiSelect"],
-            [data-testid="stButton"],
-            [data-testid="stExpander"] {
-                display: none !important;
-            }
-            
-            /* Expand the main container to fill the paper */
-            .block-container {
-                max-width: 100% !important;
-                padding-top: 0 !important;
-                padding-left: 0 !important;
-                padding-right: 0 !important;
-            }
-            
-            /* Force cards to print clearly without dark-mode inversion */
-            [data-testid="stMetric"] {
-                background-color: #f8f9fa !important;
-                border: 1px solid #ccc !important;
-                -webkit-print-color-adjust: exact;
-                color-adjust: exact;
-            }
-            [data-testid="stMetricLabel"] p, [data-testid="stMetricValue"], [data-testid="stMetricValue"] > div {
-                color: black !important;
-            }
         }
         </style>
     """, unsafe_allow_html=True)
