@@ -1071,8 +1071,6 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 selected_cols = st.multiselect("Select specific indicators to include in the dashboard:", options=cols_to_plot, default=default_cols, key=f"ms_picker_{safe_filename}_{year}_{gender}", label_visibility="collapsed")
 
             valid_selected = [c for c in selected_cols if c in agg_df.columns]
-            
-            # --- FIX: DECLARE THE UID OUTSIDE THE IF STATEMENT SO IT ALWAYS EXISTS ---
             uid = f"imm_{safe_filename}_{year}_{gender}"
             
             if valid_selected:
@@ -1186,22 +1184,25 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 if view_mode == "Percentage (%) Coverage" and elig_cols: fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
                 fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40))
                 st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
+                
+                # --- FIXED: DROPOUT ANALYSIS NOW LIVES SAFELY INSIDE THE SELECTION BLOCK ---
+                dose_1_col = next((c for c in valid_selected if " 1" in c or "1_" in c), None)
+                dose_last_col = next((c for c in valid_selected if " 3" in c or "3_" in c), next((c for c in valid_selected if " 2" in c and ("MMR" in c.upper() or "MCV" in c.upper())), None))
+                
+                if dose_1_col and dose_last_col and tab_title != "Birth Doses":
+                    st.markdown("---")
+                    st.markdown(f"#### ⚠️ Dropout Analysis ({dose_1_col.replace(f'_{gender}', '')} to {dose_last_col.replace(f'_{gender}', '')})")
+                    drop_df = agg_df[['Area', dose_1_col, dose_last_col]].copy()
+                    drop_df['Dropout Rate (%)'] = np.where(drop_df[dose_1_col] > 0, ((drop_df[dose_1_col] - drop_df[dose_last_col]) / drop_df[dose_1_col]) * 100, 0)
+                    drop_df['Dropout Rate (%)'] = drop_df['Dropout Rate (%)'].round(1)
+                    fig_drop = px.bar(drop_df, x='Area', y='Dropout Rate (%)', text_auto=True, color='Dropout Rate (%)', color_continuous_scale=["lightgreen", "yellow", "red"], title="Highlighting RHUs with high dropout rates from first to final dose.")
+                    fig_drop.add_hline(y=10, line_dash="dash", line_color="red", annotation_text="Warning Threshold (10%)")
+                    fig_drop.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Dropout Rate (%)", margin=dict(t=40))
+                    st.plotly_chart(fig_drop, use_container_width=True, key=f"drop_{uid}")
+
             else:
                 st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
             
-            dose_1_col = next((c for c in cols_to_plot if " 1" in c or "1_" in c), None)
-            dose_last_col = next((c for c in cols_to_plot if " 3" in c or "3_" in c), next((c for c in cols_to_plot if " 2" in c and ("MMR" in c.upper() or "MCV" in c.upper())), None))
-            
-            if dose_1_col and dose_last_col and tab_title != "Birth Doses":
-                st.markdown("---")
-                st.markdown(f"#### ⚠️ Dropout Analysis ({dose_1_col.replace(f'_{gender}', '')} to {dose_last_col.replace(f'_{gender}', '')})")
-                drop_df = agg_df[['Area', dose_1_col, dose_last_col]].copy()
-                drop_df['Dropout Rate (%)'] = np.where(drop_df[dose_1_col] > 0, ((drop_df[dose_1_col] - drop_df[dose_last_col]) / drop_df[dose_1_col]) * 100, 0)
-                drop_df['Dropout Rate (%)'] = drop_df['Dropout Rate (%)'].round(1)
-                fig_drop = px.bar(drop_df, x='Area', y='Dropout Rate (%)', text_auto=True, color='Dropout Rate (%)', color_continuous_scale=["lightgreen", "yellow", "red"], title="Highlighting RHUs with high dropout rates from first to final dose.")
-                fig_drop.add_hline(y=10, line_dash="dash", line_color="red", annotation_text="Warning Threshold (10%)")
-                fig_drop.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Dropout Rate (%)", margin=dict(t=40))
-                st.plotly_chart(fig_drop, use_container_width=True, key=f"drop_{uid}")
         else:
             st.warning("Could not find graphing columns for the selected demographic.")
             
@@ -1211,7 +1212,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data_{start_m}_to_{end_m}.csv", mime="text/csv")
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
-
+        
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
