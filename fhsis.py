@@ -6,9 +6,65 @@ from streamlit_gsheets import GSheetsConnection
 import time
 import base64
 import os
+from datetime import datetime
+import pytz
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
+
+def silent_access_tracker():
+    # 1. Check if we have already logged this specific user's session
+    if 'has_logged_in' not in st.session_state:
+        
+        # 2. Basic Bot Filter (Checking if the session is a real browser request)
+        # We assume it's human unless the headers explicitly say otherwise.
+        is_bot = False
+        try:
+            # Note: Depending on your Streamlit version, accessing headers might vary slightly.
+            # In newer versions, st.context.headers works perfectly.
+            user_agent = st.context.headers.get("User-Agent", "").lower()
+            bot_keywords = ['bot', 'crawler', 'spider', 'healthcheck', 'uptime']
+            if any(bot in user_agent for bot in bot_keywords):
+                is_bot = True
+        except Exception:
+            pass # Fail open and assume human if we can't read headers
+
+        # 3. If it is a human, write to the ACCESS LOG
+        if not is_bot:
+            try:
+                # Set time to Philippine Standard Time (PST)
+                pst = pytz.timezone('Asia/Manila')
+                now = datetime.now(pst)
+                
+                current_date = now.strftime("%Y-%m-%d")
+                current_time = now.strftime("%H:%M:%S")
+                
+                # Format the new entry
+                new_entry = pd.DataFrame([{
+                    "Date": current_date,
+                    "Time": current_time,
+                    "Device": "Human"
+                }])
+                
+                # Connect to GSheets and push the data
+                conn = st.connection("gsheets", type=GSheetsConnection)
+                
+                # Pull existing logs and append the new one
+                existing_logs = conn.read(worksheet="ACCESS LOG", ttl=0)
+                updated_logs = pd.concat([existing_logs, new_entry], ignore_index=True)
+                
+                # Push the updated log back to the cloud
+                conn.update(worksheet="ACCESS LOG", data=updated_logs)
+                
+            except Exception as e:
+                # Silently pass so a database error doesn't crash the UI for the user
+                pass
+                
+        # 4. Lock the session state so it doesn't log them again if they switch tabs
+        st.session_state['has_logged_in'] = True
+
+# Fire the tracker silently in the background
+silent_access_tracker()
 
 def apply_custom_css():
     st.markdown("""
