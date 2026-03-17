@@ -990,20 +990,20 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
             cols_per_row = 4
             rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
                 
-                for i, col in enumerate(valid_selected):
-                    row_idx = i // cols_per_row
-                    col_idx = i % cols_per_row
+            for i, col in enumerate(valid_selected):
+                row_idx = i // cols_per_row
+                col_idx = i % cols_per_row
                     
-                    total_val = provincial_antigens[col]
-                    clean_name = col.replace(f"_{gender}", "")
+                total_val = provincial_antigens[col]
+                clean_name = col.replace(f"_{gender}", "")
                     
-                    if view_mode == "Percentage (%) Coverage" and elig_cols:
-                        perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
-                        # Removed the word "Achieved" to save visual space
-                        rows[row_idx][col_idx].metric(label=f"{clean_name} Target", value=f"{perc:.1f}%")
-                    else:
-                        # Removed "Total" to save visual space since the numbers speak for themselves
-                        rows[row_idx][col_idx].metric(label=f"{clean_name}", value=f"{int(total_val):,}")
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
+                    # Removed the word "Achieved" to save visual space
+                    rows[row_idx][col_idx].metric(label=f"{clean_name} Target", value=f"{perc:.1f}%")
+                else:
+                    # Removed "Total" to save visual space since the numbers speak for themselves
+                    rows[row_idx][col_idx].metric(label=f"{clean_name}", value=f"{int(total_val):,}")
                 
                 st.markdown("---")
                 chart_df = agg_df[['Area'] + valid_selected + elig_cols].copy()
