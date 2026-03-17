@@ -408,8 +408,8 @@ def load_and_clean_ncd_data(uploaded_file, year):
     except Exception as e:
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
-    @st.cache_data
-    
+
+@st.cache_data
 def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
     try:
         sheets_to_process = {}
