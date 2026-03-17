@@ -2429,17 +2429,23 @@ if page == "🏠 Home":
         <hr>
     """, unsafe_allow_html=True)
     
-    st.markdown("### Welcome to the Abra Health Tracker")
+    sst.markdown("### 🏛️ Welcome to the Provincial Command Center")
     st.markdown("""
-    This application is an enterprise-grade reporting engine designed to ingest, clean, and visualize Field Health Services Information System (FHSIS) data across all 27 Rural Health Units (RHUs) in the province of Abra. 
-    
-    **Core Capabilities:**
-    * **Automated Data Extraction:** Safely parses messy, merged, and multi-sheet DOH Excel templates.
-    * **Multi-Module Support:** Fully supports Child Immunization, NCD Risk Assessments, Environmental WASH, and Maternal Health metrics.
-    * **Data Quality Auditing:** Actively filters out "ghost rows," negative deficit anomalies, and duplicate uploads to guarantee 100% mathematical integrity.
-    * **Geospatial & Trend Analysis:** Transforms raw numbers into interactive maps, YoY comparisons, and actionable insights.
-    
-    *Use the sidebar navigation to securely upload FHSIS files, view the provincial dashboards, or analyze historical trends.*
+    This application is an enterprise-grade reporting engine designed to automatically ingest, clean, and visualize Field Health Services Information System (FHSIS) data across all **27 Rural Health Units (RHUs)** in the province of Abra. 
+
+    **Active Health Modules:**
+    * 👶 **Child Immunization:** Tracking routine antigens, Fully Immunized Child (FIC) targets, and dropout rates.
+    * 🩺 **Non-Communicable Diseases (NCD):** Monitoring adult/senior lifestyle risks, diagnostic yields, and Cervical/Breast Cancer screenings.
+    * 🚰 **Environmental Health (WASH):** Mapping household access to basic safe water and sanitation facilities.
+    * 🤰 **Maternal Health:** Analyzing the complete cascade of care across Antenatal, Postpartum, and Nutritional interventions.
+    * 💀 **Mortality & Injuries:** Tracking premature NCD deaths and traffic-related fatalities.
+    * 👨‍👩‍👧 **Family Planning:** *(Module actively under construction!)*
+
+    **Core Engine Capabilities:**
+    * **Automated Data ETL:** Safely parses messy, merged, and multi-sheet DOH Excel templates directly into a secure cloud database.
+    * **Geospatial & Trend Analysis:** Transforms raw numbers into interactive heatmaps, Year-over-Year (YoY) comparisons, and automated FHSIS scorecards.
+
+    *Use the sidebar navigation to explore the provincial dashboards. Authorized PHO Admins can log in at the bottom of the sidebar to securely upload new DOH data.*
     """)
     st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO printable report.")
 
