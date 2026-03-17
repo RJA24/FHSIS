@@ -2,11 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.io as pio
 from streamlit_gsheets import GSheetsConnection
 import time
 
+pio.templates.default = "plotly_white"
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="🛡️", layout="wide")
+
+# Apply the Executive UI Polish
+apply_custom_css()
 
 # --- GSHEETS CONFIGURATION ---
 IMMUNIZATION_MAPPING = {
@@ -46,6 +52,42 @@ MORTALITY_MAPPING = {
 }
 
 ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING, **MORTALITY_MAPPING}
+
+def apply_custom_css():
+    st.markdown("""
+        <style>
+        /* Metric Card Styling */
+        [data-testid="stMetric"] {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 15px 20px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05);
+            border: 1px solid #f0f2f6;
+            border-left: 5px solid #1f77b4; /* PHO Blue Accent */
+        }
+        
+        /* Metric Label text */
+        [data-testid="stMetricLabel"] {
+            font-size: 1rem !important;
+            font-weight: 600 !important;
+            color: #555555;
+        }
+        
+        /* Metric Value text */
+        [data-testid="stMetricValue"] {
+            font-size: 1.8rem !important;
+            font-weight: 700 !important;
+            color: #2c3e50;
+        }
+        
+        /* Expander Styling */
+        .streamlit-expanderHeader {
+            font-weight: 600;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
 # --- TARGET WASH INDICATORS ---
 TARGET_WASH_COLS = [
