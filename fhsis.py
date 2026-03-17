@@ -2382,9 +2382,22 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
 
 # --- PAGES ---
 if page == "🏠 Home":
+    
+    # --- OFFICIAL LOGOS SECTION ---
+    # We use 5 columns here: two large spacers on the outside to push the 3 logos into the center.
+    spacer1, col_logo1, col_logo2, col_logo3, spacer2 = st.columns([2, 1, 1, 1, 2])
+    
+    with col_logo1:
+        st.image("doh_logo.png", use_container_width=True) # Change filename if yours is different
+    with col_logo2:
+        st.image("pho_logo.png", use_container_width=True) # Change filename if yours is different
+    with col_logo3:
+        st.image("abra_logo.png", use_container_width=True) # Change filename if yours is different
+
+    # --- MAIN TITLE ---
     st.markdown("""
-        <div style="text-align: center; padding: 2rem 0;">
-            <h1>🛡️ Provincial Health Office (PHO)</h1>
+        <div style="text-align: center; padding: 1rem 0;">
+            <h1>Provincial Health Office (PHO)</h1>
             <h2>FHSIS Health & Immunization Portal</h2>
             <p style="font-size: 1.2rem; color: gray;">Engineered for accuracy. Built for action.</p>
         </div>
