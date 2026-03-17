@@ -2346,7 +2346,11 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                     cascade_data['Sort_Key'] = cascade_data['Indicator'].apply(lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 99)
                     cascade_data = cascade_data.sort_values(by='Sort_Key', ascending=True)
 
-                    if "ANC" in tab_title or "PPC" in tab_title:
+                    # --- CASCADE SMART HIDE LOGIC ---
+                    # Calculate if the user broke the pipeline sequence
+                    removed_count = len(cols_to_plot) - len(selected_cols)
+
+                    if ("ANC" in tab_title or "PPC" in tab_title) and removed_count <= 1:
                         st.markdown(f"#### 🌪️ {tab_title} Cascade")
                         st.markdown("Tracking the retention and drop-off rate of women throughout their maternal care journey.")
                         
@@ -2354,7 +2358,12 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                         fig_main.update_traces(textposition="inside")
                     else:
                         st.markdown(f"#### 📊 {tab_title} Interventions & Screenings")
-                        st.markdown("Comparing the total volume of specific interventions or screening yields.")
+                        
+                        # Show a helpful note if we actively hid the funnel
+                        if ("ANC" in tab_title or "PPC" in tab_title) and removed_count > 1:
+                            st.info("💡 **Cascade View Hidden:** Multiple pipeline steps were removed (or Percentage view is active). Falling back to a standard comparison chart.")
+                        else:
+                            st.markdown("Comparing the total volume of specific interventions or screening yields.")
                         
                         fig_main = px.bar(cascade_data, x='Indicator', y='Count', title=chart_title, text_auto=True, color='Indicator', color_discrete_sequence=px.colors.qualitative.Pastel)
                         fig_main.update_traces(textposition="outside", cliponaxis=False)
