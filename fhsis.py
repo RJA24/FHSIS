@@ -1120,6 +1120,17 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
     return "Elig. Pop." if "Elig. Pop." in all_cols else None
 
 # --- UI RENDERERS ---
+def render_footer():
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #888888; padding: 10px;'>
+            <p>Developed by <strong>JangTV</strong></p>
+            <img src="https://github.com/RJA24/abra-sbi-dashboard/blob/main/357094382_2458785624282603_4372984338912374777_n.png?raw=true" width="80" style="margin-top: -10px; opacity: 0.8;">
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
 def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus):
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
@@ -3096,3 +3107,5 @@ elif page == "📁 Data Uploader":
                 st.success(f"✅ Successfully wiped: {', '.join(datasets_to_nuke)}! Please re-upload your files for these categories.")
                 time.sleep(2.5)
                 st.rerun()
+
+render_footer()
