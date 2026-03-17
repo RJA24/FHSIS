@@ -984,7 +984,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
                 provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
                 provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
                 
-               st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
+            st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
                 
                 # CHUNK CARDS INTO A GRID (Max 4 per row)
                 cols_per_row = 4
