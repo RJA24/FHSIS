@@ -2388,11 +2388,11 @@ if page == "🏠 Home":
     spacer1, col_logo1, col_logo2, col_logo3, spacer2 = st.columns([2, 1, 1, 1, 2])
     
     with col_logo1:
-        st.image("doh_logo.png", use_container_width=True) # Change filename if yours is different
+        st.image("Abra_provincial_seal.png", use_container_width=True) # Change filename if yours is different
     with col_logo2:
-        st.image("pho_logo.png", use_container_width=True) # Change filename if yours is different
+        st.image("PHO logo.png", use_container_width=True) # Change filename if yours is different
     with col_logo3:
-        st.image("abra_logo.png", use_container_width=True) # Change filename if yours is different
+        st.image("DOH logo.png", use_container_width=True) # Change filename if yours is different
 
     # --- MAIN TITLE ---
     st.markdown("""
