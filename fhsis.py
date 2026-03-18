@@ -13,26 +13,35 @@ import pytz
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
 
 # --- GLOBAL UI / UX POLISH ---
-st.markdown("""
-    <style>
-    /* 1. Make the header transparent but leave its structure alone (Protects Sidebar Button!) */
-    [data-testid="stHeader"] {
-        background-color: transparent !important;
-    }
-    
-    /* 2. Adjust padding so the dashboard looks clean */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    
-    /* 3. DOH Purple active tabs */
-    .stTabs [aria-selected="true"] {
-        color: #7209b7 !important;
-        border-bottom-color: #7209b7 !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+if not st.session_state.get("is_admin", False):
+    st.markdown("""
+        <style>
+        /* 1. Hide the Deploy button specifically */
+        .stDeployButton {
+            display: none !important;
+        }
+        
+        /* 2. Hide the 3-dots menu using VISIBILITY instead of DISPLAY */
+        /* This leaves an invisible empty box, preventing the sidebar button from collapsing! */
+        [data-testid="stToolbar"] {
+            visibility: hidden !important;
+        }
+        
+        /* 3. Hide the standard footer */
+        footer {
+            display: none !important;
+        }
+        
+        /* 4. Hide the Streamlit Cloud Badge */
+        /* Targets the exact URL and wildcard class name from your inspector */
+        a[href^="https://streamlit.io/cloud"] {
+            display: none !important;
+        }
+        [class*="viewerBadge_container"] {
+            display: none !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
 # Conditional CSS applied ONLY to regular users
 if not st.session_state.get("is_admin", False):
