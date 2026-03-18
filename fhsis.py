@@ -3056,6 +3056,14 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
         st.markdown("### 🔄 Family Planning User Pipeline")
         st.markdown("Visualizing the monthly flow of acceptors joining and dropping out of the program.")
         
+        # --- NEW: METHOD DRILL-DOWN SELECTOR ---
+        fp_methods = [
+            "All Methods (Overall)", "Condom", "PILLS-POP", "PILLS-COC", "Injectables", 
+            "Implants-Interval", "Implants-PP", "IUD-I", "IUD-PP", "FSTR/BTL", 
+            "MSTR/NSV", "NFP-LAM", "NFP-BBT", "NFP-CMM", "NFP-STM", "NFP-SDM"
+        ]
+        selected_method = st.selectbox("🎯 Select Contraceptive Method to Track:", fp_methods, key="fp_method_drilldown")
+        
         df_beg = get_fp_filtered("FP_Beginning", start_month, end_month, selected_year, rhu_filter)
         df_new = get_fp_filtered("FP_New", start_month, end_month, selected_year, rhu_filter)
         df_oth = get_fp_filtered("FP_Other", start_month, end_month, selected_year, rhu_filter)
@@ -3063,11 +3071,17 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
         df_end = get_fp_filtered("FP_End", start_month, end_month, selected_year, rhu_filter)
         
         if not df_end.empty and not df_beg.empty:
-            target_col = f"Total Current User_{age_filter}"
             
-            # Try to find the exact column name for the total user count based on age
-            col_search = [c for c in df_beg.columns if "Total" in c and age_filter in c]
-            if col_search: target_col = col_search[0]
+            # Dynamically target the correct column based on the user's dropdown choice
+            if selected_method == "All Methods (Overall)":
+                target_col = f"Total Current User_{age_filter}"
+            else:
+                target_col = f"{selected_method}_{age_filter}"
+            
+            # Fallback search if the exact string match fails due to weird Excel formatting
+            if target_col not in df_beg.columns:
+                col_search = [c for c in df_beg.columns if (selected_method in c or (selected_method == "All Methods (Overall)" and "Total Current User" in c)) and age_filter in c]
+                if col_search: target_col = col_search[0]
             
             try:
                 v_beg = df_beg[target_col].sum() if target_col in df_beg.columns else 0
@@ -3083,8 +3097,6 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
                     "Measure": ["absolute", "relative", "relative", "relative", "total"]
                 })
                 
-                fig_wf = px.bar(wf_data, x="Stage", y="Value", title=f"User Flow: {start_month} to {end_month} ({age_filter})", text="Value")
-                
                 import plotly.graph_objects as go
                 fig_waterfall = go.Figure(go.Waterfall(
                     name = "FP Pipeline", orientation = "v",
@@ -3098,11 +3110,11 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
                     increasing = {"marker":{"color":"#00CC96"}},
                     totals = {"marker":{"color":"#636EFA"}}
                 ))
-                fig_waterfall.update_layout(title="Waterfall: Pipeline Flow (Beg + New + Other - Drop = End)", margin=dict(t=50))
+                fig_waterfall.update_layout(title=f"Pipeline Flow: {selected_method} ({age_filter})", margin=dict(t=50))
                 st.plotly_chart(fig_waterfall, use_container_width=True)
                 
             except Exception as e:
-                st.warning(f"Could not calculate waterfall pipeline for {age_filter}. Columns might not match exactly.")
+                st.warning(f"Could not calculate waterfall pipeline for '{selected_method}' ({age_filter}). The data for this specific method might be missing.")
         else:
             st.info("Upload Beginning, New, Other, Dropouts, and End data to view the pipeline.")
 
