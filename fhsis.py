@@ -15,49 +15,39 @@ st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="A
 # --- GLOBAL UI / UX POLISH ---
 st.markdown("""
     <style>
-    /* 1. Make the header transparent but leave its structure alone (Protects Sidebar Button!) */
-    [data-testid="stHeader"] {
-        background-color: transparent !important;
-    }
-    
-    /* 2. Adjust padding so the dashboard looks clean */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    
-    /* 3. DOH Purple active tabs */
+    /* 1. Make the active tab visually distinct with DOH-themed purple */
     .stTabs [aria-selected="true"] {
         color: #7209b7 !important;
         border-bottom-color: #7209b7 !important;
     }
+    
+    /* 2. ELEVATED METRIC CARDS */
+    /* This applies a sleek, modern card look to all your big numbers */
+    [data-testid="stMetric"] {
+        background-color: #ffffff;
+        border-radius: 10px;
+        padding: 15px 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border: 1px solid #e0e0e0;
+        transition: transform 0.2s ease-in-out;
+    }
+    
+    /* Add a slight hover effect so the cards feel interactive */
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* Dark mode support for the cards */
+    @media (prefers-color-scheme: dark) {
+        [data-testid="stMetric"] {
+            background-color: #1e1e1e;
+            border-color: #333333;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+    }
     </style>
     """, unsafe_allow_html=True)
-
-# Conditional CSS applied ONLY to regular users
-if not st.session_state.get("is_admin", False):
-    st.markdown("""
-        <style>
-        /* 4. Hide ONLY the top-right toolbar (3-dots & Deploy) */
-        [data-testid="stToolbar"] {
-            display: none !important;
-        }
-        
-        /* 5. Hide the standard footer */
-        footer {
-            display: none !important;
-        }
-        
-        /* 6. The Ultimate Badge Assassin */
-        /* Targets the exact cloud link and Streamlit's floating UI elements */
-        a[href^="https://streamlit.io/cloud"] {
-            display: none !important;
-        }
-        [class*="viewerBadge"] {
-            display: none !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
 
 def silent_access_tracker():
     # 1. Check if we have already logged this specific user's session
@@ -67,6 +57,8 @@ def silent_access_tracker():
         # We assume it's human unless the headers explicitly say otherwise.
         is_bot = False
         try:
+            # Note: Depending on your Streamlit version, accessing headers might vary slightly.
+            # In newer versions, st.context.headers works perfectly.
             user_agent = st.context.headers.get("User-Agent", "").lower()
             bot_keywords = ['bot', 'crawler', 'spider', 'healthcheck', 'uptime']
             if any(bot in user_agent for bot in bot_keywords):
@@ -102,6 +94,7 @@ def silent_access_tracker():
                 conn.update(worksheet="ACCESS LOG", data=updated_logs)
                 
             except Exception as e:
+                # Silently pass so a database error doesn't crash the UI for the user
                 pass
                 
         # 4. Lock the session state so it doesn't log them again if they switch tabs
@@ -210,6 +203,7 @@ FP_MAPPING = {
     "FP_Demand": "FP_Demand_Data"
 }
 
+# Ensure FP_MAPPING is added to the ALL_MAPPINGS dictionary:
 ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING, **MORTALITY_MAPPING, **FP_MAPPING}
 
 # --- TARGET WASH INDICATORS ---
@@ -237,6 +231,7 @@ def save_data_to_gsheets(new_data_dict):
         
         with st.spinner(f"Merging and saving {app_key} to cloud database..."):
             try:
+                # 1. Read existing data
                 try:
                     existing_df = conn.read(worksheet=sheet_name, ttl=0)
                     if not existing_df.empty and 'Area' in existing_df.columns:
@@ -246,6 +241,7 @@ def save_data_to_gsheets(new_data_dict):
                 except Exception:
                     existing_df = pd.DataFrame() 
                 
+                # 2. Merge logic
                 if not existing_df.empty:
                     old_df = existing_df.copy()
                     old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
@@ -262,6 +258,7 @@ def save_data_to_gsheets(new_data_dict):
                 combined_df.columns = combined_df.columns.astype(str)
                 combined_df = combined_df.fillna("")
                     
+                # 3. Write data back
                 old_len = len(existing_df)
                 new_len = len(combined_df)
                 
@@ -274,7 +271,10 @@ def save_data_to_gsheets(new_data_dict):
                 else:
                     conn.update(worksheet=sheet_name, data=combined_df)
                 
+                # 4. SMART CACHE: Update Session State directly to prevent burning a Google API Read Call!
                 st.session_state['fhsis_data'][app_key] = combined_df
+                
+                # 5. Pace the requests to avoid Google's 60 req/min limit
                 time.sleep(4) 
                 
             except Exception as e:
@@ -282,8 +282,6 @@ def save_data_to_gsheets(new_data_dict):
                 
     st.cache_data.clear()
 
-# THIS IS THE MAGIC SPEED UP FIX RIGHT HERE
-@st.cache_data(ttl=3600)
 def load_data_from_gsheets():
     loaded_data = {}
     try:
@@ -296,6 +294,7 @@ def load_data_from_gsheets():
                     loaded_data[app_key] = df
             except Exception:
                 pass 
+            # Pace the initial startup loads slightly to prevent crashing on boot
             time.sleep(0.5)
     except Exception as e:
         st.error("Google Sheets connection not fully configured yet.")
@@ -819,8 +818,6 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
         st.error(f"Maternal Template Parsing Error for {uploaded_file.name}: {e}")
         return None
 
-# --- ADDED CACHE HERE ---
-@st.cache_data
 def load_and_clean_mortality_data(uploaded_file, year):
     try:
         name_low = uploaded_file.name.lower()
@@ -1080,12 +1077,10 @@ def load_and_clean_fp_demand(uploaded_file, year):
     except Exception as e:
         st.error(f"Demand Satisfied Error processing {uploaded_file.name}: {e}")
         return None
-
-# --- INITIALIZE CLOUD DATA ---
-# This spinner will only show up when the cache is empty (like the first load of the day)
-if 'fhsis_data' not in st.session_state:
-    with st.spinner("🔄 Syncing latest DOH metrics from the cloud..."):
-        st.session_state['fhsis_data'] = load_data_from_gsheets()
+        
+@st.cache_data
+def convert_df_to_csv(df):
+    return df.to_csv(index=False).encode('utf-8')
 
 # --- SIDEBAR & RBAC ---
 with st.sidebar:
@@ -1150,149 +1145,1841 @@ with st.sidebar:
             st.session_state["is_admin"] = False
             st.rerun()
 
-# --- FILTERING HELPERS ---
-def get_filtered_data(app_key, year, rhus):
-    if 'fhsis_data' not in st.session_state or app_key not in st.session_state['fhsis_data']:
-        return pd.DataFrame()
-    df = st.session_state['fhsis_data'][app_key]
-    if df.empty: return df
-    
-    df_filtered = df[df['Year'].astype(str) == str(year)]
-    if not rhus or "Abra (Total)" in rhus:
-        pass 
-    else:
-        df_filtered = df_filtered[df_filtered['Area'].isin(rhus)]
-    return df_filtered
+# --- INITIALIZE SESSION STATE ---
+if 'fhsis_data' not in st.session_state:
+    st.session_state['fhsis_data'] = load_data_from_gsheets()
 
-# --- DASHBOARD ROUTING & UI ---
-if page == "🏠 Home":
-    st.title("🏥 Abra Provincial Health Office - FHSIS Command Center")
-    st.markdown("""
-        Welcome to the central hub for the Field Health Services Information System (FHSIS) of Abra Province. 
-        This portal automatically tracks, cleans, and visualizes health data across all 27 Rural Health Units.
-    """)
+# --- HELPER FUNCTIONS ---
+def filter_data(df, start_month, end_month, gender, year):
+    months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    start_idx = months_order.index(start_month)
+    end_idx = months_order.index(end_month)
+    valid_months = months_order[start_idx:end_idx+1]
     
-    st.info("👈 **Use the sidebar to navigate between specific health modules and apply global filters.**")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total RHUs Tracked", len(ABRA_RHUS))
-    with col2:
-        st.metric("Data Modules Active", "6")
-    with col3:
-        st.metric("System Status", "Live & Synced")
+    filtered_df = df[df['Month'].isin(valid_months)]
+    if 'Year' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Year'] == year]
         
-    st.markdown("---")
-    st.subheader("Provincial Coverage Map")
+    cols_to_keep = ['Area', 'Month']
+    if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
+
+    for col in filtered_df.columns:
+        if col in ['Area', 'Month', 'Year']: continue
+        clean_col = col.lower()
+        is_valid_gender = False
+        
+        if gender == "Total":
+            if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                is_valid_gender = True
+        else:
+            if col.endswith(f"_{gender}"):
+                is_valid_gender = True
+                
+        if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
+            if pd.api.types.is_numeric_dtype(filtered_df[col]):
+                if filtered_df[col].sum() > 0: cols_to_keep.append(col)
+            else:
+                cols_to_keep.append(col)
+                
+    cols_to_keep = list(dict.fromkeys(cols_to_keep))
+    if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
+    return filtered_df
+
+def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
+    months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    start_idx = months_order.index(start_month)
+    end_idx = months_order.index(end_month)
+    valid_months = months_order[start_idx:end_idx+1]
     
-    # Simple Scatter Map for Abra RHUs
-    map_data = pd.DataFrame([
-        {"RHU": name, "lat": coords[0], "lon": coords[1]} 
-        for name, coords in ABRA_COORDS.items()
-    ])
-    fig_map = px.scatter_mapbox(
-        map_data, lat="lat", lon="lon", hover_name="RHU",
-        color_discrete_sequence=["#7209b7"], zoom=9, center={"lat": 17.58, "lon": 120.75}
+    filtered_df = df[df['Month'].isin(valid_months)]
+    if 'Year' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Year'] == year]
+        
+    cols_to_keep = ['Area', 'Month']
+    if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
+
+    for col in filtered_df.columns:
+        if col in ['Area', 'Month', 'Year']: continue
+        clean_col = col.lower()
+        is_valid_gender = False
+        
+        if is_cancer:
+            is_valid_gender = True
+        else:
+            if gender == "Total":
+                if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                    is_valid_gender = True
+            else:
+                if col.endswith(f"_{gender}"):
+                    is_valid_gender = True
+                
+        if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
+            cols_to_keep.append(col)
+                
+    cols_to_keep = list(dict.fromkeys(cols_to_keep))
+    if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
+    return filtered_df
+
+def get_ncd_col(df, include_words, exclude_words=None):
+    if exclude_words is None: exclude_words = []
+    for col in df.columns:
+        cl = col.lower().replace('\n', ' ')
+        if all(w.lower() in cl for w in include_words) and not any(w.lower() in cl for w in exclude_words):
+            return col
+    if "no." in [w.lower() for w in include_words]:
+        fallback_include = [w for w in include_words if w.lower() != "no."]
+        for col in df.columns:
+            cl = col.lower().replace('\n', ' ')
+            if all(w.lower() in cl for w in fallback_include) and not any(w.lower() in cl for w in exclude_words):
+                return col
+    return None
+
+def get_clean_indicator_name(col_name):
+    c_low = col_name.lower().replace('\n', ' ').replace('-', ' ')
+    
+    # --- NCD Mapping ---
+    if "risk assessed" in c_low: return "Total Risk Assessed"
+    if "smoking" in c_low or "smoker" in c_low: return "History of Smoking (Current Smoker)"
+    if "alcohol" in c_low: return "Alcohol Binge Drinkers"
+    if "obese/ overweight" in c_low or "obese/overweight" in c_low or "obese / overweight" in c_low: return "Obese / Overweight"
+    if "overweight" in c_low: return "Overweight"
+    if "obese" in c_low: return "Obese"
+    if "physical activity" in c_low: return "Insufficient Physical Activity"
+    if "unhealthy diet" in c_low: return "Unhealthy Diet"
+    if "hypertensive" in c_low: return "Identified Hypertensive"
+    if "type 2 dm" in c_low or ("diabetes" in c_low and "gestational" not in c_low): return "Identified Type 2 DM"
+    
+    # --- Mortality & Injuries Mapping ---
+    if "death" in c_low or "deaths" in c_low:
+        if "cvd" in c_low or "cardiovascular" in c_low: return "CVD Deaths"
+        if "cancer" in c_low: return "Cancer Deaths"
+        if "diabetes" in c_low: return "Diabetes Deaths"
+        if "respiratory" in c_low: return "Respiratory Disease Deaths"
+        if "traffic" in c_low: return "Traffic Injury Deaths"
+        if "total" in c_low: return "Total Premature Deaths"
+    elif "road accidents" in c_low: return "Total Road Accidents"
+    
+    # --- Maternal Care (Livebirths Base) ---
+    if 'total livebirths' in c_low: return 'Total Livebirths'
+    elif 'total deliveries' in c_low:
+        if '10 14' in c_low: return '0. Total Deliveries (10-14)'
+        elif '15 19' in c_low: return '0. Total Deliveries (15-19)'
+        elif '20 49' in c_low: return '0. Total Deliveries (20-49)'
+        else: return '0. Total Deliveries'
+    
+    # --- Maternal Care (ANC) Exact Mapping ---
+    elif 'new pregnant' in c_low: return '1. New Pregnant Women Seen'
+    elif 'at least 4 anc' in c_low and 'delivered' in c_low: return '2. Delivered with at least 4 ANC visits'
+    elif 'gave birth' in c_low and 'tracked' in c_low: return '3. Women gave birth tracked during pregnancy (a)'
+    elif 'trans in' in c_low and '8anc' not in c_low and '4pnc' not in c_low and 'pp' not in c_low: return '4. TRANS IN from other LGUs (b)'
+    elif 'trans out' in c_low and '8anc' in c_low: return '5. TRANS OUT before completing 8ANC (c)'
+    elif '(a+b) c' in c_low and 'delivered' in c_low: return '6. Delivered & tracked during pregnancy (a+b)-c'
+    elif '1st to 8th anc' in c_low: return '7. Provided 1st to 8th ANC on schedule (a)'
+    elif '8anc' in c_low and 'trans in' in c_low: return '8. Completed 8ANC TRANS IN (b)'
+    elif 'at least 8anc (a+b)' in c_low: return '9. Delivered & completed at least 8ANC (a+b)'
+    
+    # --- Maternal Care (PPC) Exact Mapping ---
+    elif '2 postpartum check ups' in c_low: return '2. Completed at least 2 PP check-ups'
+    elif 'tracked (a)' in c_low and 'pp women' in c_low: return '3. PP women who were tracked (a)'
+    elif 'trans in' in c_low and 'pp' in c_low and '4pnc' not in c_low: return '4. PP women TRANS-IN (b)'
+    elif 'trans out' in c_low and 'pp' in c_low: return '5. PP women TRANS-OUT (c)'
+    elif '=(a+b) c' in c_low and 'pp' in c_low: return '6. PP Women tracked during pregnancy =(a+b)-c'
+    elif '1st to 4th pnc' in c_low: return '7. PP women provided 1st to 4th PNC on schedule (a)'
+    elif '4pnc' in c_low and 'trans in' in c_low: return '8. PP women with completed 4PNC TRANS IN (b)'
+    elif 'at least 4pnc =(a+b)' in c_low: return '9. Women gave birth completed at least 4PNC =(a+b)'
+    elif 'iron with folic' in c_low: return '10. PP women who completed iron with folic acid'
+    elif 'vitamin a' in c_low: return '11. PP women given Vitamin A supplementation'
+
+    # --- Nutritional Status (File 2) ---
+    elif 'assessed of their nutritional status' in c_low:
+        if 'normal bmi' in c_low: return '1. Assessed Nutritional Status (Normal BMI)'
+        elif 'low bmi' in c_low: return '1. Assessed Nutritional Status (Low BMI)'
+        elif 'high bmi' in c_low: return '1. Assessed Nutritional Status (High BMI)'
+        else: return '1. Assessed Nutritional Status'
+    elif '1st time given at least 2 doses of td' in c_low: return '2. Given at least 2 doses of Td (1st time)'
+    elif '2nd or more times given at least 3 doses of td' in c_low: return '3. Given at least 3 doses of Td (2nd+ time)'
+    elif 'completed the dose of iron w/ folic acid' in c_low: return '4. Completed Iron w/ Folic Acid'
+
+    # --- Calcium & Deworming (File 3) ---
+    elif 'completed doses of calcium carbonate' in c_low: return '1. Completed Calcium Carbonate'
+    elif 'completed the dose multiple micronutrient' in c_low: return '2. Completed MMS'
+    elif 'given 1 dose of deworming tablet' in c_low: return '3. Given 1 dose of Deworming Tablet'
+
+    # --- Syphilis & Hep B (File 4) ---
+    elif 'screened for syphilis' in c_low: return '1. Screened for Syphilis'
+    elif 'tested positive for syphilis' in c_low: return '2. Tested Positive for Syphilis'
+    elif 'screened for hepatitis b' in c_low: return '3. Screened for Hepatitis B'
+    elif 'screened reactive to hepatitis b' in c_low: return '4. Screened Reactive to Hepatitis B'
+    elif 'screened for hiv' in c_low: return '5. Screened for HIV'
+    elif 'screened reactive to hiv' in c_low: return '6. Screened Reactive to HIV'
+
+    # --- CBC & Gestational Diabetes (File 5) ---
+    elif 'tested for cbc/hgb/hct' in c_low and 'anemia' not in c_low: return '1. Tested for CBC/Hgb/Hct'
+    elif 'diagnosed with anemia' in c_low: return '2. Diagnosed with Anemia'
+    elif 'screened for gestational diabetes' in c_low: return '3. Screened for Gestational Diabetes'
+    elif 'tested positive for gestational diabetes' in c_low: return '4. Tested Positive for Gestational Diabetes'
+
+    # --- Adolescent Birth Rate (File 8) ---
+    elif 'adolescent women 10 14' in c_low and 'rate' not in c_low: return '1. Adolescent Women (10-14)'
+    elif 'adolescent women 15 19' in c_low and 'rate' not in c_low: return '2. Adolescent Women (15-19)'
+    elif 'adolescent women 10 19' in c_low and 'rate' not in c_low: return '3. Adolescent Women (10-19)'
+    
+    name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
+    if "_" in name: name = name.split("_")[0]
+    return name
+
+def get_maternal_denominator(col_name, age_filter, all_cols):
+    clean_name = get_clean_indicator_name(col_name)
+    suffix = age_filter
+    
+    denom_col = None
+    if clean_name == "2. Delivered with at least 4 ANC visits":
+        denom_col = f"Total Deliveries_{suffix}"
+    elif clean_name == "9. Delivered & completed at least 8ANC (a+b)":
+        denom_col = f"Women who delivered and were tracked during pregnancy  (a+b)-c_{suffix}"
+        
+    elif clean_name == "2. Completed at least 2 PP check-ups":
+        denom_col = f"Total Deliveries_{suffix}"
+    elif clean_name == "9. Women gave birth completed at least 4PNC =(a+b)":
+        denom_col = f"PP Women who were tracked during pregnancy =(a+b)-c_{suffix}"
+        
+    elif clean_name in ["10. PP women who completed iron with folic acid", "11. PP women given Vitamin A supplementation"]:
+        denom_col = "Elig. Pop."
+        
+    # --- Nutritional & Td Denominators ---
+    elif clean_name in [
+        '1. Assessed Nutritional Status (Normal BMI)',
+        '1. Assessed Nutritional Status (Low BMI)',
+        '1. Assessed Nutritional Status (High BMI)',
+        '1. Assessed Nutritional Status',
+        '2. Given at least 2 doses of Td (1st time)',
+        '3. Given at least 3 doses of Td (2nd+ time)',
+        '4. Completed Iron w/ Folic Acid'
+    ]:
+        denom_col = "Elig. Pop."
+        
+    # --- New Template Denominators ---
+    elif clean_name == "2. Tested Positive for Syphilis":
+        denom_col = f"Pregnant women screened for syphilis_{suffix}"
+    elif clean_name == "4. Screened Reactive to Hepatitis B":
+        denom_col = f"Pregnant Women screened for Hepatitis B_{suffix}"
+    elif clean_name == "6. Screened Reactive to HIV":
+        denom_col = f"Pregnant Women Screened for HIV_{suffix}"
+    elif clean_name == "2. Diagnosed with Anemia":
+        denom_col = f"Pregnant women tested for CBC/Hgb/Hct_{suffix}"
+    elif clean_name == "4. Tested Positive for Gestational Diabetes":
+        denom_col = f"Pregnant women screened for gestational diabetes_{suffix}"
+    elif clean_name == "1. Adolescent Women (10-14)":
+        denom_col = "Pop. (10-14 years old Women)_Total"
+    elif clean_name == "2. Adolescent Women (15-19)":
+        denom_col = "Pop. (15-19 years old Women)_Total"
+    elif clean_name == "3. Adolescent Women (10-19)":
+        denom_col = "Pop. (10-19 years old Women)_Total"
+        
+    if denom_col and denom_col in all_cols:
+        return denom_col
+    elif denom_col:
+        clean_target = denom_col.replace("  ", " ").replace("=", "").strip().lower()
+        for c in all_cols:
+            if clean_target in c.replace("  ", " ").replace("=", "").strip().lower():
+                return c
+                
+    return "Elig. Pop." if "Elig. Pop." in all_cols else None
+
+# --- UI RENDERERS ---
+def render_footer():
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #888888; padding: 10px;'>
+            <p>Developed by <strong>JangTV</strong></p>
+            <img src="https://github.com/RJA24/abra-sbi-dashboard/blob/main/357094382_2458785624282603_4372984338912374777_n.png?raw=true" width="80" style="margin-top: -10px; opacity: 0.8;">
+        </div>
+        """, 
+        unsafe_allow_html=True
     )
-    fig_map.update_layout(mapbox_style="carto-positron", margin={"r":0,"t":0,"l":0,"b":0})
-    st.plotly_chart(fig_map, use_container_width=True)
+def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        filtered_df = filter_data(raw_df, start_m, end_m, gender, year)
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+            
+        safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
+        
+        cols_to_plot = []
+        for base in base_metrics:
+            for col in filtered_df.columns:
+                if base.lower() in col.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
+                    if "%" not in col and "deficit" not in col.lower() and "previous" not in col.lower():
+                        if col not in cols_to_plot:  cols_to_plot.append(col)
+        
+        if cols_to_plot:
+            agg_dict = {col: 'sum' for col in cols_to_plot}
+            for ec in elig_cols: agg_dict[ec] = 'max' 
+                
+            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_{safe_filename}_{year}_{gender}")
+            
+            default_cols = []
+            for c in cols_to_plot:
+                c_base = c.replace(f"_{gender}", "").strip()
+                is_parent = False
+                for other_c in cols_to_plot:
+                    if other_c != c:
+                        other_base = other_c.replace(f"_{gender}", "").strip()
+                        if other_base.startswith(c_base + " ") or other_base.startswith(c_base + "("):
+                            is_parent = True; break
+                if not is_parent: default_cols.append(c)
+            if not default_cols and len(cols_to_plot) > 0: default_cols = [cols_to_plot[0]]
+            
+            with st.expander("⚙️ Add / Remove Indicators"):
+                selected_cols = st.multiselect("Select specific indicators to include in the dashboard:", options=cols_to_plot, default=default_cols, key=f"ms_picker_{safe_filename}_{year}_{gender}", label_visibility="collapsed")
+
+            valid_selected = [c for c in selected_cols if c in agg_df.columns]
+            uid = f"imm_{safe_filename}_{year}_{gender}"
+            
+            if valid_selected:
+                provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
+                provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
+                
+                st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
+                
+                # CHUNK CARDS INTO A GRID (Max 4 per row)
+                cols_per_row = 4
+                rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
+                
+                for i, col in enumerate(valid_selected):
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
+                    
+                    total_val = provincial_antigens[col]
+                    clean_name = col.replace(f"_{gender}", "")
+                    
+                    if view_mode == "Percentage (%) Coverage" and elig_cols:
+                        perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
+                        rows[row_idx][col_idx].metric(label=f"{clean_name} Target", value=f"{perc:.1f}%")
+                    else:
+                        rows[row_idx][col_idx].metric(label=f"{clean_name}", value=f"{int(total_val):,}")
+                
+                st.markdown("---")
+                chart_df = agg_df[['Area'] + valid_selected + elig_cols].copy()
+                abra_total_df = pd.DataFrame()
+                abra_total_df['Vaccine/Antigen'] = valid_selected
+                
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    main_elig_col = elig_cols[0]
+                    for col in valid_selected:
+                        chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
+                        chart_df[col] = chart_df[col].round(1)
+                    prov_counts = [provincial_antigens[c] for c in valid_selected]
+                    abra_total_df['Count'] = [(c / provincial_elig * 100) if provincial_elig > 0 else 0 for c in prov_counts]
+                    abra_total_df['Count'] = abra_total_df['Count'].round(1)
+                    y_axis_label = "Coverage (%)"
+                else:
+                    abra_total_df['Count'] = [provincial_antigens[c] for c in valid_selected]
+                    y_axis_label = "Number of Children"
+
+                st.markdown(f"#### 📈 {tab_title} - Aggregate Total")
+                abra_total_df['Vaccine/Antigen'] = abra_total_df['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+                
+                fig_abra = px.bar(abra_total_df, x='Vaccine/Antigen', y='Count', color='Vaccine/Antigen', title=f"Aggregate Total ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    fig_abra.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                fig_abra.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_abra.update_layout(xaxis_title="Antigen", yaxis_title=y_axis_label, showlegend=False, margin=dict(t=60))
+                st.plotly_chart(fig_abra, use_container_width=True, key=f"abra_{uid}")
+
+                is_single_rhu = filter_rhus and "Abra (Total)" not in filter_rhus and len(filter_rhus) == 1
+                
+                if not is_single_rhu:
+                    st.markdown("---")
+                    st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                    
+                    if len(valid_selected) == 1:
+                        sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_{uid}")
+                        if sort_order == "Highest to Lowest":
+                            chart_df = chart_df.sort_values(by=valid_selected[0], ascending=False)
+                        else:
+                            chart_df = chart_df.sort_values(by='Area', ascending=True)
+                    else:
+                        chart_df = chart_df.sort_values(by='Area', ascending=True)
+
+                    melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
+                    melted['Vaccine/Antigen'] = melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+                    
+                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Vaccine/Antigen', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel, category_orders={"Area": chart_df['Area'].tolist()})
+                    if view_mode == "Percentage (%) Coverage" and elig_cols:
+                        fig_rhu.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                    fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                    fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Antigen", margin=dict(t=60))
+                    st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 🏆 Top Performing RHUs (Average)")
+                    top5_df = chart_df.copy()
+                    top5_df['Rank_Metric'] = top5_df[valid_selected].mean(axis=1)
+                    top5_df = top5_df.sort_values(by='Rank_Metric', ascending=True).tail(5)
+                    fig_top5 = px.bar(top5_df, x='Rank_Metric', y='Area', orientation='h', title=f"Top RHUs ({start_m} - {end_m})", text_auto='.1f' if view_mode == "Percentage (%) Coverage" else True, color='Rank_Metric', color_continuous_scale="Greens")
+                    fig_top5.update_layout(xaxis_title=y_axis_label, yaxis_title="Rural Health Unit (RHU)", showlegend=False, margin=dict(t=60))
+                    st.plotly_chart(fig_top5, use_container_width=True, key=f"top5_{uid}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 🗺️ Heatmap")
+                    map_df = chart_df.copy()
+                    map_df['Rank_Metric'] = map_df[valid_selected].mean(axis=1)
+                    map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
+                    map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
+                    map_df = map_df[map_df['Lat'] != 0] 
+                    color_scale = "RdYlGn" if view_mode == "Percentage (%) Coverage" else "Blues"
+                    map_title = f"Geospatial View: Average {y_axis_label}"
+                    fig_map = px.scatter_mapbox(map_df, lat="Lat", lon="Lon", hover_name="Area", hover_data={"Lat": False, "Lon": False, "Rank_Metric": ':.1f'}, color="Rank_Metric", size="Rank_Metric", color_continuous_scale=color_scale, size_max=20, zoom=8.5, center={"lat": 17.55, "lon": 120.75}, mapbox_style="carto-positron", title=map_title)
+                    fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
+                    st.plotly_chart(fig_map, use_container_width=True, key=f"map_{uid}")
+                
+                st.markdown("---")
+                st.markdown(f"#### 📉 Monthly Trend Analysis")
+                trend_agg = filtered_df.groupby('Month')[valid_selected].sum().reset_index()
+                months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
+                trend_agg = trend_agg.sort_values('Month')
+                trend_chart_df = pd.DataFrame({'Month': trend_agg['Month']})
+                if view_mode == "Percentage (%) Coverage" and elig_cols:
+                    for col in valid_selected:
+                        trend_chart_df[col] = [(v / provincial_elig * 100) if provincial_elig > 0 else 0 for v in trend_agg[col]]
+                        trend_chart_df[col] = trend_chart_df[col].round(1)
+                    y_trend_label = "Coverage (%)"
+                else:
+                    for col in valid_selected: trend_chart_df[col] = trend_agg[col]
+                    y_trend_label = "Number of Children"
+                trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=valid_selected, var_name='Vaccine/Antigen', value_name='Count')
+                trend_melted['Vaccine/Antigen'] = trend_melted['Vaccine/Antigen'].str.replace(f"_{gender}", "")
+                fig_trend = px.line(trend_melted, x='Month', y='Count', color='Vaccine/Antigen', markers=True, title=f"Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Pastel)
+                if view_mode == "Percentage (%) Coverage" and elig_cols: fig_trend.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="DOH Target (95%)")
+                fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_trend_label, legend_title="Antigen", margin=dict(t=40), hovermode="x unified")
+                st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
+                
+                dose_1_col = next((c for c in valid_selected if " 1" in c or "1_" in c), None)
+                dose_last_col = next((c for c in valid_selected if " 3" in c or "3_" in c), next((c for c in valid_selected if " 2" in c and ("MMR" in c.upper() or "MCV" in c.upper())), None))
+                
+                if dose_1_col and dose_last_col and tab_title != "Birth Doses":
+                    st.markdown("---")
+                    st.markdown(f"#### ⚠️ Dropout Analysis ({dose_1_col.replace(f'_{gender}', '')} to {dose_last_col.replace(f'_{gender}', '')})")
+                    drop_df = agg_df[['Area', dose_1_col, dose_last_col]].copy()
+                    drop_df['Dropout Rate (%)'] = np.where(drop_df[dose_1_col] > 0, ((drop_df[dose_1_col] - drop_df[dose_last_col]) / drop_df[dose_1_col]) * 100, 0)
+                    drop_df['Dropout Rate (%)'] = drop_df['Dropout Rate (%)'].round(1)
+                    fig_drop = px.bar(drop_df, x='Area', y='Dropout Rate (%)', text_auto=True, color='Dropout Rate (%)', color_continuous_scale=["lightgreen", "yellow", "red"], title="Highlighting RHUs with high dropout rates from first to final dose.")
+                    fig_drop.add_hline(y=10, line_dash="dash", line_color="red", annotation_text="Warning Threshold (10%)")
+                    fig_drop.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Dropout Rate (%)", margin=dict(t=40))
+                    st.plotly_chart(fig_drop, use_container_width=True, key=f"drop_{uid}")
+
+            else:
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
+            
+        else:
+            st.warning("Could not find graphing columns for the selected demographic.")
+            
+        with st.expander("📄 View & Download Filtered Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data_{start_m}_to_{end_m}.csv", mime="text/csv")
+    else:
+        st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
+        
+def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        year_df = raw_df[raw_df['Year'] == year]
+        
+        valid_year_cols = ['Area', 'Month', 'Year']
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if 'elig' in col.lower() or 'pop' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+        
+        filtered_df = filter_ncd_data(raw_df, start_m, end_m, gender, year, is_cancer=False)
+        
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+        
+        safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
+        
+        cols_to_plot = []
+        for base in base_metrics:
+            group_cols = []
+            for col in filtered_df.columns:
+                clean_col_name = col.replace('\n', ' ')
+                if base.lower() in clean_col_name.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
+                    if "%" not in col and "deficit" not in clean_col_name.lower() and "previous" not in clean_col_name.lower():
+                        group_cols.append(col)
+            
+            if group_cols:
+                total_cols = [c for c in group_cols if "total" in c.lower()]
+                if total_cols: 
+                    if total_cols[0] not in cols_to_plot: cols_to_plot.append(total_cols[0])
+                else: 
+                    best_col = max(group_cols, key=lambda c: pd.to_numeric(filtered_df[c], errors='coerce').sum())
+                    if best_col not in cols_to_plot: cols_to_plot.append(best_col)
+        
+        if cols_to_plot:
+            agg_dict = {col: 'sum' for col in cols_to_plot}
+            for ec in elig_cols: agg_dict[ec] = 'max' 
+                
+            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            uid = f"ncd_{safe_filename}_{year}_{gender}"
+            
+            with st.expander("⚙️ Add / Remove NCD Indicators"):
+                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot, key=f"ms_ncd_{safe_filename}_{year}_{gender}", format_func=get_clean_indicator_name)
+
+            valid_selected = [c for c in selected_cols if c in agg_df.columns]
+
+            if valid_selected:
+                provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
+                
+                c_assessed = next((c for c in valid_selected if "risk assessed" in c.lower()), None)
+                c_hyper = next((c for c in valid_selected if "hypertensive" in c.lower()), None)
+                c_dm = next((c for c in valid_selected if "type 2 dm" in c.lower() or "diabetes" in c.lower()), None)
+                lifestyle_cols = [c for c in valid_selected if c not in [c_assessed, c_hyper, c_dm] and c not in elig_cols]
+                
+                st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
+                
+                cols_per_row = 5
+                rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
+                
+                for i, col in enumerate(valid_selected):
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
+                    total_val = provincial_antigens[col]
+                    short_name = get_clean_indicator_name(col)
+                    
+                    if c_assessed and col in [c_hyper, c_dm] and provincial_antigens[c_assessed] > 0:
+                        yield_pct = (total_val / provincial_antigens[c_assessed]) * 100
+                        rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}", delta=f"{yield_pct:.1f}% Screening Yield", delta_color="off")
+                    else:
+                        rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}")
+                
+                st.markdown("---")
+                
+                if c_assessed or lifestyle_cols:
+                    st.markdown(f"#### 🧬 {tab_title} : Health Footprint")
+                    v_col1, v_col2 = st.columns(2)
+                    
+                    with v_col1:
+                        if lifestyle_cols:
+                            radar_data = pd.DataFrame({
+                                'Risk Factor': [get_clean_indicator_name(c) for c in lifestyle_cols],
+                                'Count': [provincial_antigens[c] for c in lifestyle_cols]
+                            })
+                            fig_radar = px.line_polar(radar_data, r='Count', theta='Risk Factor', line_close=True, title="🕸️ Lifestyle Risk Profile (Radar)", markers=True, color_discrete_sequence=["#FF9933"])
+                            fig_radar.update_traces(fill='toself')
+                            st.plotly_chart(fig_radar, use_container_width=True, key=f"radar_{uid}")
+                        else:
+                            st.info("Select lifestyle indicators (Smoking, Alcohol, etc.) to view the Risk Profile.")
+                            
+                    with v_col2:
+                        if c_assessed and (c_hyper or c_dm):
+                            bar_stages = ["Total Risk Assessed"]
+                            bar_counts = [provincial_antigens[c_assessed]]
+                            if c_hyper: 
+                                bar_stages.append("Hypertensive")
+                                bar_counts.append(provincial_antigens[c_hyper])
+                            if c_dm:
+                                bar_stages.append("Type 2 DM")
+                                bar_counts.append(provincial_antigens[c_dm])
+                                
+                            diag_df = pd.DataFrame({'Condition': bar_stages, 'Patients': bar_counts})
+                            fig_diag = px.bar(diag_df, x='Condition', y='Patients', title="📊 Assessment vs. Diagnosed Yield", color='Condition', text_auto=True, color_discrete_sequence=["#3366CC", "#DC3912", "#FF9900"])
+                            fig_diag.update_traces(textposition="outside", cliponaxis=False)
+                            fig_diag.update_layout(showlegend=False, xaxis_title="", yaxis_title="Total Patients", margin=dict(t=40))
+                            st.plotly_chart(fig_diag, use_container_width=True, key=f"diag_bar_{uid}")
+                        else:
+                            st.info("Select 'Risk Assessed' and at least one disease (Hypertension/DM) to view the Diagnostic Yield.")
+                
+                st.markdown("---")
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                
+                chart_df = agg_df[['Area'] + valid_selected].copy()
+                
+                if len(valid_selected) == 1:
+                    sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_{uid}")
+                    if sort_order == "Highest to Lowest":
+                        chart_df = chart_df.sort_values(by=valid_selected[0], ascending=False)
+                    else:
+                        chart_df = chart_df.sort_values(by='Area', ascending=True)
+                else:
+                    chart_df = chart_df.sort_values(by='Area', ascending=True)
+                
+                melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
+                melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
+                
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set2, category_orders={"Area": chart_df['Area'].tolist()})
+                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title="Count", legend_title="Indicator", margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
+                
+            else:
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
+        else:
+            st.warning("Could not find graphing columns for the selected demographic.")
+            
+        with st.expander("📄 View & Download Raw NCD Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_NCD_{safe_filename}_Data.csv", mime="text/csv")
+    else:
+        st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
+
+def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus, chart_type="bar"):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        year_df = raw_df[raw_df['Year'] == year]
+        
+        valid_year_cols = ['Area', 'Month', 'Year']
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if 'elig' in col.lower() or 'pop' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+        
+        filtered_df = filter_ncd_data(raw_df, start_m, end_m, gender, year, is_cancer=False)
+        
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+        
+        safe_filename = tab_title.replace(" ", "_").replace("/", "_").replace("&", "and")
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
+        
+        cols_to_plot = []
+        for base in base_metrics:
+            for col in filtered_df.columns:
+                clean_col_name = col.replace('\n', ' ')
+                if base.lower() in clean_col_name.lower() and col not in ['Area', 'Month', 'Year'] and col not in elig_cols:
+                    if col not in cols_to_plot: cols_to_plot.append(col)
+        
+        if cols_to_plot:
+            agg_dict = {col: 'sum' for col in cols_to_plot}
+            for ec in elig_cols: agg_dict[ec] = 'max' 
+            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            uid = f"mort_{safe_filename}_{year}_{gender}"
+            
+            with st.expander("⚙️ Add / Remove Indicators"):
+                selected_cols = st.multiselect("Select indicators to include in the charts:", options=cols_to_plot, default=cols_to_plot, key=f"ms_mort_{safe_filename}_{year}_{gender}", format_func=get_clean_indicator_name)
+
+            valid_selected = [c for c in selected_cols if c in agg_df.columns]
+
+            if valid_selected:
+                view_mode = "Raw Counts"
+                if elig_cols:
+                    view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%)"], horizontal=True, key=f"toggle_view_mort_{safe_filename}_{year}_{gender}")
+                    
+                provincial_antigens = {col: agg_df[col].sum() for col in valid_selected}
+                provincial_elig = sum([agg_df[ec].sum() for ec in elig_cols[:1]]) if elig_cols else 1
+                
+                st.markdown(f"#### 🏆 Summary ({location_header.replace('📍 ', '')})")
+                cols_per_row = 5
+                rows = [st.columns(cols_per_row) for _ in range((len(valid_selected) + cols_per_row - 1) // cols_per_row)]
+                
+                for i, col in enumerate(valid_selected):
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
+                    total_val = provincial_antigens[col]
+                    short_name = get_clean_indicator_name(col)
+                    
+                    if view_mode == "Percentage (%)" and elig_cols:
+                        perc = (total_val / provincial_elig) * 100 if provincial_elig > 0 else 0
+                        rows[row_idx][col_idx].metric(label=f"{short_name} (%)", value=f"{perc:.3f}%")
+                    else:
+                        rows[row_idx][col_idx].metric(label=short_name, value=f"{int(total_val):,}")
+
+                if "Premature NCD" in tab_title:
+                    disease_cols = [c for c in valid_selected if "total" not in c.lower() and "pop" not in c.lower()]
+                    if disease_cols:
+                        donut_data = pd.DataFrame({
+                            'Cause': [get_clean_indicator_name(c) for c in disease_cols],
+                            'Deaths': [provincial_antigens[c] for c in disease_cols]
+                        })
+                        donut_data = donut_data[donut_data['Deaths'] > 0] 
+                        if not donut_data.empty:
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            fig_donut = px.pie(donut_data, values='Deaths', names='Cause', hole=0.4, title="🍩 Cause of Death Breakdown", color_discrete_sequence=px.colors.qualitative.Pastel)
+                            fig_donut.update_traces(textposition='inside', textinfo='percent+label')
+                            fig_donut.update_layout(margin=dict(t=40, b=0))
+                            st.plotly_chart(fig_donut, use_container_width=True, key=f"donut_{uid}")
+                
+                st.markdown("---")
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                
+                chart_df = agg_df[['Area'] + valid_selected + elig_cols].copy()
+                y_axis_label = "Reported Cases"
+                
+                if view_mode == "Percentage (%)" and elig_cols:
+                    main_elig_col = elig_cols[0]
+                    for col in valid_selected:
+                        chart_df[col] = np.where(chart_df[main_elig_col] > 0, (chart_df[col] / chart_df[main_elig_col]) * 100, 0)
+                        chart_df[col] = chart_df[col].round(3)
+                    y_axis_label = "Mortality Rate (%)"
+                
+                if len(valid_selected) == 1:
+                    sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_{uid}")
+                    if sort_order == "Highest to Lowest":
+                        chart_df = chart_df.sort_values(by=valid_selected[0], ascending=False)
+                    else:
+                        chart_df = chart_df.sort_values(by='Area', ascending=True)
+                else:
+                    chart_df = chart_df.sort_values(by='Area', ascending=True)
+
+                melted = chart_df.melt(id_vars='Area', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
+                melted['Indicator'] = melted['Indicator_Raw'].apply(get_clean_indicator_name)
+                
+                if chart_type == "line":
+                    fig_rhu = px.line(melted, x='Area', y='Count', color='Indicator', markers=True, title=f"Breakdown ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1, category_orders={"Area": chart_df['Area'].tolist()})
+                else:
+                    fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"Breakdown ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Set1, category_orders={"Area": chart_df['Area'].tolist()})
+                    fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                    
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_{uid}")
+
+                st.markdown("---")
+                st.markdown("#### 🚨 High-Risk Hotspots & Leaderboard")
+                col_m1, col_m2 = st.columns(2)
+                
+                primary_col = valid_selected[0]
+                metric_name = get_clean_indicator_name(primary_col)
+                
+                with col_m1:
+                    st.markdown(f"**Top RHUs (Highest {metric_name})**")
+                    leader_df = chart_df.copy()
+                    leader_df = leader_df.sort_values(by=primary_col, ascending=True).tail(5)
+                    fig_lead = px.bar(leader_df, x=primary_col, y='Area', orientation='h', text_auto=True if view_mode == "Raw Counts" else '.3f', color=primary_col, color_continuous_scale="Reds")
+                    fig_lead.update_layout(xaxis_title=y_axis_label, yaxis_title="", margin=dict(t=0, b=0))
+                    st.plotly_chart(fig_lead, use_container_width=True, key=f"lead_{uid}")
+                    
+                with col_m2:
+                    st.markdown(f"**Geospatial Hotspots ({metric_name})**")
+                    map_df = chart_df.copy()
+                    map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
+                    map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
+                    map_df = map_df[map_df['Lat'] != 0] 
+                    
+                    fig_map = px.scatter_mapbox(map_df, lat="Lat", lon="Lon", hover_name="Area", 
+                                                hover_data={"Lat": False, "Lon": False, primary_col: True if view_mode == "Raw Counts" else ':.3f'}, 
+                                                color=primary_col, size=primary_col, 
+                                                color_continuous_scale="Reds", size_max=20, zoom=8.5, 
+                                                center={"lat": 17.595, "lon": 120.613}, mapbox_style="carto-positron")
+                    fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+                    st.plotly_chart(fig_map, use_container_width=True, key=f"map_hotspot_{uid}")
+                
+                if len(filtered_df['Month'].unique()) > 1:
+                    st.markdown("---")
+                    st.markdown(f"#### 📈 Monthly Trend")
+                    trend_agg_dict = {col: 'sum' for col in valid_selected}
+                    for ec in elig_cols: trend_agg_dict[ec] = 'max'
+                    trend_agg = filtered_df.groupby('Month').agg(trend_agg_dict).reset_index()
+
+                    months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                    trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
+                    trend_agg = trend_agg.sort_values('Month').dropna()
+                    
+                    if view_mode == "Percentage (%)" and elig_cols:
+                        for col in valid_selected:
+                            trend_agg[col] = np.where(provincial_elig > 0, (trend_agg[col] / provincial_elig) * 100, 0).round(3)
+                    
+                    trend_melted = trend_agg.melt(id_vars='Month', value_vars=valid_selected, var_name='Indicator_Raw', value_name='Count')
+                    trend_melted['Indicator'] = trend_melted['Indicator_Raw'].apply(get_clean_indicator_name)
+                    
+                    fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Trend ({start_m} - {end_m})", color_discrete_sequence=px.colors.qualitative.Set1)
+                    fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, legend_title="Indicator", margin=dict(t=40))
+                    st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_{uid}")
+                
+            else:
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
+        else:
+            st.warning("Could not find graphing columns for the selected demographic.")
+            
+        with st.expander("📄 View & Download Raw Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
+    else:
+        st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
+
+def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
+    if gender == "Male":
+        st.info("🎗️ Cervical Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
+        return
+        
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        year_df = raw_df[raw_df['Year'] == year]
+        valid_year_cols = ['Area', 'Month', 'Year']
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if 'elig' in col.lower() or 'pop' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+        
+        filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
+        
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+        
+        c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred", "suspect"])
+        c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
+        c_susp_link_tr = get_ncd_col(filtered_df, ["suspicious", "treated"], ["%"])
+        c_susp_link_ref = get_ncd_col(filtered_df, ["suspicious", "referred"], ["%"])
+        c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total", "linked"], ["%"])
+        
+        c_pos_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "linked", "treated", "referred", "care", "suspect"])
+        c_pos_link_tr = get_ncd_col(filtered_df, ["positive", "treated"], ["%"])
+        c_pos_link_ref = get_ncd_col(filtered_df, ["positive", "referred"], ["%"])
+        c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total", "linked"], ["%"])
+        
+        c_pos_suspect_tot = get_ncd_col(filtered_df, ["positive or suspect", "total"], ["%"])
+        
+        cols_to_agg = [c for c in [c_scr_tot, c_susp_no, c_susp_link_tr, c_susp_link_ref, c_susp_link_tot, c_pos_tot, c_pos_link_tr, c_pos_link_ref, c_pos_link_tot, c_pos_suspect_tot] if c]
+        if not cols_to_agg:
+            st.warning("Could not identify specific Cervical Cancer columns from the template. Ensure you are using the official DOH format.")
+            return
+            
+        agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
+        is_2024 = c_pos_suspect_tot is not None
+        
+        if is_2024:
+            st.info("📌 **2024 Legacy Format Detected:** Displaying simplified screening and suspect tracking.")
+            st.markdown("### 🎗️ Cervical Cancer Screening (2024)")
+            c1, c2 = st.columns(2)
+            if c_scr_tot: c1.metric("Total Women Screened", f"{int(agg_df[c_scr_tot].sum()):,}")
+            if c_pos_suspect_tot: c2.metric("Found Positive or Suspect", f"{int(agg_df[c_pos_suspect_tot].sum()):,}")
+            
+            if c_scr_tot:
+                st.markdown("---")
+                prov_tot = int(agg_df[c_scr_tot].sum())
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
+                fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title=f"Total Women Screened for Cervical Cancer (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                st.plotly_chart(fig_scr, use_container_width=True, key=f"cerv_leg_1_{year}")
+                
+            if c_pos_suspect_tot:
+                st.markdown("---")
+                prov_tot = int(agg_df[c_pos_suspect_tot].sum())
+                fig_pos = px.bar(agg_df, x='Area', y=c_pos_suspect_tot, title=f"Found Positive or Suspect (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_pos.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_pos.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                st.plotly_chart(fig_pos, use_container_width=True, key=f"cerv_leg_2_{year}")
+                
+            with st.expander("📄 View & Download Formatted Data"):
+                st.dataframe(agg_df, use_container_width=True, hide_index=True)
+            return
+
+        st.markdown("### 🎗️ Cervical Cancer Screening & Linkage to Care")
+        st.markdown(f"##### Medical Totals ({location_header.replace('📍 ', '')})")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        if c_scr_tot: c1.metric("1. Total Screened", f"{int(agg_df[c_scr_tot].sum()):,}")
+        if c_susp_no: c2.metric("2. Found Suspicious", f"{int(agg_df[c_susp_no].sum()):,}")
+        if c_susp_link_tot: c3.metric("3. Suspicious & Linked", f"{int(agg_df[c_susp_link_tot].sum()):,}")
+        if c_pos_tot: c4.metric("4. Found Positive", f"{int(agg_df[c_pos_tot].sum()):,}")
+        if c_pos_link_tot: c5.metric("5. Positive & Linked", f"{int(agg_df[c_pos_link_tot].sum()):,}")
+        
+        st.markdown("---")
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            st.markdown("#### 🌪️ Screening Cascade (Suspicious)")
+            susp_stages = ["Screened", "Suspicious", "Linked to Care"]
+            susp_counts = [
+                int(agg_df[c_scr_tot].sum()) if c_scr_tot else 0,
+                int(agg_df[c_susp_no].sum()) if c_susp_no else 0,
+                int(agg_df[c_susp_link_tot].sum()) if c_susp_link_tot else 0
+            ]
+            fig_f1 = px.funnel(pd.DataFrame({'Stage': susp_stages, 'Count': susp_counts}), x='Count', y='Stage', color_discrete_sequence=["#FFA15A"])
+            st.plotly_chart(fig_f1, use_container_width=True, key=f"cerv_funnel_susp_{year}")
+            
+        with col_f2:
+            st.markdown("#### 🌪️ Screening Cascade (Positive)")
+            pos_stages = ["Screened", "Positive", "Linked to Care"]
+            pos_counts = [
+                int(agg_df[c_scr_tot].sum()) if c_scr_tot else 0,
+                int(agg_df[c_pos_tot].sum()) if c_pos_tot else 0,
+                int(agg_df[c_pos_link_tot].sum()) if c_pos_link_tot else 0
+            ]
+            fig_f2 = px.funnel(pd.DataFrame({'Stage': pos_stages, 'Count': pos_counts}), x='Count', y='Stage', color_discrete_sequence=["#EF553B"])
+            st.plotly_chart(fig_f2, use_container_width=True, key=f"cerv_funnel_pos_{year}")
+
+        st.markdown("---")
+        st.markdown("#### 📊 RHU Breakdown: Screening Yield")
+        cols_to_melt = [c for c in [c_scr_tot, c_susp_no, c_pos_tot] if c]
+        if cols_to_melt:
+            agg_df = agg_df.sort_values(by='Area', ascending=True)
+            melted_rhu = agg_df[['Area'] + cols_to_melt].melt(id_vars='Area', var_name='Metric_Raw', value_name='Patients')
+            clean_metric_names = {c_scr_tot: "Screened", c_susp_no: "Suspicious", c_pos_tot: "Positive"}
+            melted_rhu['Metric'] = melted_rhu['Metric_Raw'].map(clean_metric_names)
+            
+            fig_rhu = px.bar(melted_rhu, x='Area', y='Patients', color='Metric', barmode='group', title="Screening Yield vs Abnormal Findings per RHU", text_auto=True, color_discrete_sequence=["#66B2FF", "#FFA15A", "#EF553B"], category_orders={"Area": agg_df['Area'].tolist()})
+            fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+            fig_rhu.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+            st.plotly_chart(fig_rhu, use_container_width=True, key=f"cerv_rhu_bar_{year}")
+
+        with st.expander("📄 View & Download Formatted Cervical Data"):
+            clean_names = {
+                c_scr_tot: "Screened (Total)", c_susp_no: "Suspicious (No.)", 
+                c_susp_link_tr: "Suspicious Linked (Treated)", c_susp_link_ref: "Suspicious Linked (Referred)", c_susp_link_tot: "Suspicious Linked (Total)",
+                c_pos_tot: "Positive (Total)", c_pos_link_tr: "Positive Linked (Treated)", 
+                c_pos_link_ref: "Positive Linked (Referred)", c_pos_link_tot: "Positive Linked (Total)"
+            }
+            display_df = agg_df.rename(columns=clean_names)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(display_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_Cervical_Cancer_Data.csv", mime="text/csv")
+    else:
+        st.info("No Cervical Cancer data uploaded yet.")
+
+def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
+    if gender == "Male":
+        st.info("🎀 Breast Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
+        return
+        
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        year_df = raw_df[raw_df['Year'] == year]
+        valid_year_cols = ['Area', 'Month', 'Year']
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if 'elig' in col.lower() or 'pop' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+        
+        filtered_df = filter_ncd_data(raw_df, start_m, end_m, "Total", year, is_cancer=True)
+        
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+        
+        b_leg_scr = get_ncd_col(filtered_df, ["screened for breast mass"], ["%", "suspicious"])
+        b_leg_susp = get_ncd_col(filtered_df, ["suspicious breast mass"], ["%", "screened"])
+        
+        b_hr_scr_cbe = get_ncd_col(filtered_df, ["high risk", "detection", "cbe"], ["%"])
+        b_hr_scr_mam = get_ncd_col(filtered_df, ["high risk", "detection", "mammogram"], ["%"])
+        b_hr_scr_tot = get_ncd_col(filtered_df, ["high risk", "detection", "total"], ["%"])
+        b_hr_rem_cbe = get_ncd_col(filtered_df, ["high risk", "remarkable", "cbe"], ["%", "linked"])
+        b_hr_rem_mam = get_ncd_col(filtered_df, ["high risk", "remarkable", "mammogram"], ["%", "linked"])
+        b_hr_rem_tot = get_ncd_col(filtered_df, ["high risk", "remarkable", "total"], ["%", "linked"])
+        b_hr_link_cbe = get_ncd_col(filtered_df, ["high risk", "linked", "cbe"], ["%"])
+        b_hr_link_mam = get_ncd_col(filtered_df, ["high risk", "linked", "mammogram"], ["%"])
+        b_hr_link_tot = get_ncd_col(filtered_df, ["high risk", "linked", "total"], ["%"])
+        
+        b_as_scr_cbe = get_ncd_col(filtered_df, ["asymptomatic", "cbe"], ["%"])
+        b_as_scr_mam = get_ncd_col(filtered_df, ["asymptomatic", "mammogram"], ["%"])
+        b_as_scr_tot = get_ncd_col(filtered_df, ["asymptomatic", "total"], ["%"])
+        b_as_rem_cbe = get_ncd_col(filtered_df, ["50-69", "remarkable", "cbe"], ["%", "high risk", "linked"])
+        b_as_rem_mam = get_ncd_col(filtered_df, ["50-69", "remarkable", "mammogram"], ["%", "high risk", "linked"])
+        b_as_rem_tot = get_ncd_col(filtered_df, ["50-69", "remarkable", "total"], ["%", "high risk", "linked"])
+        b_as_link_cbe = get_ncd_col(filtered_df, ["50-69", "linked", "cbe"], ["%", "high risk"])
+        b_as_link_mam = get_ncd_col(filtered_df, ["50-69", "linked", "mammogram"], ["%", "high risk"])
+        b_as_link_tot = get_ncd_col(filtered_df, ["50-69", "linked", "total"], ["%", "high risk"])
+        
+        all_cols = [b_leg_scr, b_leg_susp, b_hr_scr_cbe, b_hr_scr_mam, b_hr_scr_tot, b_hr_rem_cbe, b_hr_rem_mam, b_hr_rem_tot, b_hr_link_cbe, b_hr_link_mam, b_hr_link_tot,
+                    b_as_scr_cbe, b_as_scr_mam, b_as_scr_tot, b_as_rem_cbe, b_as_rem_mam, b_as_rem_tot, b_as_link_cbe, b_as_link_mam, b_as_link_tot]
+        cols_to_agg = [c for c in all_cols if c]
+        
+        if not cols_to_agg:
+            st.warning("Could not identify specific Breast Cancer columns from the template.")
+            return
+            
+        agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
+        is_2024 = b_leg_scr is not None or b_leg_susp is not None
+        
+        if is_2024:
+            st.info("📌 **2024 Legacy Format Detected:** Displaying simplified Breast Mass screening data.")
+            st.markdown("### 🎀 Breast Cancer Screening (2024)")
+            c1, c2 = st.columns(2)
+            if b_leg_scr: c1.metric("Screened for Breast Mass", f"{int(agg_df[b_leg_scr].sum()):,}")
+            if b_leg_susp: c2.metric("With Suspicious Breast Mass", f"{int(agg_df[b_leg_susp].sum()):,}")
+            
+            if b_leg_scr:
+                st.markdown("---")
+                prov_tot = int(agg_df[b_leg_scr].sum())
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
+                fig_scr = px.bar(agg_df, x='Area', y=b_leg_scr, title=f"Screened for Breast Mass (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#FF99CC"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                st.plotly_chart(fig_scr, use_container_width=True, key=f"br_leg_1_{year}")
+                
+            if b_leg_susp:
+                st.markdown("---")
+                prov_tot = int(agg_df[b_leg_susp].sum())
+                fig_susp = px.bar(agg_df, x='Area', y=b_leg_susp, title=f"With Suspicious Breast Mass (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_susp.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
+                fig_susp.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
+                st.plotly_chart(fig_susp, use_container_width=True, key=f"br_leg_2_{year}")
+                
+            with st.expander("📄 View & Download Formatted Data"):
+                st.dataframe(agg_df, use_container_width=True, hide_index=True)
+            return
+
+        st.markdown(f"### 🎀 High Risk Women (30-69 y.o.) | {location_header.replace('📍 ', '')}")
+        hr_c1, hr_c2, hr_c3 = st.columns(3)
+        if b_hr_scr_tot: hr_c1.metric("1. Screened (Total)", f"{int(agg_df[b_hr_scr_tot].sum()):,}")
+        if b_hr_rem_tot: hr_c2.metric("2. Found Remarkable (Total)", f"{int(agg_df[b_hr_rem_tot].sum()):,}")
+        if b_hr_link_tot: hr_c3.metric("3. Linked to Care (Total)", f"{int(agg_df[b_hr_link_tot].sum()):,}")
+        
+        st.markdown("---")
+        hr_col1, hr_col2 = st.columns([1, 2])
+        
+        with hr_col1:
+            st.markdown("#### 🌪️ Care Pipeline")
+            hr_funnel = pd.DataFrame({
+                'Stage': ['Screened', 'Remarkable', 'Linked'],
+                'Count': [
+                    agg_df[b_hr_scr_tot].sum() if b_hr_scr_tot else 0,
+                    agg_df[b_hr_rem_tot].sum() if b_hr_rem_tot else 0,
+                    agg_df[b_hr_link_tot].sum() if b_hr_link_tot else 0
+                ]
+            })
+            fig_hr_funnel = px.funnel(hr_funnel, x='Count', y='Stage', color_discrete_sequence=["#FF99CC"])
+            st.plotly_chart(fig_hr_funnel, use_container_width=True, key=f"br_hr_funnel_{year}")
+
+        with hr_col2:
+            st.markdown("#### 📊 RHU Screening Breakdown (Stacked)")
+            as_scr_cols = [c for c in [b_hr_scr_cbe, b_hr_scr_mam] if c] 
+            if as_scr_cols:
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
+                m = agg_df[['Area'] + as_scr_cols].melt(id_vars='Area')
+                m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_scr_cbe else "Mammogram")
+                fig_hr_bar = px.bar(m, x='Area', y='value', color='variable', barmode='stack', title="Screenings by Methodology", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_hr_bar.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=30))
+                st.plotly_chart(fig_hr_bar, use_container_width=True, key=f"breast_hr_bar_{year}")
+
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        
+        st.markdown("### 🎗️ Asymptomatic Women (50-69 y.o.)")
+        as_c1, as_c2, as_c3 = st.columns(3)
+        if b_as_scr_tot: as_c1.metric("1. Screened (Total)", f"{int(agg_df[b_as_scr_tot].sum()):,}")
+        if b_as_rem_tot: as_c2.metric("2. Found Remarkable (Total)", f"{int(agg_df[b_as_rem_tot].sum()):,}")
+        if b_as_link_tot: as_c3.metric("3. Linked to Care (Total)", f"{int(agg_df[b_as_link_tot].sum()):,}")
+        
+        st.markdown("---")
+        as_col1, as_col2 = st.columns([1, 2])
+        
+        with as_col1:
+            st.markdown("#### 🌪️ Care Pipeline")
+            as_funnel = pd.DataFrame({
+                'Stage': ['Screened', 'Remarkable', 'Linked'],
+                'Count': [
+                    agg_df[b_as_scr_tot].sum() if b_as_scr_tot else 0,
+                    agg_df[b_as_rem_tot].sum() if b_as_rem_tot else 0,
+                    agg_df[b_as_link_tot].sum() if b_as_link_tot else 0
+                ]
+            })
+            fig_as_funnel = px.funnel(as_funnel, x='Count', y='Stage', color_discrete_sequence=["#66B2FF"])
+            st.plotly_chart(fig_as_funnel, use_container_width=True, key=f"br_as_funnel_{year}")
+
+        with as_col2:
+            st.markdown("#### 📊 RHU Screening Breakdown (Stacked)")
+            as_scr_cols = [c for c in [b_as_scr_cbe, b_as_scr_mam] if c] 
+            if as_scr_cols:
+                agg_df = agg_df.sort_values(by='Area', ascending=True)
+                m = agg_df[['Area'] + as_scr_cols].melt(id_vars='Area')
+                m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_scr_cbe else "Mammogram")
+                fig_as_bar = px.bar(m, x='Area', y='value', color='variable', barmode='stack', title="Screenings by Methodology", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_as_bar.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=30))
+                st.plotly_chart(fig_as_bar, use_container_width=True, key=f"breast_as_bar_{year}")
+
+        with st.expander("📄 View & Download Formatted Breast Cancer Data (RHU Breakdown)"):
+            clean_names = {
+                b_hr_scr_cbe: "HR Screened (CBE)", b_hr_scr_mam: "HR Screened (Mammo)", b_hr_scr_tot: "HR Screened (Total)",
+                b_hr_rem_cbe: "HR Remarkable (CBE)", b_hr_rem_mam: "HR Remarkable (Mammo)", b_hr_rem_tot: "HR Remarkable (Total)",
+                b_hr_link_cbe: "HR Linked (CBE)", b_hr_link_mam: "HR Linked (Mammo)", b_hr_link_tot: "HR Linked (Total)",
+                b_as_scr_cbe: "Asymp Screened (CBE)", b_as_scr_mam: "Asymp Screened (Mammo)", b_as_scr_tot: "Asymp Screened (Total)",
+                b_as_rem_cbe: "Asymp Remarkable (CBE)", b_as_rem_mam: "Asymp Remarkable (Mammo)", b_as_rem_tot: "Asymp Remarkable (Total)",
+                b_as_link_cbe: "Asymp Linked (CBE)", b_as_link_mam: "Asymp Linked (Mammo)", b_as_link_tot: "Asymp Linked (Total)"
+            }
+            display_df = agg_df.rename(columns=clean_names)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(display_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_Breast_Cancer_Data.csv", mime="text/csv")
+    else:
+        st.info("No Breast Cancer data uploaded yet.")
+
+def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        year_df = raw_df[raw_df['Year'] == year]
+        
+        valid_year_cols = ['Area', 'Month', 'Year']  
+        for col in year_df.columns:
+            if col not in valid_year_cols:
+                if col in TARGET_WASH_COLS:
+                    valid_year_cols.append(col)
+                elif 'elig' in col.lower() or 'pop' in col.lower() or 'hh' in col.lower():
+                    valid_year_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(year_df[col]):
+                    if year_df[col].sum() > 0:
+                        valid_year_cols.append(col)
+                        
+        filtered_df = year_df[year_df['Month'].isin(selected_quarters)]
+        
+        cols_to_keep_final = [c for c in filtered_df.columns if c in valid_year_cols]
+        filtered_df = filtered_df[cols_to_keep_final]
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+        
+        safe_filename = tab_title.replace(" ", "_")
+        
+        cols_to_plot = [c for c in filtered_df.columns if c not in ['Area', 'Month', 'Year']]
+        
+        if cols_to_plot:
+            agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
+            
+            with st.expander(f"⚙️ Custom {tab_title} Indicators"):
+                default_cols = [c for c in cols_to_plot if c != "Projected No. of HHs"]
+                selected_cols = st.multiselect(f"Select specific {tab_title} indicators to visualize:", options=cols_to_plot, default=default_cols, key=f"ms_wash_{safe_filename}_{year}")
+            
+            if selected_cols:
+                view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_wash_{safe_filename}_{year}")
+                
+                primary_metric = "HH with Access to Basic Safe Water Supply" if tab_title == "Safe Water" else "HH with Basic Sanitation Facility"
+                has_primary = primary_metric in agg_df.columns and "Projected No. of HHs" in agg_df.columns
+                
+                if has_primary:
+                    over_100_df = agg_df[agg_df[primary_metric] > agg_df["Projected No. of HHs"]]
+                    if not over_100_df.empty:
+                        flagged_rhus = over_100_df['Area'].tolist()
+                        st.warning(f"🕵️‍♂️ **Data Quality Audit:** The following RHUs reported more covered households than their projected total, exceeding 100% coverage: **{', '.join(flagged_rhus)}**. Please verify their submissions.")
+
+                st.markdown(f"#### 🏆 Highlights ({location_header.replace('📍 ', '')})")
+                
+                cols_per_row = 4
+                rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
+                
+                provincial_hh = agg_df["Projected No. of HHs"].sum() if "Projected No. of HHs" in agg_df.columns else 0
+                
+                for i, col in enumerate(selected_cols):
+                    row_idx = i // cols_per_row
+                    col_idx = i % cols_per_row
+                    total_val = agg_df[col].sum()
+                    
+                    if view_mode == "Percentage (%) Coverage" and "Projected No. of HHs" in agg_df.columns and col != "Projected No. of HHs":
+                        perc = (total_val / provincial_hh) * 100 if provincial_hh > 0 else 0
+                        rows[row_idx][col_idx].metric(label=f"{col} (Cov)", value=f"{perc:.1f}%")
+                    else:
+                        rows[row_idx][col_idx].metric(label=col, value=f"{int(total_val):,}")
+                
+                st.markdown("---")
+                
+                if has_primary:
+                    st.markdown(f"#### 🌟 Performance Leaderboards ({tab_title})")
+                    leader_df = agg_df[['Area', primary_metric, 'Projected No. of HHs']].copy()
+                    leader_df['Coverage'] = np.where(leader_df['Projected No. of HHs'] > 0, (leader_df[primary_metric] / leader_df['Projected No. of HHs']) * 100, 0)
+                    leader_df['Coverage'] = leader_df['Coverage'].clip(upper=100) 
+                    leader_sorted = leader_df.sort_values(by='Coverage', ascending=False)
+                    
+                    col_l1, col_l2 = st.columns(2)
+                    with col_l1:
+                        st.markdown("**Top Performing RHUs**")
+                        top3 = leader_sorted.head(3)
+                        fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
+                        fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=10, b=0), height=300)
+                        st.plotly_chart(fig_top3, use_container_width=True, key=f"wash_top3_{safe_filename}_{year}")
+                    
+                    with col_l2:
+                        st.markdown("**Action Required: Bottom RHUs**")
+                        bot3 = leader_sorted.tail(3).sort_values(by='Coverage', ascending=True)
+                        fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
+                        fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=10, b=0), height=300)
+                        st.plotly_chart(fig_bot3, use_container_width=True, key=f"wash_bot3_{safe_filename}_{year}")
+                        
+                    st.markdown("---")
+
+                st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                
+                chart_df = agg_df[['Area'] + selected_cols].copy()
+                y_axis_label = "Count / Households"
+                
+                if view_mode == "Percentage (%) Coverage" and "Projected No. of HHs" in agg_df.columns:
+                    for col in selected_cols:
+                        if col != "Projected No. of HHs":
+                            chart_df[col] = np.where(agg_df["Projected No. of HHs"] > 0, (chart_df[col] / agg_df["Projected No. of HHs"]) * 100, 0)
+                            chart_df[col] = chart_df[col].round(1)
+                    y_axis_label = "Coverage (%)"
+                
+                if len(selected_cols) == 1:
+                    sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_wash_{safe_filename}_{year}")
+                    if sort_order == "Highest to Lowest":
+                        chart_df = chart_df.sort_values(by=selected_cols[0], ascending=False)
+                    else:
+                        chart_df = chart_df.sort_values(by='Area', ascending=True)
+                else:
+                    chart_df = chart_df.sort_values(by='Area', ascending=True)
+
+                melted = chart_df.melt(id_vars='Area', value_vars=selected_cols, var_name='Indicator', value_name='Count')
+                
+                fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"{tab_title} Performance ({', '.join(selected_quarters)})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Safe, category_orders={"Area": chart_df['Area'].tolist()})
+                
+                if view_mode == "Percentage (%) Coverage":
+                    fig_rhu.add_hline(y=100, line_dash="dash", line_color="green", annotation_text="100% Target")
+                    
+                fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
+                st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_wash_{safe_filename}_{year}")
+                
+                if has_primary:
+                    st.markdown("---")
+                    col_m1, col_m2 = st.columns(2)
+                    
+                    with col_m1:
+                        st.markdown(f"#### 🗺️ Coverage Heatmap")
+                        map_df = agg_df.copy()
+                        map_df['Coverage (%)'] = np.where(map_df['Projected No. of HHs'] > 0, (map_df[primary_metric] / map_df['Projected No. of HHs']) * 100, 0).clip(0, 100)
+                        map_df['Lat'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[0])
+                        map_df['Lon'] = map_df['Area'].map(lambda x: ABRA_COORDS.get(x, (0,0))[1])
+                        map_df = map_df[map_df['Lat'] != 0] 
+                        
+                        fig_map = px.scatter_mapbox(map_df, lat="Lat", lon="Lon", hover_name="Area", 
+                                                    hover_data={"Lat": False, "Lon": False, "Coverage (%)": ':.1f'}, 
+                                                    color="Coverage (%)", size="Projected No. of HHs", 
+                                                    color_continuous_scale="RdYlGn", size_max=20, zoom=8.5, 
+                                                    center={"lat": 17.55, "lon": 120.75}, mapbox_style="carto-positron")
+                        fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+                        st.plotly_chart(fig_map, use_container_width=True, key=f"wash_map_{safe_filename}_{year}")
+                        
+                    with col_m2:
+                        st.markdown(f"#### ⚠️ Gap Analysis: Unserved Households")
+                        gap_df = agg_df[['Area', primary_metric, 'Projected No. of HHs']].copy()
+                        gap_df['Unserved'] = gap_df['Projected No. of HHs'] - gap_df[primary_metric]
+                        gap_df['Unserved'] = gap_df['Unserved'].apply(lambda x: max(0, int(x))) 
+                        gap_sorted = gap_df.sort_values('Unserved', ascending=True).tail(10) 
+                        
+                        fig_gap = px.bar(gap_sorted, x='Unserved', y='Area', orientation='h', text_auto=True, 
+                                         title=f"RHUs with Highest Absolute Unserved HHs",
+                                         color='Unserved', color_continuous_scale="Reds")
+                        fig_gap.update_layout(xaxis_title="Number of Households Without Access", yaxis_title="RHU", margin=dict(t=40, b=0, l=0, r=0))
+                        st.plotly_chart(fig_gap, use_container_width=True, key=f"wash_gap_{safe_filename}_{year}")
+
+                if has_primary and len(year_df['Month'].unique()) > 1:
+                    st.markdown("---")
+                    st.markdown(f"#### 📈 Quarter-over-Quarter (QoQ) Trend")
+                    trend_df = year_df.groupby('Month')[['Projected No. of HHs', primary_metric]].sum().reset_index()
+                    
+                    q_order = ["Q1", "Q2", "Q3", "Q4"]
+                    trend_df['Month'] = pd.Categorical(trend_df['Month'], categories=q_order, ordered=True)
+                    trend_df = trend_df.sort_values('Month').dropna()
+                    
+                    if view_mode == "Percentage (%) Coverage":
+                        trend_df['Value'] = np.where(trend_df['Projected No. of HHs'] > 0, (trend_df[primary_metric] / trend_df['Projected No. of HHs']) * 100, 0)
+                        trend_df['Value'] = trend_df['Value'].round(1)
+                        y_label = "Coverage (%)"
+                    else:
+                        trend_df['Value'] = trend_df[primary_metric]
+                        y_label = "Households with Access"
+                        
+                    fig_trend = px.line(trend_df, x='Month', y='Value', markers=True, 
+                                        title=f"Trend: {primary_metric} ({year})", 
+                                        color_discrete_sequence=["#1f77b4"])
+                    
+                    if view_mode == "Percentage (%) Coverage":
+                        fig_trend.add_hline(y=100, line_dash="dash", line_color="green", annotation_text="100% Target")
+                        
+                    fig_trend.update_layout(xaxis_title="Quarter", yaxis_title=y_label, margin=dict(t=40))
+                    st.plotly_chart(fig_trend, use_container_width=True, key=f"wash_trend_{safe_filename}_{year}")
+
+            else:
+                st.info("👆 Please select at least one indicator to view the chart.")
+                
+        with st.expander(f"📄 View & Download Raw {tab_title} Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_Data.csv", mime="text/csv")
+    else:
+        st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
+
+def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, filter_rhus):
+    if df_key in st.session_state['fhsis_data']:
+        raw_df = st.session_state['fhsis_data'][df_key]
+        
+        year_df = raw_df[raw_df['Year'] == year]
+        
+        months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        start_idx = months_order.index(start_m)
+        end_idx = months_order.index(end_m)
+        valid_months = months_order[start_idx:end_idx+1]
+        
+        filtered_df = year_df[year_df['Month'].isin(valid_months)]
+        safe_filename = tab_title.replace(" ", "_")
+        
+        # --- CROSS-FILE DATA MERGING (PULL DENOMINATORS FROM LIVEBIRTHS TEMPLATE FIRST) ---
+        if 'Livebirths' in st.session_state['fhsis_data']:
+            lb_df = st.session_state['fhsis_data']['Livebirths']
+            lb_year = lb_df[lb_df['Year'] == year]
+            lb_filt = lb_year[lb_year['Month'].isin(valid_months)]
+            if not lb_filt.empty:
+                lb_cols = [c for c in lb_filt.columns if c not in filtered_df.columns and c not in ['Year']]
+                if lb_cols:
+                    filtered_df = pd.merge(filtered_df, lb_filt[['Area', 'Month'] + lb_cols], on=['Area', 'Month'], how='left').fillna(0)
+        # --------------------------------------------------------------------------------
+        
+        if filter_rhus and "Abra (Total)" not in filter_rhus:
+            filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
+        
+        elig_cols = [c for c in filtered_df.columns if 'elig' in c.lower() or 'pop' in c.lower()]
+        
+        cols_to_plot = []
+        for col in filtered_df.columns:
+            if col in ['Area', 'Month', 'Year'] or col in elig_cols:
+                continue
+                
+            filter_suffix = str(age_filter).lower()
+            
+            is_match = False
+            if filter_suffix == "total":
+                if col.lower().endswith("_total") or ("total" in col.lower() and not any(age in col for age in ["10-14", "15-19", "20-49"])):
+                    is_match = True
+            else:
+                if col.lower().endswith(filter_suffix) or f"_{filter_suffix}" in col.lower():
+                    is_match = True
+                elif filter_suffix in col.lower() and "adolescent" in col.lower():
+                    if "total" in col.lower():
+                        is_match = True
+                        
+            if is_match:
+                mapped_name = get_clean_indicator_name(col)
+                if mapped_name and mapped_name.split('.')[0].isdigit():
+                    
+                    if "Total Deliveries" in mapped_name and tab_title not in ["Antenatal Care (ANC)", "Postpartum Care (PPC)"]:
+                        continue
+                        
+                    if col not in cols_to_plot:
+                        cols_to_plot.append(col)
+        
+        if cols_to_plot:
+            all_numeric_cols = [c for c in filtered_df.columns if pd.api.types.is_numeric_dtype(filtered_df[c]) and c not in ['Area', 'Month', 'Year']]
+            agg_dict = {col: 'sum' for col in all_numeric_cols}
+            for ec in elig_cols: agg_dict[ec] = 'max' 
+            
+            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            
+            default_cols = cols_to_plot
+            
+            with st.expander(f"⚙️ Custom {tab_title} Indicators"):
+                selected_cols = st.multiselect(
+                    f"Select specific {tab_title} indicators to visualize:", 
+                    options=cols_to_plot, 
+                    default=default_cols, 
+                    key=f"ms_mat_{safe_filename}_{year}_{age_filter}",
+                    format_func=get_clean_indicator_name
+                )
+            
+            if selected_cols:
+                view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_mat_{safe_filename}_{year}_{age_filter}")
+                
+                if view_mode == "Percentage (%) Coverage":
+                    if "ANC" in tab_title:
+                        allowed_perc_indicators = [
+                            "2. Delivered with at least 4 ANC visits",
+                            "9. Delivered & completed at least 8ANC (a+b)"
+                        ]
+                        selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) in allowed_perc_indicators]
+                        if not selected_cols:
+                            st.info("💡 In Percentage view, the ANC dashboard strictly tracks **ANC 4** and **ANC 8**. Please select them from the dropdown above.")
+                    
+                    elif "PPC" in tab_title:
+                        allowed_perc_indicators = [
+                            "2. Completed at least 2 PP check-ups",
+                            "9. Women gave birth completed at least 4PNC =(a+b)",
+                            "10. PP women who completed iron with folic acid",
+                            "11. PP women given Vitamin A supplementation"
+                        ]
+                        selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) in allowed_perc_indicators]
+                        if not selected_cols:
+                            st.info("💡 In Percentage view, the PPC dashboard strictly tracks **PP 2**, **PNC 4**, **Iron w/ Folic Acid**, and **Vitamin A**. Please select them from the dropdown above.")
+                    
+                    selected_cols = [c for c in selected_cols if get_clean_indicator_name(c) != "0. Total Deliveries"]
+
+                if selected_cols:
+                    st.markdown(f"#### 🏆 Highlights ({location_header.replace('📍 ', '')}) | {age_filter}")
+                    cols_per_row = 4
+                    rows = [st.columns(cols_per_row) for _ in range((len(selected_cols) + cols_per_row - 1) // cols_per_row)]
+                    
+                    for i, col in enumerate(selected_cols):
+                        row_idx = i // cols_per_row
+                        col_idx = i % cols_per_row
+                        total_val = agg_df[col].sum()
+                        clean_name = get_clean_indicator_name(col)
+                        
+                        if view_mode == "Percentage (%) Coverage":
+                            denom_col = get_maternal_denominator(col, age_filter, agg_df.columns)
+                            if denom_col and denom_col in agg_df.columns:
+                                denom_val = agg_df[denom_col].sum()
+                                perc = (total_val / denom_val) * 100 if denom_val > 0 else 0
+                                rows[row_idx][col_idx].metric(label=f"{clean_name} (%)", value=f"{perc:.1f}%")
+                            else:
+                                rows[row_idx][col_idx].metric(label=f"{clean_name} (Count)", value=f"{int(total_val):,}")
+                        else:
+                            rows[row_idx][col_idx].metric(label=clean_name, value=f"{int(total_val):,}")
+                    
+                    st.markdown("---")
+                    chart_title = f"Summary ({start_m} - {end_m}) | Group: {age_filter}"
+                    
+                    cascade_data = pd.DataFrame({
+                        'Indicator': [get_clean_indicator_name(c) for c in selected_cols],
+                        'Count': [agg_df[c].sum() for c in selected_cols]
+                    })
+                    
+                    cascade_data['Sort_Key'] = cascade_data['Indicator'].apply(lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 99)
+                    cascade_data = cascade_data.sort_values(by='Sort_Key', ascending=True)
+
+                    # --- CASCADE SMART HIDE LOGIC ---
+                    # Calculate if the user broke the pipeline sequence
+                    removed_count = len(cols_to_plot) - len(selected_cols)
+
+                    if ("ANC" in tab_title or "PPC" in tab_title) and removed_count <= 1:
+                        st.markdown(f"#### 🌪️ {tab_title} Cascade")
+                        st.markdown("Tracking the retention and drop-off rate of women throughout their maternal care journey.")
+                        
+                        fig_main = px.funnel(cascade_data, x='Count', y='Indicator', title=chart_title, color_discrete_sequence=["#9B59B6"])
+                        fig_main.update_traces(textposition="inside")
+                    else:
+                        st.markdown(f"#### 📊 {tab_title} Interventions & Screenings")
+                        
+                        # Show a helpful note if we actively hid the funnel
+                        if ("ANC" in tab_title or "PPC" in tab_title) and removed_count > 1:
+                            st.info("💡 **Cascade View Hidden:** Multiple pipeline steps were removed (or Percentage view is active). Falling back to a standard comparison chart.")
+                        else:
+                            st.markdown("Comparing the total volume of specific interventions or screening yields.")
+                        
+                        fig_main = px.bar(cascade_data, x='Indicator', y='Count', title=chart_title, text_auto=True, color='Indicator', color_discrete_sequence=px.colors.qualitative.Pastel)
+                        fig_main.update_traces(textposition="outside", cliponaxis=False)
+                        fig_main.update_layout(showlegend=False, xaxis_title="", yaxis_title="Total Women", margin=dict(t=40))
+
+                    st.plotly_chart(fig_main, use_container_width=True, key=f"mat_main_chart_{safe_filename}_{year}_{age_filter}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
+                    
+                    chart_df = agg_df[['Area']].copy()
+                    valid_chart_cols = []
+                    
+                    if view_mode == "Percentage (%) Coverage":
+                        y_axis_label = "Coverage (%)"
+                        for col in selected_cols:
+                            denom_col = get_maternal_denominator(col, age_filter, agg_df.columns)
+                            if denom_col and denom_col in agg_df.columns:
+                                chart_df[col] = np.where(agg_df[denom_col] > 0, (agg_df[col] / agg_df[denom_col]) * 100, 0)
+                                chart_df[col] = chart_df[col].round(1)
+                                valid_chart_cols.append(col)
+                                
+                        if len(valid_chart_cols) < len(selected_cols):
+                            st.info("💡 Note: Only indicators with an official DOH percentage calculation are plotted on the chart to maintain accurate scaling.")
+                    else:
+                        y_axis_label = "Number of Women"
+                        for col in selected_cols:
+                            chart_df[col] = agg_df[col]
+                            valid_chart_cols.append(col)
+                    
+                    if valid_chart_cols:
+                        if len(valid_chart_cols) == 1:
+                            sort_order = st.radio("Sort RHUs by:", ["Alphabetical", "Highest to Lowest"], horizontal=True, key=f"sort_rhu_mat_{safe_filename}_{year}_{age_filter}")
+                            if sort_order == "Highest to Lowest":
+                                chart_df = chart_df.sort_values(by=valid_chart_cols[0], ascending=False)
+                            else:
+                                chart_df = chart_df.sort_values(by='Area', ascending=True)
+                        else:
+                            chart_df = chart_df.sort_values(by='Area', ascending=True)
+
+                        melted = chart_df.melt(id_vars='Area', value_vars=valid_chart_cols, var_name='Indicator', value_name='Count')
+                        melted['Indicator'] = melted['Indicator'].apply(get_clean_indicator_name)
+                        
+                        fig_rhu = px.bar(melted, x='Area', y='Count', color='Indicator', barmode='group', title=f"All RHUs ({start_m} - {end_m})", text_auto=True, color_discrete_sequence=px.colors.qualitative.Prism, category_orders={"Area": chart_df['Area'].tolist()})
+                        if view_mode == "Percentage (%) Coverage":
+                            fig_rhu.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="100% Target")
+                        fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+                        fig_rhu.update_layout(xaxis_title="Rural Health Unit (RHU)", yaxis_title=y_axis_label, margin=dict(t=60))
+                        st.plotly_chart(fig_rhu, use_container_width=True, key=f"rhu_mat_{safe_filename}_{year}_{age_filter}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 📈 Monthly Trend Analysis")
+                    trend_agg = filtered_df.groupby('Month').sum(numeric_only=True).reset_index()
+                    
+                    trend_agg['Month'] = pd.Categorical(trend_agg['Month'], categories=months_order, ordered=True)
+                    trend_agg = trend_agg.sort_values('Month').dropna()
+                    
+                    trend_chart_df = pd.DataFrame({'Month': trend_agg['Month']})
+                    valid_trend_cols = []
+                    
+                    if view_mode == "Percentage (%) Coverage":
+                        for col in selected_cols:
+                            denom_col = get_maternal_denominator(col, age_filter, trend_agg.columns)
+                            if denom_col and denom_col in trend_agg.columns:
+                                trend_chart_df[col] = [
+                                    (v / denom_val * 100) if denom_val > 0 else 0 
+                                    for v, denom_val in zip(trend_agg[col], trend_agg[denom_col])
+                                ]
+                                trend_chart_df[col] = trend_chart_df[col].round(1)
+                                valid_trend_cols.append(col)
+                    else:
+                        for col in selected_cols:
+                            trend_chart_df[col] = trend_agg[col]
+                            valid_trend_cols.append(col)
+                        
+                    if valid_trend_cols:
+                        trend_melted = trend_chart_df.melt(id_vars='Month', value_vars=valid_trend_cols, var_name='Indicator', value_name='Count')
+                        trend_melted['Indicator'] = trend_melted['Indicator'].apply(get_clean_indicator_name)
+                        
+                        fig_trend = px.line(trend_melted, x='Month', y='Count', color='Indicator', markers=True, title=f"Trend ({year})", color_discrete_sequence=px.colors.qualitative.Prism)
+                        fig_trend.update_layout(xaxis_title="Month", yaxis_title=y_axis_label, margin=dict(t=40))
+                        st.plotly_chart(fig_trend, use_container_width=True, key=f"mat_trend_{safe_filename}_{year}_{age_filter}")
+                
+            else:
+                st.info("👆 Please select at least one indicator from the dropdown above to view the charts.")
+                
+        with st.expander(f"📄 View & Download Raw {tab_title} Data"):
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            csv_data = convert_df_to_csv(filtered_df)
+            st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_{safe_filename}_{age_filter}_Data.csv", mime="text/csv")
+    else:
+        st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
+
+
+# --- PAGES ---
+if page == "🏠 Home":
+    
+    # Helper function to convert images so HTML can read them securely
+    def get_base64(img_path):
+        if os.path.exists(img_path):
+            with open(img_path, "rb") as img_file:
+                return base64.b64encode(img_file.read()).decode()
+        return ""
+
+    # CHANGE THESE FILENAMES IF YOURS ARE DIFFERENT!
+    abra_b64 = get_base64("Abra_provincial_seal.png")
+    pho_b64 = get_base64("PHO logo.png")
+    doh_b64 = get_base64("DOH logo.png")
+
+    # --- HTML FLEXBOX ROW & TOP PADDING FIX ---
+    st.markdown(f"""
+        <style>
+        /* Pushes the entire app up higher on the screen */
+        .block-container {{
+            padding-top: 2.5rem !important; 
+        }}
+        
+        /* Perfectly centers the logos and aligns their middles */
+        .logo-container {{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 40px; 
+            margin-bottom: 10px;
+        }}
+        </style>
+        
+        <div class="logo-container">
+            <img src="data:image/png;base64,{abra_b64}" style="height: 130px;">
+            <img src="data:image/png;base64,{pho_b64}" style="height: 145px;"> 
+            <img src="data:image/png;base64,{doh_b64}" style="height: 130px;">
+        </div>
+        
+        <div style="text-align: center; padding: 0.5rem 0;">
+            <h1>Provincial Health Office (PHO)</h1>
+            <h2>FHSIS Health & Analytics Portal</h2>
+            <p style="font-size: 1.2rem; color: gray;">Engineered for accuracy. Built for action.</p>
+        </div>
+        <hr>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 🏛️ Welcome to the Provincial Command Center")
+    st.markdown("""
+    This application is an enterprise-grade reporting engine designed to automatically ingest, clean, and visualize Field Health Services Information System (FHSIS) data across all **27 Rural Health Units (RHUs)** in the province of Abra. 
+
+    **Active Health Modules:**
+    * 👶 **Child Immunization:** Tracking routine antigens, Fully Immunized Child (FIC) targets, and dropout rates.
+    * 🩺 **Non-Communicable Diseases (NCD):** Monitoring adult/senior lifestyle risks, diagnostic yields, and Cervical/Breast Cancer screenings.
+    * 🚰 **Environmental Health (WASH):** Mapping household access to basic safe water and sanitation facilities.
+    * 🤰 **Maternal Health:** Analyzing the complete cascade of care across Antenatal, Postpartum, and Nutritional interventions.
+    * 💀 **Mortality & Injuries:** Tracking premature NCD deaths and traffic-related fatalities.
+    * 👨‍👩‍👧 **Family Planning:** *(Module actively under construction!)*
+
+    **Core Engine Capabilities:**
+    * **Automated Data ETL:** Safely parses messy, merged, and multi-sheet DOH Excel templates directly into a secure cloud database.
+    * **Geospatial & Trend Analysis:** Transforms raw numbers into interactive heatmaps, Year-over-Year (YoY) comparisons, and automated FHSIS scorecards.
+
+    *Use the sidebar navigation to explore the provincial dashboards. Authorized PHO Admins can log in at the bottom of the sidebar to securely upload new DOH data.*
+    """)
+    st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO report.")
 
 elif page == "👶 Immunization Dashboard":
-    st.title("👶 Child Immunization Dashboard")
-    st.subheader(location_header)
+    st.title("💉 Child Immunization Dashboard")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown("---")
     
-    df_penta = get_filtered_data("Penta", selected_year, rhu_filter)
-    df_mmr = get_filtered_data("MMR", selected_year, rhu_filter)
-    
-    if df_penta.empty and df_mmr.empty:
-        st.warning(f"No Immunization data available for {selected_year} in the selected RHUs.")
-    else:
-        # Calculate Metrics
-        total_penta = df_penta['Total Penta 3_Total'].sum() if not df_penta.empty and 'Total Penta 3_Total' in df_penta.columns else 0
-        total_mmr = df_mmr['Total MMR 2_Total'].sum() if not df_mmr.empty and 'Total MMR 2_Total' in df_mmr.columns else 0
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric(label="Total Penta 3 Doses", value=f"{total_penta:,.0f}")
-        with col2:
-            st.metric(label="Total MMR 2 Doses", value=f"{total_mmr:,.0f}")
+    st.markdown("##### ⏳ Time Filter")
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed")
+    with col_t2:
+        if time_view == "Monthly":
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed")
+        else:
+            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed")
+            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
+            start_month = q_map[start_q][0]
+            end_month = q_map[end_q][1]
             
-        st.markdown("---")
-        if not df_penta.empty and 'Total Penta 3_Total' in df_penta.columns:
-            st.subheader("Penta 3 Administration by RHU")
-            rhu_penta = df_penta.groupby('Area')['Total Penta 3_Total'].sum().reset_index()
-            fig = px.bar(rhu_penta, x='Area', y='Total Penta 3_Total', title="Penta 3 Doses by Municipality", color_discrete_sequence=['#4361ee'])
-            st.plotly_chart(fig, use_container_width=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    tab_exec, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "⭐ Executive Summary",
+        "👶 Birth Doses (BCG/HepB)", 
+        "🛡️ Penta (DPT-HiB-HepB)", 
+        "💧 Polio (OPV/IPV)", 
+        "🫁 Pneumococcal (PCV)", 
+        "🎯 MMR, FIC & CIC"
+    ])
+    
+    with tab_exec:
+        st.markdown(f"### 🏆 Executive Overview ({location_header.replace('📍 ', '')})")
+        st.markdown("High-level snapshot of critical DOH performance metrics and forecasting.")
+        
+        if "MMR" in st.session_state['fhsis_data'] and "Penta" in st.session_state['fhsis_data']:
+            mmr_df = filter_data(st.session_state['fhsis_data']["MMR"], start_month, end_month, gender_filter, selected_year)
+            penta_df = filter_data(st.session_state['fhsis_data']["Penta"], start_month, end_month, gender_filter, selected_year)
+            
+            if rhu_filter and "Abra (Total)" not in rhu_filter:
+                mmr_df = mmr_df[mmr_df['Area'].isin(rhu_filter)]
+                penta_df = penta_df[penta_df['Area'].isin(rhu_filter)]
+            
+            fic_col = next((c for c in mmr_df.columns if "FIC" in c and "%" not in c and "DEFICIT" not in c.upper() and "PREVIOUS" not in c.upper()), None)
+            cic_col = next((c for c in mmr_df.columns if "CIC" in c and "%" not in c and "DEFICIT" not in c.upper() and "PREVIOUS" not in c.upper()), None)
+            elig_col = next((c for c in mmr_df.columns if 'elig' in c.lower() or 'pop' in c.lower()), None)
+            
+            p1_col = next((c for c in penta_df.columns if (" 1" in c or "1_" in c) and "%" not in c and "DEFICIT" not in c.upper()), None)
+            p3_col = next((c for c in penta_df.columns if (" 3" in c or "3_" in c) and "%" not in c and "DEFICIT" not in c.upper()), None)
+            
+            if fic_col and elig_col:
+                prov_fic = mmr_df[fic_col].sum()
+                prov_cic = mmr_df[cic_col].sum() if cic_col else 0
+                p1_tot = penta_df[p1_col].sum() if p1_col else 0
+                p3_tot = penta_df[p3_col].sum() if p3_col else 0
+                
+                rhu_fic = mmr_df.groupby('Area').agg({fic_col: 'sum', elig_col: 'max'}).reset_index()
+                prov_elig = mmr_df.groupby('Area')[elig_col].max().sum() 
+                
+                curr_cov = (prov_fic / prov_elig * 100) if prov_elig > 0 else 0
+                cic_cov = (prov_cic / prov_elig * 100) if prov_elig > 0 else 0
+                
+                months_idx_start = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].index(start_month)
+                months_idx_end = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].index(end_month)
+                months_count = months_idx_end - months_idx_start + 1
+                
+                projected_fic = (prov_fic / months_count) * 12 if months_count > 0 else 0
+                projected_cov = min((projected_fic / prov_elig * 100), 100) if prov_elig > 0 else 0
+                
+                prov_drop = 0
+                if p1_col and p3_col:
+                    prov_drop = ((p1_tot - p3_tot) / p1_tot * 100) if p1_tot > 0 else 0
+                
+                dq_warnings = []
+                fic_label = "Fully Immunized Child (FIC)"
+                cic_label = "Completely Immunized (CIC)"
+                drop_label = "Dropout (Penta 1-3)"
+                
+                if curr_cov > 110:
+                    fic_label += " ⚠️"
+                    dq_warnings.append(f"**FIC Coverage ({curr_cov:.1f}%) exceeds 110%:** Usually indicates an outdated eligible population denominator or out-of-catchment patients being counted.")
+                
+                if prov_fic == prov_cic and prov_fic > 0:
+                    cic_label += " ⚠️"
+                    dq_warnings.append(f"**FIC and CIC counts match exactly ({prov_fic:,.0f}):** Highly improbable. Check if an RHU accidentally duplicated the FIC column into the CIC column on the Excel sheet.")
+                elif cic_cov > 110:
+                    cic_label += " ⚠️"
+                    dq_warnings.append(f"**CIC Coverage ({cic_cov:.1f}%) exceeds 110%.**")
+                    
+                if prov_drop < 0:
+                    drop_label += " ⚠️"
+                    dq_warnings.append(f"**Negative Penta Dropout ({prov_drop:.1f}%):** More Penta 3 doses given than Penta 1. Verify if this is an expected catch-up surge or a data entry error.")
+
+                col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+                col_e1.metric(fic_label, f"{prov_fic:,.0f}", f"Current Cov: {curr_cov:.1f}%")
+                
+                proj_delta = projected_cov - curr_cov
+                col_e2.metric("End-of-Year FIC Forecast", f"{projected_cov:.1f}%", f"{proj_delta:+.1f}% vs Current", delta_color="normal" if projected_cov >= 95 else "off")
+                
+                if cic_col:
+                    col_e3.metric(cic_label, f"{prov_cic:,.0f}", f"Current Cov: {cic_cov:.1f}%")
+                else:
+                    col_e3.metric("Completely Immunized (CIC)", "N/A")
+                    
+                col_e4.metric(drop_label, f"{prov_drop:.1f}%", "Target: < 10%", delta_color="inverse")
+                
+                if dq_warnings:
+                    st.warning("🕵️‍♂️ **Automated Data Quality Audit:** Potential anomalies detected in the aggregated data.")
+                    for w in dq_warnings:
+                        st.markdown(f"- {w}")
+
+                with st.expander("🖨️ Generate Printable PHO Report", expanded=False):
+                    # --- ADDED: THE HIDDEN PRINT HEADER ---
+                    st.markdown("""
+                    <div class='print-only-header'>
+                        <h3>Republic of the Philippines</h3>
+                        <h3>Department of Health</h3>
+                        <h2>Abra Provincial Health Office</h2>
+                        <hr>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown(f"### Immunization Report")
+                    st.markdown(f"**Location Filter:** {location_header.replace('📍 ', '')}")
+                    st.markdown(f"**Reporting Period:** {start_month} to {end_month} {selected_year} | **Demographic:** {gender_filter}")
+                    st.markdown("---")
+                    st.markdown(f"""
+                    **1. Performance Summary**
+                    * **Total Fully Immunized Children (FIC):** {prov_fic:,.0f} 
+                    * **Current FIC Coverage Rate:** {curr_cov:.1f}% (DOH Target: 95%)
+                    * **Year-End FIC Forecast:** {projected_cov:.1f}%
+                    * **Penta 1 to Penta 3 Dropout Rate:** {prov_drop:.1f}% (Target: Below 10%)
+                    """)
+                    
+                    rhu_fic['Coverage'] = (rhu_fic[fic_col] / rhu_fic[elig_col] * 100).fillna(0)
+                    rhu_sorted = rhu_fic.sort_values(by='Coverage', ascending=False)
+                    top_list = rhu_sorted.head(3)
+                    bot_list = rhu_sorted.tail(3).sort_values(by='Coverage', ascending=True)
+                    
+                    st.markdown("**2. Top Performing Municipalities (FIC Coverage)**")
+                    for index, row in top_list.iterrows():
+                        st.markdown(f"* **{row['Area']}:** {row['Coverage']:.1f}%")
+                        
+                    st.markdown("**3. Action Required: Bottom Municipalities (FIC Coverage)**")
+                    for index, row in bot_list.iterrows():
+                        st.markdown(f"* **{row['Area']}:** {row['Coverage']:.1f}%")
+                    
+                    if dq_warnings:
+                        st.markdown("**4. Data Quality Flags (Requires RHU Verification)**")
+                        for w in dq_warnings:
+                            st.markdown(f"* {w}")
+                    
+                    st.info("Tip: Press **Ctrl + P** (Windows) or **Cmd + P** (Mac) to save this cleanly to PDF or print for your PHO meeting.")
+
+                st.markdown("---")
+                col_lead1, col_lead2 = st.columns(2)
+                
+                with col_lead1:
+                    st.markdown("#### 🌟 Top RHUs (FIC)")
+                    top3 = rhu_sorted.head(3)
+                    fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
+                    fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
+                    st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
+                    
+                with col_lead2:
+                    st.markdown("#### ⚠️ Bottom RHUs (FIC)")
+                    bot3 = rhu_sorted.tail(3).sort_values(by='Coverage', ascending=True)
+                    fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
+                    fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
+                    st.plotly_chart(fig_bot3, use_container_width=True, key=f"bot3_exec_fic_{selected_year}")
+
+                st.markdown("---")
+                st.markdown("#### 🚀 Target Forecasting (FIC Coverage)")
+                forecast_df = pd.DataFrame({
+                    "Metric": ["Current Coverage", "Projected Year-End", "DOH Target"],
+                    "Coverage (%)": [curr_cov, projected_cov, 95]
+                })
+                fig_forecast = px.bar(forecast_df, x="Coverage (%)", y="Metric", orientation='h', 
+                                      color="Metric", text_auto=".1f",
+                                      color_discrete_map={"Current Coverage": "#1f77b4", "Projected Year-End": "#ff7f0e", "DOH Target": "red"})
+                fig_forecast.add_vline(x=95, line_dash="dash", line_color="red", annotation_text="95% Target")
+                fig_forecast.update_layout(showlegend=False, xaxis_range=[0, max(100, projected_cov + 5)])
+                st.plotly_chart(fig_forecast, use_container_width=True, key=f"forecast_exec_{selected_year}")
+
+        else:
+            st.info("Upload both 'Pentavalent' and 'MMR/FIC' data via the Data Uploader to unlock the Executive Summary.")
+
+    with tab1: render_tab_content("Birth Doses", "CPAB_BCG_HepB", ["CPAB", "BCG", "Hep"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with tab2: render_tab_content("Pentavalent", "Penta", ["DPT-HiB-HepB 1", "DPT-HiB-HepB 2", "DPT-HiB-HepB 3", "Penta 1", "Penta 2", "Penta 3"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with tab3: render_tab_content("Polio", "Polio", ["OPV 1", "OPV 2", "OPV 3", "IPV 1", "IPV 2"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with tab4: render_tab_content("Pneumococcal", "PCV", ["PCV 1", "PCV 2", "PCV 3"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with tab5: render_tab_content("MMR/MCV, FIC and CIC", "MMR", ["MMR", "MCV", "13-23", "FIC", "CIC"], start_month, end_month, gender_filter, selected_year, rhu_filter)
 
 elif page == "🩺 NCD Dashboard":
-    st.title("🩺 Non-Communicable Diseases (NCD)")
-    st.subheader(location_header)
+    st.title("🩺 Non-Communicable Disease (NCD) Dashboard")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
+    st.markdown("---")
     
-    df_adults = get_filtered_data("Adults_Risk", selected_year, rhu_filter)
-    
-    if df_adults.empty:
-        st.warning(f"No NCD data available for {selected_year} in the selected RHUs.")
-    else:
-        # Dynamic gender filtering for metrics
-        if gender_filter == "Total":
-            col_name = "Total Risk Assessed_Total"
-        elif gender_filter == "Male":
-            col_name = "Total Risk Assessed_Male"
+    st.markdown("##### ⏳ Time Filter")
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed", key="ncd_time")
+    with col_t2:
+        if time_view == "Monthly":
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed", key="ncd_m")
         else:
-            col_name = "Total Risk Assessed_Female"
+            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed", key="ncd_q")
+            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
+            start_month = q_map[start_q][0]
+            end_month = q_map[end_q][1]
             
-        total_assessed = df_adults[col_name].sum() if col_name in df_adults.columns else 0
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric(label=f"Adults Risk Assessed ({gender_filter})", value=f"{total_assessed:,.0f}")
-        with col2:
-            st.metric(label="Cervical Cancer Screenings", value="See Charts")
-        with col3:
-            st.metric(label="Breast Cancer Screenings", value="See Charts")
-
-        st.markdown("---")
-        if col_name in df_adults.columns:
-            st.subheader(f"Adult Risk Assessment Trends ({selected_year})")
-            trend_data = df_adults.groupby('Month')[col_name].sum().reset_index()
-            # Sort months chronologically
-            months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-            trend_data['Month'] = pd.Categorical(trend_data['Month'], categories=months_order, ordered=True)
-            trend_data = trend_data.sort_values('Month')
-            
-            fig = px.line(trend_data, x='Month', y=col_name, markers=True, title="Monthly Risk Assessments", color_discrete_sequence=['#f72585'])
-            st.plotly_chart(fig, use_container_width=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    ncd_tab1, ncd_tab2, ncd_tab3, ncd_tab4 = st.tabs([
+        "👤 Adults Risk (20-59)", 
+        "👴 Seniors Risk (≥60)", 
+        "🎗️ Cervical Cancer", 
+        "🎀 Breast Cancer"
+    ])
+    
+    with ncd_tab1: render_ncd_tab_content("Adults Risk Assessment", "Adults_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive", "type 2 dm"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with ncd_tab2: render_ncd_tab_content("Seniors Risk Assessment", "Seniors_Risk", ["risk assessed", "smoking", "smoker", "alcohol", "overweight", "obese", "physical activity", "unhealthy diet", "hypertensive", "type 2 dm"], start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with ncd_tab3: render_cervical_cancer_tab("Cervical_Cancer", start_month, end_month, gender_filter, selected_year, rhu_filter)
+    with ncd_tab4: render_breast_cancer_tab("Breast_Cancer", start_month, end_month, gender_filter, selected_year, rhu_filter)
 
 elif page == "🚰 WASH Dashboard":
-    st.title("🚰 Water, Sanitation, and Hygiene (WASH)")
-    st.subheader(location_header)
+    st.title("🚰 Water, Sanitation, and Hygiene (WASH) Dashboard")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
+    st.markdown("---")
     
-    df_water = get_filtered_data("Safe_Water", selected_year, rhu_filter)
-    df_san = get_filtered_data("Sanitation", selected_year, rhu_filter)
+    st.markdown("##### ⏳ Quarterly Time Filter")
+    quarters_list = ["Q1", "Q2", "Q3", "Q4"]
+    selected_quarters = st.multiselect("Select Quarters to Aggregate", quarters_list, default=quarters_list)
     
-    if df_water.empty and df_san.empty:
-        st.warning(f"No WASH data available for {selected_year} in the selected RHUs.")
+    if not selected_quarters:
+        st.warning("Please select at least one quarter to view data.")
     else:
-        col1, col2 = st.columns(2)
+        st.markdown("<br>", unsafe_allow_html=True)
+        wash_tab1, wash_tab2 = st.tabs(["🚰 Safe Water", "🚽 Sanitation"])
         
-        water_target = "HH with Access to Basic Safe Water Supply"
-        total_safe_water = df_water[water_target].max() if not df_water.empty and water_target in df_water.columns else 0
-        
-        san_target = "HH with Basic Sanitation Facility"
-        total_sanitation = df_san[san_target].max() if not df_san.empty and san_target in df_san.columns else 0
-        
-        with col1:
-            st.metric(label="HHs with Safe Water Supply", value=f"{total_safe_water:,.0f}")
-        with col2:
-            st.metric(label="HHs with Basic Sanitation", value=f"{total_sanitation:,.0f}")
-            
-        st.markdown("---")
-        if not df_water.empty and water_target in df_water.columns:
-            st.subheader("Safe Water Access by RHU")
-            # Take the max value per RHU for the year (since WASH is cumulative quarterly)
-            rhu_water = df_water.groupby('Area')[water_target].max().reset_index()
-            fig = px.bar(rhu_water, x='Area', y=water_target, title="Safe Water Households by Municipality", color_discrete_sequence=['#4cc9f0'])
-            st.plotly_chart(fig, use_container_width=True)
+        with wash_tab1: render_wash_tab("Safe Water", "Safe_Water", selected_quarters, selected_year, rhu_filter)
+        with wash_tab2: render_wash_tab("Sanitation", "Sanitation", selected_quarters, selected_year, rhu_filter)
 
 elif page == "🤰 Maternal Dashboard":
     st.title("🤰 Maternal Health Dashboard")
@@ -1591,7 +3278,7 @@ elif page == "📈 YoY Comparison":
             "Breast Cancer": ("Breast_Cancer", ["early detection", "asymptomatic", "remarkable", "linked"]),
             "Antenatal Care (ANC)": ("ANC", ['new pregnant', 'least 4 anc', 'tracked during pregnancy (a)', '8th anc on schedule', 'least 8anc (a+b)']),
             "Nutritional Status & Td": ("Nutritional_Status", ["assessed of their nutritional status", "1st time given at least 2 doses of td", "2nd or more times given at least 3 doses of td", "iron w/ folic acid"]),
-            "Calcium, MMS & Deworming": ("Calcium_MMS", ("calcium carbonate", "multiple micronutrient", "deworming tablet")),
+            "Calcium, MMS & Deworming": ("Calcium_MMS", ["calcium carbonate", "multiple micronutrient", "deworming tablet"]),
             "Syphilis & Hep B": ("Syphilis_HepB", ["screened for syphilis", "tested positive for syphilis", "screened for hepatitis b", "reactive to hepatitis b", "screened for hiv", "reactive to hiv"]),
             "CBC & Gestational Diabetes": ("CBC_Gestational", ["tested for cbc/hgb/hct", "diagnosed with anemia", "screened for gestational diabetes", "positive for gestational diabetes"]),
             "Postpartum Care (PPC)": ("PPC", ['2 postpartum check-ups', 'pp women who were tracked (a)', '4th pnc on schedule', 'least 4pnc =(a+b)', 'iron with folic', 'vitamin a']),
