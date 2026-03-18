@@ -13,35 +13,41 @@ import pytz
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
 
 # --- GLOBAL UI / UX POLISH ---
-if not st.session_state.get("is_admin", False):
-    st.markdown("""
-        <style>
-        /* 1. Hide the Deploy button specifically */
-        .stDeployButton {
-            display: none !important;
+st.markdown("""
+    <style>
+    /* 1. Make the active tab visually distinct with DOH-themed purple */
+    .stTabs [aria-selected="true"] {
+        color: #7209b7 !important;
+        border-bottom-color: #7209b7 !important;
+    }
+    
+    /* 2. ELEVATED METRIC CARDS */
+    /* This applies a sleek, modern card look to all your big numbers */
+    [data-testid="stMetric"] {
+        background-color: #ffffff;
+        border-radius: 10px;
+        padding: 15px 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border: 1px solid #e0e0e0;
+        transition: transform 0.2s ease-in-out;
+    }
+    
+    /* Add a slight hover effect so the cards feel interactive */
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* Dark mode support for the cards */
+    @media (prefers-color-scheme: dark) {
+        [data-testid="stMetric"] {
+            background-color: #1e1e1e;
+            border-color: #333333;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
-        
-        /* 2. Hide the 3-dots menu using VISIBILITY instead of DISPLAY */
-        /* This leaves an invisible empty box, preventing the sidebar button from collapsing! */
-        [data-testid="stToolbar"] {
-            visibility: hidden !important;
-        }
-        
-        /* 3. Hide the standard footer */
-        footer {
-            display: none !important;
-        }
-        
-        /* 4. Hide the Streamlit Cloud Badge */
-        /* Targets the exact URL and wildcard class name from your inspector */
-        a[href^="https://streamlit.io/cloud"] {
-            display: none !important;
-        }
-        [class*="viewerBadge_container"] {
-            display: none !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 def silent_access_tracker():
     # 1. Check if we have already logged this specific user's session
