@@ -1059,35 +1059,31 @@ with st.sidebar:
         "🩺 NCD Dashboard", 
         "🚰 WASH Dashboard", 
         "🤰 Maternal Dashboard", 
-        "👨‍👩‍👧 Family Planning Dashboard", # <-- ADDED THIS
+        "👨‍👩‍👧 Family Planning Dashboard",
         "💀 Mortality Dashboard", 
         "📈 YoY Comparison"
     ]
 
-    st.markdown("### 🎛️ Global Filters")
-    
-    # (Your Year and RHU filters are likely here)
-    
-    # --- CONTEXT-AWARE GENDER FILTER ---
-    # Hide the gender filter if they are looking at Family Planning
-    if page != "👨‍👩‍👧 Family Planning Dashboard":
-        gender_filter = st.selectbox("🚻 Select Gender", ["Total", "Male", "Female"], key="global_gender")
-    else:
-        # Silently lock the variable to "Total" in the background so the app doesn't crash 
-        # when it looks for the 'gender_filter' variable!
-        gender_filter = "Total"
     # Only show the Uploader if unlocked
     if st.session_state["is_admin"]:
         nav_options.append("📁 Data Uploader")
         
+    # 1. CREATE NAVIGATION FIRST
     page = st.radio("Navigation", nav_options)
     st.markdown("---")
     
-    # ADD IT TO THE GLOBAL FILTERS LIST TOO
+    # 2. RUN FILTERS BASED ON THE SELECTED PAGE
     if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "👨‍👩‍👧 Family Planning Dashboard", "💀 Mortality Dashboard"]:
-        st.subheader("Global Filters")
+        st.subheader("🎛️ Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
-        gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
+        
+        # --- CONTEXT-AWARE GENDER FILTER ---
+        if page != "👨‍👩‍👧 Family Planning Dashboard":
+            gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
+        else:
+            # Silently lock the variable to "Total" in the background for Family Planning
+            gender_filter = "Total"
+            
         rhu_filter = st.multiselect("Select RHU(s)", options=["Abra (Total)"] + ABRA_RHUS, default=["Abra (Total)"])
         
         # Determine the location header dynamically
