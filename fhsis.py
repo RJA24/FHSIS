@@ -42,8 +42,12 @@ if not st.session_state.get("is_admin", False):
         .stDeployButton {display: none !important;}
         #MainMenu {visibility: hidden !important;}
         
-        /* Hide the 'Hosted with Streamlit' footer */
+        /* Hide the standard footer */
         footer {visibility: hidden !important;}
+        
+        /* ASSASSINATE THE 'HOSTED WITH STREAMLIT' CLOUD BADGE */
+        .viewerBadge_container {display: none !important;}
+        .viewerBadge_link {display: none !important;}
         </style>
         """, unsafe_allow_html=True)
 
