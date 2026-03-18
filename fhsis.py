@@ -1063,7 +1063,19 @@ with st.sidebar:
         "💀 Mortality Dashboard", 
         "📈 YoY Comparison"
     ]
+
+    st.markdown("### 🎛️ Global Filters")
     
+    # (Your Year and RHU filters are likely here)
+    
+    # --- CONTEXT-AWARE GENDER FILTER ---
+    # Hide the gender filter if they are looking at Family Planning
+    if page != "👨‍👩‍👧 Family Planning Dashboard":
+        gender_filter = st.selectbox("🚻 Select Gender", ["Total", "Male", "Female"], key="global_gender")
+    else:
+        # Silently lock the variable to "Total" in the background so the app doesn't crash 
+        # when it looks for the 'gender_filter' variable!
+        gender_filter = "Total"
     # Only show the Uploader if unlocked
     if st.session_state["is_admin"]:
         nav_options.append("📁 Data Uploader")
