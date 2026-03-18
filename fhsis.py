@@ -3022,17 +3022,20 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
 
     with fp_tab1:
         st.markdown("### 🌟 Program Overview: CPR & Demand Satisfied")
+        
+        # --- NEW: Clarification for Age Filter ---
+        if age_filter != "Total":
+            st.info(f"💡 **Note:** Demand Satisfied and CPR metrics are calculated using the entire baseline of Women of Reproductive Age (15-49). Therefore, the '{age_filter}' demographic filter does not alter the overall provincial CPR.")
+            
         df_dem = get_fp_filtered("FP_Demand", start_month, end_month, selected_year, rhu_filter)
         
         if not df_dem.empty:
-            # Aggregate the latest month/quarter selected for accurate CPR (it's not additive like vaccines)
             latest_month = df_dem['Month'].iloc[-1]
             df_latest = df_dem[df_dem['Month'] == latest_month]
             
             dem_target = df_latest['Total Demand Factor'].sum() if 'Total Demand Factor' in df_latest.columns else 0
             curr_users = df_latest['Total Current User'].sum() if 'Total Current User' in df_latest.columns else 0
             
-            # Recalculate CPR based on DOH formula
             prov_cpr = (curr_users / dem_target * 100) if dem_target > 0 else 0
             
             c1, c2, c3 = st.columns(3)
@@ -3056,7 +3059,6 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
         st.markdown("### 🔄 Family Planning User Pipeline")
         st.markdown("Visualizing the monthly flow of acceptors joining and dropping out of the program.")
         
-        # --- NEW: METHOD DRILL-DOWN SELECTOR ---
         fp_methods = [
             "All Methods (Overall)", "Condom", "PILLS-POP", "PILLS-COC", "Injectables", 
             "Implants-Interval", "Implants-PP", "IUD-I", "IUD-PP", "FSTR/BTL", 
@@ -3072,15 +3074,12 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
         
         if not df_end.empty and not df_beg.empty:
             
-            # Dynamically target the correct column based on the user's dropdown choice
-            if selected_method == "All Methods (Overall)":
-                target_col = f"Total Current User_{age_filter}"
-            else:
-                target_col = f"{selected_method}_{age_filter}"
+            # --- NEW: Robust Target Column Finder ---
+            base_method = "Total Current User" if selected_method == "All Methods (Overall)" else selected_method
+            target_col = f"{base_method}_{age_filter}"
             
-            # Fallback search if the exact string match fails due to weird Excel formatting
             if target_col not in df_beg.columns:
-                col_search = [c for c in df_beg.columns if (selected_method in c or (selected_method == "All Methods (Overall)" and "Total Current User" in c)) and age_filter in c]
+                col_search = [c for c in df_beg.columns if base_method in c and age_filter in c and "%" not in c]
                 if col_search: target_col = col_search[0]
             
             try:
@@ -3090,26 +3089,14 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
                 v_drp = df_drp[target_col].sum() if target_col in df_drp.columns else 0
                 v_end = df_end[target_col].sum() if target_col in df_end.columns else 0
                 
-                # --- NEW: DYNAMIC Y-AXIS ZOOM MATH ---
-                # 1. Calculate the running total at every step of the waterfall
-                step1 = v_beg
-                step2 = step1 + v_new
-                step3 = step2 + v_oth
-                step4 = step3 - v_drp
-                step5 = v_end
-                
-                # 2. Find the highest peak and lowest valley
+                step1, step2, step3, step4, step5 = v_beg, v_beg + v_new, v_beg + v_new + v_oth, v_beg + v_new + v_oth - v_drp, v_end
                 y_max = max(step1, step2, step3, step4, step5)
                 y_min = min(step1, step2, step3, step4, step5)
                 
-                # 3. Add a 15% visual padding so the bars don't touch the very top/bottom of the chart
                 padding = (y_max - y_min) * 0.15
-                if padding == 0: padding = y_max * 0.1 # Fallback just in case there were 0 changes
-                
-                # Calculate final zoom range (preventing it from accidentally zooming into negative numbers)
+                if padding == 0: padding = y_max * 0.1
                 custom_y_range = [max(0, y_min - padding), y_max + padding]
 
-                # --- PLOTLY WATERFALL CHART ---
                 wf_data = pd.DataFrame({
                     "Stage": ["Beginning Users", "New Acceptors", "Other Acceptors", "Dropouts", "End Users"],
                     "Value": [v_beg, v_new, v_oth, -v_drp, v_end],
@@ -3118,29 +3105,21 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
                 
                 import plotly.graph_objects as go
                 fig_waterfall = go.Figure(go.Waterfall(
-                    name = "FP Pipeline", orientation = "v",
-                    measure = wf_data["Measure"],
-                    x = wf_data["Stage"],
-                    textposition = "outside",
-                    text = wf_data["Value"].astype(int).apply(lambda x: f"{x:,}"),
-                    y = wf_data["Value"],
-                    connector = {"line":{"color":"rgb(63, 63, 63)"}},
-                    decreasing = {"marker":{"color":"#EF553B"}},
-                    increasing = {"marker":{"color":"#00CC96"}},
-                    totals = {"marker":{"color":"#636EFA"}}
+                    name = "FP Pipeline", orientation = "v", measure = wf_data["Measure"],
+                    x = wf_data["Stage"], textposition = "outside",
+                    text = wf_data["Value"].astype(int).apply(lambda x: f"{x:,}"), y = wf_data["Value"],
+                    connector = {"line":{"color":"rgb(63, 63, 63)"}}, decreasing = {"marker":{"color":"#EF553B"}},
+                    increasing = {"marker":{"color":"#00CC96"}}, totals = {"marker":{"color":"#636EFA"}}
                 ))
                 
-                # Apply the dynamic zoom to the yaxis!
                 fig_waterfall.update_layout(
                     title=f"Pipeline Flow: {selected_method} ({age_filter})", 
-                    margin=dict(t=50),
-                    yaxis=dict(range=custom_y_range) # <-- ZOOM APPLIED HERE
+                    margin=dict(t=50), yaxis=dict(range=custom_y_range)
                 )
-                
                 st.plotly_chart(fig_waterfall, use_container_width=True)
                 
             except Exception as e:
-                st.warning(f"Could not calculate waterfall pipeline for '{selected_method}' ({age_filter}). The data for this specific method might be missing.")
+                st.warning(f"Could not calculate waterfall pipeline for '{selected_method}' ({age_filter}). The data might be missing.")
         else:
             st.info("Upload Beginning, New, Other, Dropouts, and End data to view the pipeline.")
 
@@ -3149,8 +3128,11 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
         df_end_mix = get_fp_filtered("FP_End", start_month, end_month, selected_year, rhu_filter)
         
         if not df_end_mix.empty:
-            # Extract just the specific methods for the selected age filter
-            method_cols = [c for c in df_end_mix.columns if age_filter in c and "Total" not in c and "%" not in c]
+            # --- NEW: Fixed "Total" Logic Paradox ---
+            if age_filter == "Total":
+                method_cols = [c for c in df_end_mix.columns if c.endswith("_Total") and "Total Current" not in c and "%" not in c]
+            else:
+                method_cols = [c for c in df_end_mix.columns if c.endswith(f"_{age_filter}") and "Total Current" not in c and "%" not in c]
             
             if method_cols:
                 mix_dict = {c.replace(f"_{age_filter}", "").strip(): df_end_mix[c].sum() for c in method_cols}
@@ -3167,7 +3149,7 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
                     fig_mix.update_traces(textposition='inside', textinfo='percent+label')
                     st.plotly_chart(fig_mix, use_container_width=True)
             else:
-                st.warning("Could not isolate method columns for this demographic.")
+                st.warning(f"Could not isolate method columns for the '{age_filter}' demographic.")
         else:
             st.info("No Current Users End data available for the Method Mix.")
 
