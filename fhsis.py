@@ -3072,22 +3072,34 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
         df_drp = get_fp_filtered("FP_Dropouts", start_month, end_month, selected_year, rhu_filter)
         df_end = get_fp_filtered("FP_End", start_month, end_month, selected_year, rhu_filter)
         
+        # --- NEW: Smart Value Extractor ---
+        # This solves the DOH Excel quirk by manually summing up all methods if an age filter is active
+        def get_fp_value(df, method, age):
+            if df.empty: return 0
+            if method == "All Methods (Overall)":
+                if age == "Total":
+                    if "Total Current User" in df.columns: return df["Total Current User"].sum()
+                    return 0
+                else:
+                    # Dynamically add up ALL individual methods for this specific age!
+                    age_cols = [c for c in df.columns if c.endswith(f"_{age}") and "Total Current" not in c and "%" not in c]
+                    return df[age_cols].sum().sum()
+            else:
+                target = f"{method}_{age}"
+                if target in df.columns: return df[target].sum()
+                
+                # Fallback search
+                cols = [c for c in df.columns if method in c and age in c and "%" not in c]
+                if cols: return df[cols[0]].sum()
+                return 0
+
         if not df_end.empty and not df_beg.empty:
-            
-            # --- NEW: Robust Target Column Finder ---
-            base_method = "Total Current User" if selected_method == "All Methods (Overall)" else selected_method
-            target_col = f"{base_method}_{age_filter}"
-            
-            if target_col not in df_beg.columns:
-                col_search = [c for c in df_beg.columns if base_method in c and age_filter in c and "%" not in c]
-                if col_search: target_col = col_search[0]
-            
             try:
-                v_beg = df_beg[target_col].sum() if target_col in df_beg.columns else 0
-                v_new = df_new[target_col].sum() if target_col in df_new.columns else 0
-                v_oth = df_oth[target_col].sum() if target_col in df_oth.columns else 0
-                v_drp = df_drp[target_col].sum() if target_col in df_drp.columns else 0
-                v_end = df_end[target_col].sum() if target_col in df_end.columns else 0
+                v_beg = get_fp_value(df_beg, selected_method, age_filter)
+                v_new = get_fp_value(df_new, selected_method, age_filter)
+                v_oth = get_fp_value(df_oth, selected_method, age_filter)
+                v_drp = get_fp_value(df_drp, selected_method, age_filter)
+                v_end = get_fp_value(df_end, selected_method, age_filter)
                 
                 step1, step2, step3, step4, step5 = v_beg, v_beg + v_new, v_beg + v_new + v_oth, v_beg + v_new + v_oth - v_drp, v_end
                 y_max = max(step1, step2, step3, step4, step5)
@@ -3119,7 +3131,7 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
                 st.plotly_chart(fig_waterfall, use_container_width=True)
                 
             except Exception as e:
-                st.warning(f"Could not calculate waterfall pipeline for '{selected_method}' ({age_filter}). The data might be missing.")
+                st.warning(f"Could not calculate waterfall pipeline for '{selected_method}' ({age_filter}).")
         else:
             st.info("Upload Beginning, New, Other, Dropouts, and End data to view the pipeline.")
 
