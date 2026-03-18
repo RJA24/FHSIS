@@ -12,6 +12,28 @@ import pytz
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
 
+# --- GLOBAL UI / UX POLISH ---
+st.markdown("""
+    <style>
+    /* Hide the default Streamlit top menu, header, and footer */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Adjust top padding so the dashboard doesn't hug the absolute ceiling */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Make the active tab visually distinct with DOH-themed purple */
+    .stTabs [aria-selected="true"] {
+        color: #7209b7 !important;
+        border-bottom-color: #7209b7 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 def silent_access_tracker():
     # 1. Check if we have already logged this specific user's session
     if 'has_logged_in' not in st.session_state:
