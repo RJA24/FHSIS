@@ -1111,6 +1111,13 @@ with st.sidebar:
     page = st.radio("Navigation", nav_options)
     st.markdown("---")
     
+    # --- LAZY LOADING CLOUD DATA ---
+    # If they are on the Home page, skip the download so it boots instantly!
+    # If they click a dashboard, trigger the sync (and cache it for later).
+    if page != "🏠 Home" and 'fhsis_data' not in st.session_state:
+        with st.spinner(f"🔄 Syncing cloud database for the {page}..."):
+            st.session_state['fhsis_data'] = load_data_from_gsheets()
+    
     # 2. RUN FILTERS BASED ON THE SELECTED PAGE
     if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "👨‍👩‍👧 Family Planning Dashboard", "💀 Mortality Dashboard"]:
         st.subheader("🎛️ Global Filters")
@@ -1147,11 +1154,11 @@ with st.sidebar:
             st.session_state["is_admin"] = False
             st.rerun()
 
-# --- INITIALIZE SESSION STATE ---
+# --- INITIALIZE CLOUD DATA ---
 if 'fhsis_data' not in st.session_state:
     with st.spinner("🔄 Syncing latest DOH metrics from the cloud..."):
         st.session_state['fhsis_data'] = load_data_from_gsheets()
-
+        
 # --- HELPER FUNCTIONS ---
 def filter_data(df, start_month, end_month, gender, year):
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
