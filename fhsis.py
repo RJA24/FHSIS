@@ -3090,6 +3090,25 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
                 v_drp = df_drp[target_col].sum() if target_col in df_drp.columns else 0
                 v_end = df_end[target_col].sum() if target_col in df_end.columns else 0
                 
+                # --- NEW: DYNAMIC Y-AXIS ZOOM MATH ---
+                # 1. Calculate the running total at every step of the waterfall
+                step1 = v_beg
+                step2 = step1 + v_new
+                step3 = step2 + v_oth
+                step4 = step3 - v_drp
+                step5 = v_end
+                
+                # 2. Find the highest peak and lowest valley
+                y_max = max(step1, step2, step3, step4, step5)
+                y_min = min(step1, step2, step3, step4, step5)
+                
+                # 3. Add a 15% visual padding so the bars don't touch the very top/bottom of the chart
+                padding = (y_max - y_min) * 0.15
+                if padding == 0: padding = y_max * 0.1 # Fallback just in case there were 0 changes
+                
+                # Calculate final zoom range (preventing it from accidentally zooming into negative numbers)
+                custom_y_range = [max(0, y_min - padding), y_max + padding]
+
                 # --- PLOTLY WATERFALL CHART ---
                 wf_data = pd.DataFrame({
                     "Stage": ["Beginning Users", "New Acceptors", "Other Acceptors", "Dropouts", "End Users"],
@@ -3110,7 +3129,14 @@ elif page == "👨‍👩‍👧 Family Planning Dashboard":
                     increasing = {"marker":{"color":"#00CC96"}},
                     totals = {"marker":{"color":"#636EFA"}}
                 ))
-                fig_waterfall.update_layout(title=f"Pipeline Flow: {selected_method} ({age_filter})", margin=dict(t=50))
+                
+                # Apply the dynamic zoom to the yaxis!
+                fig_waterfall.update_layout(
+                    title=f"Pipeline Flow: {selected_method} ({age_filter})", 
+                    margin=dict(t=50),
+                    yaxis=dict(range=custom_y_range) # <-- ZOOM APPLIED HERE
+                )
+                
                 st.plotly_chart(fig_waterfall, use_container_width=True)
                 
             except Exception as e:
