@@ -13,22 +13,20 @@ import pytz
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
 
 # --- GLOBAL UI / UX POLISH ---
-# 1. Base CSS applied to EVERYONE (Admin & Users)
 st.markdown("""
     <style>
-    /* 1. Make the header transparent so it looks native */
-    /* By doing ONLY this, we leave the sidebar button completely alone so it works perfectly! */
+    /* 1. Make the header transparent but leave its structure alone (Protects Sidebar Button!) */
     [data-testid="stHeader"] {
         background-color: transparent !important;
     }
     
-    /* 2. Adjust top padding so the dashboard doesn't hug the absolute ceiling */
+    /* 2. Adjust padding so the dashboard looks clean */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
     }
     
-    /* 3. Make the active tab visually distinct with DOH-themed purple */
+    /* 3. DOH Purple active tabs */
     .stTabs [aria-selected="true"] {
         color: #7209b7 !important;
         border-bottom-color: #7209b7 !important;
@@ -36,36 +34,27 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Conditional CSS applied ONLY to regular users
+# Conditional CSS applied ONLY to regular users
 if not st.session_state.get("is_admin", False):
     st.markdown("""
         <style>
-        /* 4. HIDE THE RIGHT-SIDE TOOLBAR ONLY (Deploy & 3-dots) */
-        /* This kills the menu without breaking the sidebar toggle on the left! */
-        [data-testid="stActionElements"], [data-testid="stToolbar"] {
+        /* 4. Hide ONLY the top-right toolbar (3-dots & Deploy) */
+        [data-testid="stToolbar"] {
             display: none !important;
-            visibility: hidden !important;
         }
         
-        /* 5. HIDE THE STANDARD FOOTER */
+        /* 5. Hide the standard footer */
         footer {
             display: none !important;
         }
         
-        /* 6. ASSASSINATE THE CLOUD BADGE */
-        /* Target the exact <a> tag and Profile Container from your screenshot */
-        a[class*="viewerBadge"] {
+        /* 6. The Ultimate Badge Assassin */
+        /* Targets the exact cloud link and Streamlit's floating UI elements */
+        a[href^="https://streamlit.io/cloud"] {
             display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
         }
-        
-        div[class*="profileContainer"] {
+        [class*="viewerBadge"] {
             display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
         }
         </style>
         """, unsafe_allow_html=True)
