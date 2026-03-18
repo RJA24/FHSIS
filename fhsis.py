@@ -157,7 +157,17 @@ MORTALITY_MAPPING = {
     "Traffic_Accidents": "Traffic_Accidents_Data"
 }
 
-ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING, **MORTALITY_MAPPING}
+FP_MAPPING = {
+    "FP_Beginning": "FP_Beginning_Data",
+    "FP_New": "FP_New_Data",
+    "FP_Other": "FP_Other_Data",
+    "FP_Dropouts": "FP_Dropouts_Data",
+    "FP_End": "FP_End_Data",
+    "FP_Demand": "FP_Demand_Data"
+}
+
+# Ensure FP_MAPPING is added to the ALL_MAPPINGS dictionary:
+ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING, **MORTALITY_MAPPING, **FP_MAPPING}
 
 # --- TARGET WASH INDICATORS ---
 TARGET_WASH_COLS = [
@@ -875,6 +885,162 @@ def load_and_clean_mortality_data(uploaded_file, year):
         import traceback
         st.error(f"Mortality Template Error processing {uploaded_file.name}: {e}")
         st.code(traceback.format_exc())
+        return None
+
+# --- FAMILY PLANNING DATA CLEANERS ---
+@st.cache_data
+def load_and_clean_fp_methods(uploaded_file, year):
+    try:
+        xls = pd.ExcelFile(uploaded_file)
+        sheets_to_process = {}
+        valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        invalid_keywords = ["summary", "cons", "ytd", "annual", "quarter", "sem", "q1", "q2", "q3", "q4"]
+        month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
+                     "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
+        
+        for sheet in xls.sheet_names:
+            sheet_lower = sheet.lower().strip()
+            months_found = [m for m in valid_months if m in sheet_lower]
+            if len(months_found) != 1: continue
+            if any(inv in sheet_lower for inv in invalid_keywords): continue
+            sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+
+        all_months_data = []
+        for month_val, df in sheets_to_process.items():
+            area_row_idx = -1
+            sub_row_idx = -1
+            
+            # Find the header row (contains 'Area' and Method Names)
+            for idx, row in df.iterrows():
+                row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
+                if any('AREA' in v for v in row_str):
+                    area_row_idx = idx
+                    break
+            
+            if area_row_idx == -1: continue
+            
+            # Find the sub-header row (contains age groups 10-14, 15-19, 20-49)
+            for idx in range(area_row_idx + 1, min(area_row_idx + 4, len(df))):
+                row_str = [str(val).strip() for val in df.iloc[idx].values if pd.notna(val)]
+                if any('10-14' in v or '15-19' in v for v in row_str):
+                    sub_row_idx = idx
+                    break
+                    
+            if sub_row_idx == -1: continue
+
+            main_headers = df.iloc[area_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], np.nan, regex=True).ffill()
+            sub_headers = df.iloc[sub_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True)
+
+            flat_cols = []
+            for top, bot in zip(main_headers, sub_headers):
+                top_str = str(top).strip().replace('\n', ' ') if pd.notna(top) and str(top) != 'nan' else ""
+                bot_str = str(bot).strip().replace('\n', ' ') if bot and str(bot) != 'nan' else ""
+                
+                # Combine Method + Age Group (e.g., "Condom_15-19")
+                if bot_str and bot_str not in top_str and top_str: 
+                    flat_cols.append(f"{top_str}_{bot_str}")
+                elif top_str: 
+                    flat_cols.append(top_str)
+                else: 
+                    flat_cols.append(bot_str)
+
+            # Ensure unique columns
+            seen = set()
+            unique_cols = []
+            for c in flat_cols:
+                if not c:
+                    unique_cols.append("")
+                    continue
+                new_c = c
+                counter = 1
+                while new_c in seen:
+                    new_c = f"{c}_{counter}"
+                    counter += 1
+                seen.add(new_c)
+                unique_cols.append(new_c)
+
+            df_clean = df.iloc[sub_row_idx + 1:].copy()
+            df_clean.columns = unique_cols
+            df_clean = df_clean.loc[:, df_clean.columns != '']
+
+            area_col = next((c for c in df_clean.columns if 'AREA' in c.upper()), df_clean.columns[0])
+            if area_col != 'Area':
+                df_clean.rename(columns={area_col: 'Area'}, inplace=True)
+            
+            df_clean.dropna(subset=['Area'], inplace=True)
+            df_clean['Area_Clean'] = df_clean['Area'].astype(str).str.strip()
+            df_clean = df_clean[df_clean['Area_Clean'].isin(ABRA_RHUS)]
+            df_clean['Area'] = df_clean['Area_Clean']
+            df_clean.drop(columns=['Area_Clean'], inplace=True)
+            df_clean['Month'] = month_val
+            df_clean['Year'] = year
+            
+            # Clean numeric columns
+            for col in df_clean.columns:
+                if col not in ['Area', 'Month', 'Year']:
+                    df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
+                    
+            all_months_data.append(df_clean)
+            
+        if not all_months_data: raise ValueError("Could not find properly formatted monthly sheets.")
+        return pd.concat(all_months_data, ignore_index=True)
+    except Exception as e:
+        st.error(f"Family Planning Error processing {uploaded_file.name}: {e}")
+        return None
+
+@st.cache_data
+def load_and_clean_fp_demand(uploaded_file, year):
+    # Specialized cleaner just for the "Demand Satisfied" template
+    try:
+        xls = pd.ExcelFile(uploaded_file)
+        sheets_to_process = {}
+        valid_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
+                     "jul": "Jul", "aug": "Aug", "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
+        
+        for sheet in xls.sheet_names:
+            sheet_lower = sheet.lower().strip()
+            months_found = [m for m in valid_months if m in sheet_lower and "summary" not in sheet_lower]
+            if len(months_found) == 1:
+                sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
+
+        all_months_data = []
+        for month_val, df in sheets_to_process.items():
+            area_row_idx = -1
+            for idx, row in df.iterrows():
+                row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
+                if any('AREA' in v for v in row_str) and any('DEMAND' in v for v in row_str):
+                    area_row_idx = idx
+                    break
+            
+            if area_row_idx == -1: continue
+            
+            headers = df.iloc[area_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True)
+            df_clean = df.iloc[area_row_idx + 1:].copy()
+            df_clean.columns = headers
+            df_clean = df_clean.loc[:, df_clean.columns != '']
+            
+            area_col = next((c for c in df_clean.columns if 'AREA' in c.upper()), df_clean.columns[0])
+            df_clean.rename(columns={area_col: 'Area'}, inplace=True)
+            
+            df_clean.dropna(subset=['Area'], inplace=True)
+            df_clean['Area_Clean'] = df_clean['Area'].astype(str).str.strip()
+            df_clean = df_clean[df_clean['Area_Clean'].isin(ABRA_RHUS)]
+            df_clean['Area'] = df_clean['Area_Clean']
+            
+            keep_cols = ['Area'] + [c for c in df_clean.columns if c != 'Area' and c != 'Area_Clean']
+            df_clean = df_clean[keep_cols]
+            df_clean['Month'] = month_val
+            df_clean['Year'] = year
+            
+            for col in df_clean.columns:
+                if col not in ['Area', 'Month', 'Year']:
+                    df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
+            all_months_data.append(df_clean)
+            
+        return pd.concat(all_months_data, ignore_index=True)
+    except Exception as e:
+        st.error(f"Demand Satisfied Error processing {uploaded_file.name}: {e}")
         return None
         
 @st.cache_data
@@ -3151,6 +3317,36 @@ elif page == "📁 Data Uploader":
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
                 st.success(f"✅ {upload_year} Mortality Files safely merged into Google Sheets!")
+            else:
+                st.error("No valid data uploaded yet to save.")
+
+    with upload_tab_fp:
+        st.markdown("##### 👨‍👩‍👧 Upload Family Planning Excel Templates")
+        st.info("💡 The FP Module tracks the flow of users: Beginning + New + Other - Dropouts = End.")
+        
+        col_fp1, col_fp2 = st.columns(2)
+        with col_fp1:
+            file_fp_beg = st.file_uploader("Upload: 1 Current Users Beginning", type=["csv", "xlsx"])
+            file_fp_new = st.file_uploader("Upload: 2 New Acceptors", type=["csv", "xlsx"])
+            file_fp_other = st.file_uploader("Upload: 3 Other Acceptors", type=["csv", "xlsx"])
+        with col_fp2:
+            file_fp_drop = st.file_uploader("Upload: 4 Drop-outs", type=["csv", "xlsx"])
+            file_fp_end = st.file_uploader("Upload: 5 Current Users End", type=["csv", "xlsx"])
+            file_fp_demand = st.file_uploader("Upload: 6 Demand Satisfied", type=["csv", "xlsx"])
+            
+        if st.button("☁️ Save Family Planning Data to Cloud", type="primary", use_container_width=True):
+            upload_dict = {}
+            if file_fp_beg: upload_dict["FP_Beginning"] = load_and_clean_fp_methods(file_fp_beg, upload_year)
+            if file_fp_new: upload_dict["FP_New"] = load_and_clean_fp_methods(file_fp_new, upload_year)
+            if file_fp_other: upload_dict["FP_Other"] = load_and_clean_fp_methods(file_fp_other, upload_year)
+            if file_fp_drop: upload_dict["FP_Dropouts"] = load_and_clean_fp_methods(file_fp_drop, upload_year)
+            if file_fp_end: upload_dict["FP_End"] = load_and_clean_fp_methods(file_fp_end, upload_year)
+            if file_fp_demand: upload_dict["FP_Demand"] = load_and_clean_fp_demand(file_fp_demand, upload_year)
+            
+            clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
+            if clean_dict:
+                save_data_to_gsheets(clean_dict)
+                st.success(f"✅ {upload_year} Family Planning Files safely merged into Google Sheets!")
             else:
                 st.error("No valid data uploaded yet to save.")
 
