@@ -1059,6 +1059,7 @@ with st.sidebar:
         "🩺 NCD Dashboard", 
         "🚰 WASH Dashboard", 
         "🤰 Maternal Dashboard", 
+        "👨‍👩‍👧 Family Planning Dashboard", # <-- ADDED THIS
         "💀 Mortality Dashboard", 
         "📈 YoY Comparison"
     ]
@@ -1070,7 +1071,8 @@ with st.sidebar:
     page = st.radio("Navigation", nav_options)
     st.markdown("---")
     
-    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "💀 Mortality Dashboard"]:
+    # ADD IT TO THE GLOBAL FILTERS LIST TOO
+    if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "👨‍👩‍👧 Family Planning Dashboard", "💀 Mortality Dashboard"]:
         st.subheader("Global Filters")
         selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
         gender_filter = st.selectbox("Select Demographic", options=["Total", "Male", "Female"])
@@ -2974,6 +2976,162 @@ elif page == "🤰 Maternal Dashboard":
     with mat_tab4: render_maternal_tab("Syphilis & Hep B", "Syphilis_HepB", start_month, end_month, selected_year, age_filter, rhu_filter)
     with mat_tab5: render_maternal_tab("CBC & Gestational Diabetes", "CBC_Gestational", start_month, end_month, selected_year, age_filter, rhu_filter)
     with mat_tab6: render_maternal_tab("Postpartum Care (PPC)", "PPC", start_month, end_month, selected_year, age_filter, rhu_filter)
+
+elif page == "👨‍👩‍👧 Family Planning Dashboard":
+    st.title("👨‍👩‍👧 Family Planning (FP) Dashboard")
+    st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year}")
+    st.markdown("---")
+    
+    st.markdown("##### ⏳ Time Filter")
+    col_t1, col_t2 = st.columns([1, 2])
+    with col_t1:
+        time_view = st.radio("Time Aggregation", ["Monthly", "Quarterly"], horizontal=True, label_visibility="collapsed", key="fp_time")
+    with col_t2:
+        if time_view == "Monthly":
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            start_month, end_month = st.select_slider("Select Range", options=months, value=("Jan", "Dec"), label_visibility="collapsed", key="fp_m")
+        else:
+            quarters = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"]
+            start_q, end_q = st.select_slider("Select Range", options=quarters, value=("Q1 (Jan-Mar)", "Q4 (Oct-Dec)"), label_visibility="collapsed", key="fp_q")
+            q_map = {"Q1 (Jan-Mar)": ("Jan", "Mar"), "Q2 (Apr-Jun)": ("Apr", "Jun"), "Q3 (Jul-Sep)": ("Jul", "Sep"), "Q4 (Oct-Dec)": ("Oct", "Dec")}
+            start_month = q_map[start_q][0]
+            end_month = q_map[end_q][1]
+            
+    st.markdown("##### 👩 Age Filter")
+    age_filter = st.selectbox("Isolate Specific Demographic", ["Total", "10-14", "15-19", "20-49"], key="fp_age")
+            
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    fp_tab1, fp_tab2, fp_tab3 = st.tabs(["🌟 CPR & Demand Satisfied", "🔄 User Pipeline (Flow)", "💊 Method Mix (Preferences)"])
+    
+    # Helper to filter FP data
+    def get_fp_filtered(df_key, sm, em, yr, rhus):
+        if df_key not in st.session_state['fhsis_data']: return pd.DataFrame()
+        df = st.session_state['fhsis_data'][df_key]
+        df_yr = df[df['Year'] == yr]
+        
+        m_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        s_idx = m_order.index(sm)
+        e_idx = m_order.index(em)
+        v_months = m_order[s_idx:e_idx+1]
+        
+        filt = df_yr[df_yr['Month'].isin(v_months)]
+        if rhus and "Abra (Total)" not in rhus:
+            filt = filt[filt['Area'].isin(rhus)]
+        return filt
+
+    with fp_tab1:
+        st.markdown("### 🌟 Program Overview: CPR & Demand Satisfied")
+        df_dem = get_fp_filtered("FP_Demand", start_month, end_month, selected_year, rhu_filter)
+        
+        if not df_dem.empty:
+            # Aggregate the latest month/quarter selected for accurate CPR (it's not additive like vaccines)
+            latest_month = df_dem['Month'].iloc[-1]
+            df_latest = df_dem[df_dem['Month'] == latest_month]
+            
+            dem_target = df_latest['Total Demand Factor'].sum() if 'Total Demand Factor' in df_latest.columns else 0
+            curr_users = df_latest['Total Current User'].sum() if 'Total Current User' in df_latest.columns else 0
+            
+            # Recalculate CPR based on DOH formula
+            prov_cpr = (curr_users / dem_target * 100) if dem_target > 0 else 0
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total WRA with Demand (Denominator)", f"{int(dem_target):,}")
+            c2.metric(f"Current FP Users ({latest_month})", f"{int(curr_users):,}")
+            c3.metric(f"Contraceptive Prev. Rate (CPR)", f"{prov_cpr:.1f}%")
+            
+            st.markdown("---")
+            if 'Demand Satisfied' in df_latest.columns and 'CPR' in df_latest.columns:
+                rhu_perf = df_latest.groupby('Area')[['Demand Satisfied', 'CPR']].mean().reset_index()
+                
+                fig_cpr = px.bar(rhu_perf.sort_values('CPR', ascending=False), x='Area', y='CPR', 
+                                 title=f"Contraceptive Prevalence Rate (CPR) by RHU - {latest_month}",
+                                 text_auto='.1f', color='CPR', color_continuous_scale="Purples")
+                fig_cpr.update_layout(xaxis_title="RHU", yaxis_title="CPR (%)", margin=dict(t=40))
+                st.plotly_chart(fig_cpr, use_container_width=True)
+        else:
+            st.info("No Demand Satisfied data available for the selected period.")
+
+    with fp_tab2:
+        st.markdown("### 🔄 Family Planning User Pipeline")
+        st.markdown("Visualizing the monthly flow of acceptors joining and dropping out of the program.")
+        
+        df_beg = get_fp_filtered("FP_Beginning", start_month, end_month, selected_year, rhu_filter)
+        df_new = get_fp_filtered("FP_New", start_month, end_month, selected_year, rhu_filter)
+        df_oth = get_fp_filtered("FP_Other", start_month, end_month, selected_year, rhu_filter)
+        df_drp = get_fp_filtered("FP_Dropouts", start_month, end_month, selected_year, rhu_filter)
+        df_end = get_fp_filtered("FP_End", start_month, end_month, selected_year, rhu_filter)
+        
+        if not df_end.empty and not df_beg.empty:
+            target_col = f"Total Current User_{age_filter}"
+            
+            # Try to find the exact column name for the total user count based on age
+            col_search = [c for c in df_beg.columns if "Total" in c and age_filter in c]
+            if col_search: target_col = col_search[0]
+            
+            try:
+                v_beg = df_beg[target_col].sum() if target_col in df_beg.columns else 0
+                v_new = df_new[target_col].sum() if target_col in df_new.columns else 0
+                v_oth = df_oth[target_col].sum() if target_col in df_oth.columns else 0
+                v_drp = df_drp[target_col].sum() if target_col in df_drp.columns else 0
+                v_end = df_end[target_col].sum() if target_col in df_end.columns else 0
+                
+                # --- PLOTLY WATERFALL CHART ---
+                wf_data = pd.DataFrame({
+                    "Stage": ["Beginning Users", "New Acceptors", "Other Acceptors", "Dropouts", "End Users"],
+                    "Value": [v_beg, v_new, v_oth, -v_drp, v_end],
+                    "Measure": ["absolute", "relative", "relative", "relative", "total"]
+                })
+                
+                fig_wf = px.bar(wf_data, x="Stage", y="Value", title=f"User Flow: {start_month} to {end_month} ({age_filter})", text="Value")
+                
+                import plotly.graph_objects as go
+                fig_waterfall = go.Figure(go.Waterfall(
+                    name = "FP Pipeline", orientation = "v",
+                    measure = wf_data["Measure"],
+                    x = wf_data["Stage"],
+                    textposition = "outside",
+                    text = wf_data["Value"].astype(int).apply(lambda x: f"{x:,}"),
+                    y = wf_data["Value"],
+                    connector = {"line":{"color":"rgb(63, 63, 63)"}},
+                    decreasing = {"marker":{"color":"#EF553B"}},
+                    increasing = {"marker":{"color":"#00CC96"}},
+                    totals = {"marker":{"color":"#636EFA"}}
+                ))
+                fig_waterfall.update_layout(title="Waterfall: Pipeline Flow (Beg + New + Other - Drop = End)", margin=dict(t=50))
+                st.plotly_chart(fig_waterfall, use_container_width=True)
+                
+            except Exception as e:
+                st.warning(f"Could not calculate waterfall pipeline for {age_filter}. Columns might not match exactly.")
+        else:
+            st.info("Upload Beginning, New, Other, Dropouts, and End data to view the pipeline.")
+
+    with fp_tab3:
+        st.markdown("### 💊 Method Mix (Contraceptive Preferences)")
+        df_end_mix = get_fp_filtered("FP_End", start_month, end_month, selected_year, rhu_filter)
+        
+        if not df_end_mix.empty:
+            # Extract just the specific methods for the selected age filter
+            method_cols = [c for c in df_end_mix.columns if age_filter in c and "Total" not in c and "%" not in c]
+            
+            if method_cols:
+                mix_dict = {c.replace(f"_{age_filter}", "").strip(): df_end_mix[c].sum() for c in method_cols}
+                mix_df = pd.DataFrame(list(mix_dict.items()), columns=['Method', 'Users'])
+                mix_df = mix_df[mix_df['Users'] > 0].sort_values('Users', ascending=False)
+                
+                col_m1, col_m2 = st.columns([1, 2])
+                with col_m1:
+                    st.dataframe(mix_df, hide_index=True, use_container_width=True)
+                with col_m2:
+                    fig_mix = px.pie(mix_df, values='Users', names='Method', hole=0.4, 
+                                     title=f"Method Preference Distribution ({age_filter})",
+                                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig_mix.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_mix, use_container_width=True)
+            else:
+                st.warning("Could not isolate method columns for this demographic.")
+        else:
+            st.info("No Current Users End data available for the Method Mix.")
 
 elif page == "💀 Mortality Dashboard":
     st.title("💀 Mortality & Injuries Dashboard")
