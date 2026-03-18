@@ -15,10 +15,12 @@ st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="A
 # --- GLOBAL UI / UX POLISH ---
 st.markdown("""
     <style>
-    /* Hide the default Streamlit top menu, header, and footer */
+    /* Hide the default Streamlit hamburger menu and footer */
     #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
     footer {visibility: hidden;}
+    
+    /* Make the header transparent so the sidebar toggle button stays visible! */
+    header {background-color: transparent !important;}
     
     /* Adjust top padding so the dashboard doesn't hug the absolute ceiling */
     .block-container {
