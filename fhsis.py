@@ -194,6 +194,7 @@ def save_data_to_gsheets(new_data_dict):
         
         with st.spinner(f"Merging and saving {app_key} to cloud database..."):
             try:
+                # 1. Read existing data
                 try:
                     existing_df = conn.read(worksheet=sheet_name, ttl=0)
                     if not existing_df.empty and 'Area' in existing_df.columns:
@@ -203,6 +204,7 @@ def save_data_to_gsheets(new_data_dict):
                 except Exception:
                     existing_df = pd.DataFrame() 
                 
+                # 2. Merge logic
                 if not existing_df.empty:
                     old_df = existing_df.copy()
                     old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
@@ -219,6 +221,7 @@ def save_data_to_gsheets(new_data_dict):
                 combined_df.columns = combined_df.columns.astype(str)
                 combined_df = combined_df.fillna("")
                     
+                # 3. Write data back
                 old_len = len(existing_df)
                 new_len = len(combined_df)
                 
@@ -231,22 +234,16 @@ def save_data_to_gsheets(new_data_dict):
                 else:
                     conn.update(worksheet=sheet_name, data=combined_df)
                 
-                time.sleep(3) 
+                # 4. SMART CACHE: Update Session State directly to prevent burning a Google API Read Call!
+                st.session_state['fhsis_data'][app_key] = combined_df
+                
+                # 5. Pace the requests to avoid Google's 60 req/min limit
+                time.sleep(4) 
                 
             except Exception as e:
                 st.error(f"❌ Failed to save {sheet_name}. API Error: {e}")
                 
     st.cache_data.clear()
-    for app_key in new_data_dict.keys():
-        sheet_name = ALL_MAPPINGS[app_key]
-        try:
-            df = conn.read(worksheet=sheet_name, ttl=0)
-            if not df.empty and 'Area' in df.columns:
-                df = df.dropna(subset=['Area', 'Year'])
-                st.session_state['fhsis_data'][app_key] = df
-        except Exception:
-            pass
-        time.sleep(2)
 
 def load_data_from_gsheets():
     loaded_data = {}
@@ -260,7 +257,8 @@ def load_data_from_gsheets():
                     loaded_data[app_key] = df
             except Exception:
                 pass 
-            time.sleep(0.2)
+            # Pace the initial startup loads slightly to prevent crashing on boot
+            time.sleep(0.5)
     except Exception as e:
         st.error("Google Sheets connection not fully configured yet.")
     return loaded_data
