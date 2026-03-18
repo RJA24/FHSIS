@@ -3455,9 +3455,9 @@ elif page == "📁 Data Uploader":
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
-                st.success(f"✅ {upload_year} Immunization Files safely merged into Google Sheets!")
+                st.toast(f"{upload_year} Immunization Files safely merged into Google Sheets!", icon="✅")
             else:
-                st.error("No valid data uploaded yet to save.")
+                st.toast("No valid data uploaded yet to save.", icon="⚠️")
                 
     with upload_tab_ncd:
         st.markdown("##### Upload NCD Excel Templates")
@@ -3480,9 +3480,9 @@ elif page == "📁 Data Uploader":
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
-                st.success(f"✅ {upload_year} NCD Files safely merged into Google Sheets! Head over to the NCD Dashboard.")
+                st.toast(f"{upload_year} NCD Files safely merged! Head over to the NCD Dashboard.", icon="✅")
             else:
-                st.error("No valid data uploaded yet to save.")
+                st.toast("No valid data uploaded yet to save.", icon="⚠️")
 
     with upload_tab_wash:
         st.markdown("##### Upload WASH Excel Templates")
@@ -3499,9 +3499,9 @@ elif page == "📁 Data Uploader":
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
-                st.success(f"✅ {upload_year} WASH Files safely merged into Google Sheets! Head over to the WASH Dashboard.")
+                st.toast(f"{upload_year} WASH Files safely merged! Head over to the WASH Dashboard.", icon="✅")
             else:
-                st.error("No valid data uploaded yet to save.")
+                st.toast("No valid data uploaded yet to save.", icon="⚠️")
 
     with upload_tab_mat:
         st.markdown("##### Upload Maternal Health Excel Templates")
@@ -3530,9 +3530,9 @@ elif page == "📁 Data Uploader":
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
-                st.success(f"✅ {upload_year} Maternal Files safely merged into Google Sheets!")
+                st.toast(f"{upload_year} Maternal Files safely merged into Google Sheets!", icon="✅")
             else:
-                st.error("No valid data uploaded yet to save.")
+                st.toast("No valid data uploaded yet to save.", icon="⚠️")
                 
     with upload_tab_mort:
         st.markdown("##### Upload F1 Plus Mortality & Injury Templates")
@@ -3549,9 +3549,9 @@ elif page == "📁 Data Uploader":
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
-                st.success(f"✅ {upload_year} Mortality Files safely merged into Google Sheets!")
+                st.toast(f"{upload_year} Mortality Files safely merged into Google Sheets!", icon="✅")
             else:
-                st.error("No valid data uploaded yet to save.")
+                st.toast("No valid data uploaded yet to save.", icon="⚠️")
 
     with upload_tab_fp:
         st.markdown("##### 👨‍👩‍👧 Upload Family Planning Excel Templates")
@@ -3579,9 +3579,9 @@ elif page == "📁 Data Uploader":
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
                 save_data_to_gsheets(clean_dict)
-                st.success(f"✅ {upload_year} Family Planning Files safely merged into Google Sheets!")
+                st.toast(f"{upload_year} Family Planning Files safely merged into Google Sheets!", icon="✅")
             else:
-                st.error("No valid data uploaded yet to save.")
+                st.toast("No valid data uploaded yet to save.", icon="⚠️")
 
     st.markdown("---")
     with st.expander("⚠️ Database Management (Danger Zone)"):
@@ -3595,10 +3595,10 @@ elif page == "📁 Data Uploader":
         
         if st.button("🚨 Nuke Selected Data", type="primary"):
             if not datasets_to_nuke:
-                st.error("Please select at least one dataset from the dropdown above to nuke.")
+                st.toast("Please select at least one dataset from the dropdown above to nuke.", icon="⚠️")
             else:
                 nuke_cloud_database(datasets_to_nuke)
-                st.success(f"✅ Successfully wiped: {', '.join(datasets_to_nuke)}! Please re-upload your files for these categories.")
+                st.toast(f"Successfully wiped: {', '.join(datasets_to_nuke)}! Please re-upload your files.", icon="☢️")
                 time.sleep(2.5)
                 st.rerun()
 
