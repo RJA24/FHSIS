@@ -42,21 +42,15 @@ if not st.session_state.get("is_admin", False):
         .stDeployButton {display: none !important;}
         #MainMenu {visibility: hidden !important;}
         
-        /* Hide the standard footer */
+        /* Hide the standard 'Made with Streamlit' footer */
         footer {visibility: hidden !important;}
         
-        /* THE NUCLEAR OPTION: Assassinate the Cloud Badge (All known Streamlit variants) */
-        .viewerBadge_container,
-        .viewerBadge_link,
-        .stManageAppBadge,
-        #st-manage-app-badge,
-        [data-testid="manage-app-badge"],
-        [data-testid="stViewerBadge"],
-        [data-testid="stAppDeployButton"] {
+        /* ASSASSINATE THE FLOATING CLOUD BADGE */
+        a[href^="https://streamlit.io/cloud"] {
             display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
+        }
+        [data-testid="stViewerBadge"] {
+            display: none !important;
         }
         </style>
         """, unsafe_allow_html=True)
