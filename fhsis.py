@@ -1154,9 +1154,10 @@ with st.sidebar:
             st.session_state["is_admin"] = False
             st.rerun()
 
-# --- INITIALIZE CLOUD DATA ---
-if 'fhsis_data' not in st.session_state:
-    with st.spinner("🔄 Syncing latest DOH metrics from the cloud..."):
+# --- INITIALIZE SESSION STATE (LAZY LOAD) ---
+# Skip loading if they are on the Home page so it boots instantly!
+if page != "🏠 Home" and 'fhsis_data' not in st.session_state:
+    with st.spinner(f"🔄 Syncing cloud database for the {page.replace('👶 ', '').replace('🩺 ', '')}..."):
         st.session_state['fhsis_data'] = load_data_from_gsheets()
         
 # --- HELPER FUNCTIONS ---
