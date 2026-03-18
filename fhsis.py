@@ -43,31 +43,6 @@ if not st.session_state.get("is_admin", False):
         </style>
         """, unsafe_allow_html=True)
 
-# Conditional CSS applied ONLY to regular users
-if not st.session_state.get("is_admin", False):
-    st.markdown("""
-        <style>
-        /* 4. Hide ONLY the top-right toolbar (3-dots & Deploy) */
-        [data-testid="stToolbar"] {
-            display: none !important;
-        }
-        
-        /* 5. Hide the standard footer */
-        footer {
-            display: none !important;
-        }
-        
-        /* 6. The Ultimate Badge Assassin */
-        /* Targets the exact cloud link and Streamlit's floating UI elements */
-        a[href^="https://streamlit.io/cloud"] {
-            display: none !important;
-        }
-        [class*="viewerBadge"] {
-            display: none !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
 def silent_access_tracker():
     # 1. Check if we have already logged this specific user's session
     if 'has_logged_in' not in st.session_state:
