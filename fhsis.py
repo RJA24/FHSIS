@@ -13,12 +13,9 @@ import pytz
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
 
 # --- GLOBAL UI / UX POLISH ---
+# 1. Base CSS applied to EVERYONE (Admin & Users)
 st.markdown("""
     <style>
-    /* Hide the default Streamlit hamburger menu and footer */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
     /* Make the header transparent so the sidebar toggle button stays visible! */
     header {background-color: transparent !important;}
     
@@ -35,6 +32,20 @@ st.markdown("""
     }
     </style>
     """, unsafe_allow_html=True)
+
+# 2. Conditional CSS applied ONLY to regular users
+if not st.session_state.get("is_admin", False):
+    st.markdown("""
+        <style>
+        /* Hide the Deploy button, the 3-dot menu, and the entire top-right toolbar */
+        [data-testid="stToolbar"] {visibility: hidden !important;}
+        .stDeployButton {display: none !important;}
+        #MainMenu {visibility: hidden !important;}
+        
+        /* Hide the 'Hosted with Streamlit' footer */
+        footer {visibility: hidden !important;}
+        </style>
+        """, unsafe_allow_html=True)
 
 def silent_access_tracker():
     # 1. Check if we have already logged this specific user's session
