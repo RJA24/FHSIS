@@ -16,25 +16,19 @@ st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="A
 # 1. Base CSS applied to EVERYONE (Admin & Users)
 st.markdown("""
     <style>
-    /* 1. Make the header transparent so it blends in, but DO NOT hide it */
+    /* 1. Make the header transparent so it looks native */
+    /* By doing ONLY this, we leave the sidebar button completely alone so it works perfectly! */
     [data-testid="stHeader"] {
         background-color: transparent !important;
     }
     
-    /* 2. EXPLICITLY PROTECT THE SIDEBAR BUTTON */
-    [data-testid="collapsedControl"] {
-        display: flex !important;
-        visibility: visible !important;
-        z-index: 9999 !important;
-    }
-    
-    /* 3. Adjust top padding so the dashboard doesn't hug the absolute ceiling */
+    /* 2. Adjust top padding so the dashboard doesn't hug the absolute ceiling */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
     }
     
-    /* 4. Make the active tab visually distinct with DOH-themed purple */
+    /* 3. Make the active tab visually distinct with DOH-themed purple */
     .stTabs [aria-selected="true"] {
         color: #7209b7 !important;
         border-bottom-color: #7209b7 !important;
@@ -46,27 +40,31 @@ st.markdown("""
 if not st.session_state.get("is_admin", False):
     st.markdown("""
         <style>
-        /* 5. HIDE THE TOP-RIGHT TOOLBAR ONLY (Deploy & 3-dots) */
-        [data-testid="stToolbar"] {
+        /* 4. HIDE THE RIGHT-SIDE TOOLBAR ONLY (Deploy & 3-dots) */
+        /* This kills the menu without breaking the sidebar toggle on the left! */
+        [data-testid="stActionElements"], [data-testid="stToolbar"] {
             display: none !important;
             visibility: hidden !important;
         }
         
-        /* 6. HIDE THE STANDARD FOOTER */
+        /* 5. HIDE THE STANDARD FOOTER */
         footer {
             display: none !important;
         }
         
-        /* 7. ASSASSINATE THE CLOUD BADGE (Using your exact Inspector data) */
-        /* Target the wildcard container name */
-        div[class*="viewerBadge_container"] {
+        /* 6. ASSASSINATE THE CLOUD BADGE */
+        /* Target the exact <a> tag and Profile Container from your screenshot */
+        a[class*="viewerBadge"] {
             display: none !important;
             visibility: hidden !important;
             opacity: 0 !important;
+            pointer-events: none !important;
         }
-        /* Target the specific URL hyperlink just to be absolutely certain */
-        a[href^="https://streamlit.io/cloud"] {
+        
+        div[class*="profileContainer"] {
             display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
             pointer-events: none !important;
         }
         </style>
