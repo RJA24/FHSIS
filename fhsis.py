@@ -16,16 +16,17 @@ st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="A
 # 1. Base CSS applied to EVERYONE (Admin & Users)
 st.markdown("""
     <style>
-    /* Make the header transparent so the sidebar toggle button stays visible! */
+    /* 1. Make the header transparent, but PROTECT the Sidebar Expand Button! */
     header {background-color: transparent !important;}
+    [data-testid="collapsedControl"] {visibility: visible !important; display: block !important;}
     
-    /* Adjust top padding so the dashboard doesn't hug the absolute ceiling */
+    /* 2. Adjust top padding so the dashboard doesn't hug the absolute ceiling */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
     }
     
-    /* Make the active tab visually distinct with DOH-themed purple */
+    /* 3. Make the active tab visually distinct with DOH-themed purple */
     .stTabs [aria-selected="true"] {
         color: #7209b7 !important;
         border-bottom-color: #7209b7 !important;
@@ -37,20 +38,20 @@ st.markdown("""
 if not st.session_state.get("is_admin", False):
     st.markdown("""
         <style>
-        /* Hide the Deploy button, the 3-dot menu, and the entire top-right toolbar */
-        [data-testid="stToolbar"] {visibility: hidden !important;}
-        .stDeployButton {display: none !important;}
-        #MainMenu {visibility: hidden !important;}
+        /* 4. Hide the top-right toolbar (Deploy, 3-dots) */
+        [data-testid="stToolbar"] {visibility: hidden !important; display: none !important;}
         
-        /* Hide the standard 'Made with Streamlit' footer */
-        footer {visibility: hidden !important;}
+        /* 5. Hide the standard footer */
+        footer {visibility: hidden !important; display: none !important;}
         
-        /* ASSASSINATE THE FLOATING CLOUD BADGE */
-        a[href^="https://streamlit.io/cloud"] {
+        /* 6. WILDCARD ASSASSIN: Kill the Cloud Badge regardless of its randomized name! */
+        [class*="viewerBadge"] {
             display: none !important;
+            visibility: hidden !important;
         }
-        [data-testid="stViewerBadge"] {
+        [class*="profileContainer"] {
             display: none !important;
+            visibility: hidden !important;
         }
         </style>
         """, unsafe_allow_html=True)
