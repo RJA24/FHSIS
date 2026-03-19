@@ -60,8 +60,9 @@ def silent_access_tracker():
             # Note: Depending on your Streamlit version, accessing headers might vary slightly.
             # In newer versions, st.context.headers works perfectly.
             user_agent = st.context.headers.get("User-Agent", "").lower()
-            bot_keywords = ['bot', 'crawler', 'spider', 'healthcheck', 'uptime']
-            if any(bot in user_agent for bot in bot_keywords):
+            # Added more robust signatures for Uptime monitors and automated pings
+            bot_keywords = ['bot', 'crawler', 'spider', 'healthcheck', 'uptime', 'uptimerobot', 'cron', 'ping', 'monitor']
+            if any(bot in user_agent for bot in bot_keywords) or not user_agent:
                 is_bot = True
         except Exception:
             pass # Fail open and assume human if we can't read headers
