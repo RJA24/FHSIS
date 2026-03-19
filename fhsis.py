@@ -1194,7 +1194,7 @@ def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
     cols_to_keep = ['Area', 'Month']
     if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
 
-   for col in filtered_df.columns:
+    for col in filtered_df.columns:
         if col in ['Area', 'Month', 'Year']: continue
         clean_col = col.lower()
         is_valid_gender = False
