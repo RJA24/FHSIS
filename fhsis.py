@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from streamlit_gsheets import GSheetsConnection
+import io
+from supabase import create_client, Client
 import time
 import base64
 import os
@@ -222,28 +223,32 @@ TARGET_WASH_COLS = [
     "HHs using Safely Managed Sanitation Service"
 ]
 
-# --- GSHEETS FUNCTIONS (OPTIMIZED FOR API LIMITS) ---
-def save_data_to_gsheets(new_data_dict):
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    
+# --- SUPABASE CLOUD DATABASE ENGINE ---
+@st.cache_resource
+def init_supabase() -> Client:
+    url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
+    key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
+    return create_client(url, key)
+
+supabase = init_supabase()
+
+def save_data_to_cloud(new_data_dict):
     for app_key, new_df in new_data_dict.items():
-        sheet_name = ALL_MAPPINGS[app_key]
-        combined_df = new_df.copy()
+        file_name = f"{ALL_MAPPINGS[app_key]}.csv"
         
-        with st.spinner(f"Merging and saving {app_key} to cloud database..."):
+        with st.spinner(f"Merging and saving {app_key} to Supabase..."):
             try:
-                # 1. Read existing data
+                # 1. Download existing data to merge (if it exists)
+                existing_df = pd.DataFrame()
                 try:
-                    existing_df = conn.read(worksheet=sheet_name, ttl=0)
-                    if not existing_df.empty and 'Area' in existing_df.columns:
-                        existing_df = existing_df.dropna(subset=['Area', 'Year'])
-                    else:
-                        existing_df = pd.DataFrame()
+                    res = supabase.storage.from_('fhsis-data').download(file_name)
+                    existing_df = pd.read_csv(io.BytesIO(res))
                 except Exception:
-                    existing_df = pd.DataFrame() 
-                
-                # 2. Merge logic
-                if not existing_df.empty:
+                    pass 
+                    
+                # 2. Merge historical data with new uploads
+                if not existing_df.empty and 'Area' in existing_df.columns:
+                    existing_df = existing_df.dropna(subset=['Area', 'Year'])
                     old_df = existing_df.copy()
                     old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
                     new_df['Year_Num'] = pd.to_numeric(new_df['Year'], errors='coerce').fillna(0).astype(int)
@@ -255,78 +260,61 @@ def save_data_to_gsheets(new_data_dict):
                     new_df_clean = new_df.drop(columns=['Year_Num'])
                     
                     combined_df = pd.concat([old_df, new_df_clean], ignore_index=True)
+                else:
+                    combined_df = new_df.copy()
                     
                 combined_df.columns = combined_df.columns.astype(str)
                 combined_df = combined_df.fillna("")
-                    
-                # 3. Write data back
-                old_len = len(existing_df)
-                new_len = len(combined_df)
                 
-                if new_len < old_len:
-                    diff = old_len - new_len
-                    padding = pd.DataFrame([[""] * len(combined_df.columns)] * diff, columns=combined_df.columns)
-                    write_df = pd.concat([combined_df, padding], ignore_index=True)
-                    write_df = write_df.fillna("")
-                    conn.update(worksheet=sheet_name, data=write_df)
-                else:
-                    conn.update(worksheet=sheet_name, data=combined_df)
+                # 3. Compress to CSV and push to the bucket
+                csv_bytes = combined_df.to_csv(index=False).encode('utf-8')
+                supabase.storage.from_('fhsis-data').upload(
+                    file=csv_bytes,
+                    path=file_name,
+                    file_options={"cache-control": "3600", "upsert": "true"}
+                )
                 
-                # 4. SMART CACHE: Update Session State directly to prevent burning a Google API Read Call!
                 st.session_state['fhsis_data'][app_key] = combined_df
                 
-                # 5. Pace the requests to avoid Google's 60 req/min limit
-                time.sleep(4) 
-                
             except Exception as e:
-                st.error(f"❌ Failed to save {sheet_name}. API Error: {e}")
+                st.error(f"❌ Failed to save {file_name}. Error: {e}")
                 
     st.cache_data.clear()
 
 @st.cache_data(ttl=3600)
-def load_data_from_gsheets():
+def load_data_from_cloud():
     loaded_data = {}
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        for app_key, sheet_name in ALL_MAPPINGS.items():
-            try:
-                df = conn.read(worksheet=sheet_name, ttl="10m") 
-                if not df.empty and 'Area' in df.columns:
-                    df = df.dropna(subset=['Area', 'Year'])
-                    loaded_data[app_key] = df
-            except Exception:
-                pass 
-            # Pace the initial startup loads slightly to prevent crashing on boot
-            time.sleep(0.5)
+        # Check what files actually exist in the bucket
+        files = supabase.storage.from_('fhsis-data').list()
+        file_names = [f['name'] for f in files]
+        
+        for app_key, base_name in ALL_MAPPINGS.items():
+            file_name = f"{base_name}.csv"
+            if file_name in file_names:
+                try:
+                    res = supabase.storage.from_('fhsis-data').download(file_name)
+                    df = pd.read_csv(io.BytesIO(res))
+                    if not df.empty and 'Area' in df.columns:
+                        df = df.dropna(subset=['Area', 'Year'])
+                        loaded_data[app_key] = df
+                except Exception:
+                    pass
     except Exception as e:
-        st.error("Google Sheets connection not fully configured yet.")
+        st.error(f"Supabase connection error: {e}")
+        
     return loaded_data
 
 def nuke_cloud_database(selected_keys):
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    existing_data = load_data_from_gsheets()
-    
     for app_key in selected_keys:
-        sheet_name = ALL_MAPPINGS[app_key]
-        with st.spinner(f"Nuking {sheet_name}..."):
+        file_name = f"{ALL_MAPPINGS[app_key]}.csv"
+        with st.spinner(f"Nuking {file_name} from cloud..."):
             try:
-                if app_key in existing_data and not existing_data[app_key].empty:
-                    old_len = len(existing_data[app_key])
-                    cols = existing_data[app_key].columns
-                    blank_df = pd.DataFrame([[""] * len(cols)] * (old_len + 5), columns=cols)
-                    conn.update(worksheet=sheet_name, data=blank_df)
-                    time.sleep(2.5) 
-                    
-                empty_df = pd.DataFrame(columns=['Area', 'Month', 'Year']) 
-                conn.update(worksheet=sheet_name, data=empty_df)
-                time.sleep(2.5) 
-                
+                supabase.storage.from_('fhsis-data').remove([file_name])
                 if app_key in st.session_state.get('fhsis_data', {}):
                     del st.session_state['fhsis_data'][app_key]
-                    
-            except Exception as e:
-                st.warning(f"⚠️ Skipped {sheet_name} (Tab might not exist yet or API limit reached).")
-            
+            except Exception:
+                pass
     st.cache_data.clear()
 
 def clear_session_data():
@@ -1152,7 +1140,7 @@ with st.sidebar:
 # Skip loading if they are on the Home page so it boots instantly!
 if page != "🏠 Home" and 'fhsis_data' not in st.session_state:
     with st.spinner(f"🔄 Syncing cloud database for the {page.replace('👶 ', '').replace('🩺 ', '')}..."):
-        st.session_state['fhsis_data'] = load_data_from_gsheets()
+        st.session_state['fhsis_data'] = load_data_from_cloud()
         
 # --- HELPER FUNCTIONS ---
 def filter_data(df, start_month, end_month, gender, year):
@@ -2746,7 +2734,7 @@ if page == "🏠 Home":
     if 'fhsis_data' not in st.session_state:
         st.markdown("<br><br>", unsafe_allow_html=True)
         with st.spinner("🔄 Pre-loading cloud database in the background..."):
-            st.session_state['fhsis_data'] = load_data_from_gsheets()
+            st.session_state['fhsis_data'] = load_data_from_cloud()
 
 elif page == "👶 Immunization Dashboard":
     st.title("💉 Child Immunization Dashboard")
@@ -3466,7 +3454,7 @@ elif page == "📁 Data Uploader":
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
-                save_data_to_gsheets(clean_dict)
+                save_data_to_cloud(clean_dict)
                 st.toast(f"{upload_year} Immunization Files safely merged into Google Sheets!", icon="✅")
             else:
                 st.toast("No valid data uploaded yet to save.", icon="⚠️")
@@ -3491,7 +3479,7 @@ elif page == "📁 Data Uploader":
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
-                save_data_to_gsheets(clean_dict)
+                save_data_to_cloud(clean_dict)
                 st.toast(f"{upload_year} NCD Files safely merged! Head over to the NCD Dashboard.", icon="✅")
             else:
                 st.toast("No valid data uploaded yet to save.", icon="⚠️")
@@ -3510,7 +3498,7 @@ elif page == "📁 Data Uploader":
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
-                save_data_to_gsheets(clean_dict)
+                save_data_to_cloud(clean_dict)
                 st.toast(f"{upload_year} WASH Files safely merged! Head over to the WASH Dashboard.", icon="✅")
             else:
                 st.toast("No valid data uploaded yet to save.", icon="⚠️")
@@ -3541,7 +3529,7 @@ elif page == "📁 Data Uploader":
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
-                save_data_to_gsheets(clean_dict)
+                save_data_to_cloud(clean_dict)
                 st.toast(f"{upload_year} Maternal Files safely merged into Google Sheets!", icon="✅")
             else:
                 st.toast("No valid data uploaded yet to save.", icon="⚠️")
@@ -3560,7 +3548,7 @@ elif page == "📁 Data Uploader":
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
-                save_data_to_gsheets(clean_dict)
+                save_data_to_cloud(clean_dict)
                 st.toast(f"{upload_year} Mortality Files safely merged into Google Sheets!", icon="✅")
             else:
                 st.toast("No valid data uploaded yet to save.", icon="⚠️")
@@ -3590,7 +3578,7 @@ elif page == "📁 Data Uploader":
             
             clean_dict = {k: v for k, v in upload_dict.items() if v is not None}
             if clean_dict:
-                save_data_to_gsheets(clean_dict)
+                save_data_to_cloud(clean_dict)
                 st.toast(f"{upload_year} Family Planning Files safely merged into Google Sheets!", icon="✅")
             else:
                 st.toast("No valid data uploaded yet to save.", icon="⚠️")
