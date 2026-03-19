@@ -1161,12 +1161,15 @@ def filter_data(df, start_month, end_month, gender, year):
         clean_col = col.lower()
         is_valid_gender = False
         
+        # --- NEW: Improved M/F Detection ---
         if gender == "Total":
-            if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+            if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female") or col.endswith("_M") or col.endswith("_F")):
                 is_valid_gender = True
         else:
-            if col.endswith(f"_{gender}"):
+            short_g = "_M" if gender == "Male" else "_F"
+            if col.endswith(f"_{gender}") or col.endswith(short_g):
                 is_valid_gender = True
+        # -----------------------------------
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
             if pd.api.types.is_numeric_dtype(filtered_df[col]):
@@ -1191,20 +1194,23 @@ def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
     cols_to_keep = ['Area', 'Month']
     if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
 
-    for col in filtered_df.columns:
+   for col in filtered_df.columns:
         if col in ['Area', 'Month', 'Year']: continue
         clean_col = col.lower()
         is_valid_gender = False
         
+        # --- NEW: Improved M/F Detection ---
         if is_cancer:
             is_valid_gender = True
         else:
             if gender == "Total":
-                if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female")):
+                if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female") or col.endswith("_M") or col.endswith("_F")):
                     is_valid_gender = True
             else:
-                if col.endswith(f"_{gender}"):
+                short_g = "_M" if gender == "Male" else "_F"
+                if col.endswith(f"_{gender}") or col.endswith(short_g):
                     is_valid_gender = True
+        # -----------------------------------
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
             cols_to_keep.append(col)
@@ -2791,6 +2797,15 @@ elif page == "👶 Immunization Dashboard":
             p3_col = next((c for c in penta_df.columns if (" 3" in c or "3_" in c) and "%" not in c and "DEFICIT" not in c.upper()), None)
             
             if fic_col and elig_col:
+                # --- NEW: Force numbers before math to prevent crashes ---
+                cols_to_clean = [fic_col, cic_col, p1_col, p3_col, elig_col]
+                for c in cols_to_clean:
+                    if c and c in mmr_df.columns: 
+                        mmr_df[c] = pd.to_numeric(mmr_df[c], errors='coerce').fillna(0)
+                    if c and c in penta_df.columns: 
+                        penta_df[c] = pd.to_numeric(penta_df[c], errors='coerce').fillna(0)
+                # ---------------------------------------------------------
+                
                 prov_fic = mmr_df[fic_col].sum()
                 prov_cic = mmr_df[cic_col].sum() if cic_col else 0
                 p1_tot = penta_df[p1_col].sum() if p1_col else 0
