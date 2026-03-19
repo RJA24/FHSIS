@@ -223,22 +223,13 @@ TARGET_WASH_COLS = [
     "HHs using Safely Managed Sanitation Service"
 ]
 
-# --- SUPABASE CLOUD DATABASE ENGINE ---
-@st.cache_resource
-def init_supabase() -> Client:
-    url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
-    key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
-    return create_client(url, key)
-
-supabase = init_supabase()
-
-def save_data_to_cloud(new_data_dict):
+# --- def save_data_to_cloud(new_data_dict):
     for app_key, new_df in new_data_dict.items():
         file_name = f"{ALL_MAPPINGS[app_key]}.csv"
         
         with st.spinner(f"Merging and saving {app_key} to Supabase..."):
             try:
-                # 1. Download existing data to merge (if it exists)
+                # 1. Download existing data to merge
                 existing_df = pd.DataFrame()
                 try:
                     res = supabase.storage.from_('fhsis-data').download(file_name)
@@ -266,26 +257,26 @@ def save_data_to_cloud(new_data_dict):
                 combined_df.columns = combined_df.columns.astype(str)
                 combined_df = combined_df.fillna("")
                 
-                # 3. Compress to CSV and push to the bucket
+                # --- FIX 1: Force 'Year' to be a pure integer so it matches the dropdown ---
+                combined_df['Year'] = pd.to_numeric(combined_df['Year'], errors='coerce').fillna(0).astype(int)
+                
+                # --- FIX 2: cache-control "0" tells Supabase NEVER to serve an old file ---
                 csv_bytes = combined_df.to_csv(index=False).encode('utf-8')
                 supabase.storage.from_('fhsis-data').upload(
                     file=csv_bytes,
                     path=file_name,
-                    file_options={"cache-control": "3600", "upsert": "true"}
+                    file_options={"cache-control": "0", "upsert": "true"}
                 )
                 
                 st.session_state['fhsis_data'][app_key] = combined_df
                 
             except Exception as e:
                 st.error(f"❌ Failed to save {file_name}. Error: {e}")
-                
-    st.cache_data.clear()
 
-@st.cache_data(ttl=3600)
+# --- FIX 3: Removed the @st.cache_data decorator so it always fetches fresh data on reload ---
 def load_data_from_cloud():
     loaded_data = {}
     try:
-        # Check what files actually exist in the bucket
         files = supabase.storage.from_('fhsis-data').list()
         file_names = [f['name'] for f in files]
         
@@ -297,6 +288,10 @@ def load_data_from_cloud():
                     df = pd.read_csv(io.BytesIO(res))
                     if not df.empty and 'Area' in df.columns:
                         df = df.dropna(subset=['Area', 'Year'])
+                        
+                        # --- FIX 1 (Continued): Force 'Year' to integer immediately upon download ---
+                        df['Year'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
+                        
                         loaded_data[app_key] = df
                 except Exception:
                     pass
