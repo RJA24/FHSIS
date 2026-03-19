@@ -1413,7 +1413,11 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
             agg_dict = {col: 'sum' for col in cols_to_plot}
             for ec in elig_cols: agg_dict[ec] = 'max' 
                 
-            agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+            # Force all target columns to be pure numbers to prevent TypeError crashes
+    for col in agg_dict.keys():
+        filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
+        
+    agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
             view_mode = st.radio("📊 Select Display Metric", ["Raw Counts", "Percentage (%) Coverage"], horizontal=True, key=f"toggle_view_{safe_filename}_{year}_{gender}")
             
             default_cols = []
