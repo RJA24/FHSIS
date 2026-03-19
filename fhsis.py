@@ -13,8 +13,7 @@ from supabase import create_client, Client
 import time
 import base64
 import os
-from datetime import datetime
-import pytz
+
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
@@ -121,68 +120,68 @@ def apply_custom_css():
 apply_custom_css()
 
 
-# ==============================================================================
-# CHAPTER 2: SILENT ANALYTICS & ACCESS TRACKING
-# Description: Runs quietly in the background upon app initialization to 
-# log human traffic to a private Google Sheet. Filters out automated web crawlers.
-# ==============================================================================
-
-def silent_access_tracker():
-    """
-    Identifies if the current session belongs to a genuine human user and 
-    silently logs the access time and date to the administrator's database.
-    """
-    # Check if we have already logged this specific user's session to prevent duplicate spam
-    if 'has_logged_in' not in st.session_state:
-        
-        # Basic Bot Filter: Assume human unless headers explicitly match known uptime monitors
-        is_bot = False
-        try:
-            user_agent = st.context.headers.get("User-Agent", "").lower()
-            bot_keywords = ['bot', 'crawler', 'spider', 'healthcheck', 'uptime', 'uptimerobot', 'cron', 'ping', 'monitor']
-            if any(bot in user_agent for bot in bot_keywords) or not user_agent:
-                is_bot = True
-        except Exception:
-            pass # Fail open and assume human if we can't read headers
-
-        # If human, write to the ACCESS LOG
-        if not is_bot:
-            try:
-                # Set time to Philippine Standard Time (PST)
-                pst = pytz.timezone('Asia/Manila')
-                now = datetime.now(pst)
-                
-                current_date = now.strftime("%Y-%m-%d")
-                current_time = now.strftime("%H:%M:%S")
-                
-                new_entry = pd.DataFrame([{
-                    "Date": current_date,
-                    "Time": current_time,
-                    "Device": "Human"
-                }])
-                
-                # Connect to GSheets and push the data silently
-                conn = st.connection("gsheets", type=GSheetsConnection)
-                existing_logs = conn.read(worksheet="ACCESS LOG", ttl=0)
-                updated_logs = pd.concat([existing_logs, new_entry], ignore_index=True)
-                conn.update(worksheet="ACCESS LOG", data=updated_logs)
-                
-            except Exception as e:
-                # Silently pass so a database tracking error doesn't crash the UI for the user
-                pass
-                
-        # Lock the session state so it doesn't log them again if they switch dashboard tabs
-        st.session_state['has_logged_in'] = True
-
-# Fire the tracker immediately upon app boot
-silent_access_tracker()
-
-
-# ==============================================================================
-# CHAPTER 3: GLOBAL VARIABLES & DATABASE MAPPINGS
-# Description: Defines the foundational data dictionaries. These dictionaries 
-# link the user-facing app names to their exact CSV filenames in Supabase.
-# ==============================================================================
+    # ==============================================================================
+    # CHAPTER 2: SILENT ANALYTICS & ACCESS TRACKING
+    # Description: Runs quietly in the background upon app initialization to 
+    # log human traffic to a private Google Sheet. Filters out automated web crawlers.
+    # ==============================================================================
+    
+    #def silent_access_tracker():
+    #    """
+    #    Identifies if the current session belongs to a genuine human user and 
+    #    silently logs the access time and date to the administrator's database.
+    #    """
+    #    # Check if we have already logged this specific user's session to prevent duplicate spam
+    #    if 'has_logged_in' not in st.session_state:
+            
+    #        # Basic Bot Filter: Assume human unless headers explicitly match known uptime monitors
+    #        is_bot = False
+    #        try:
+    #            user_agent = st.context.headers.get("User-Agent", "").lower()
+    #            bot_keywords = ['bot', 'crawler', 'spider', 'healthcheck', 'uptime', 'uptimerobot', 'cron', 'ping', 'monitor']
+    #            if any(bot in user_agent for bot in bot_keywords) or not user_agent:
+    #                is_bot = True
+    #        except Exception:
+    #            pass # Fail open and assume human if we can't read headers
+    
+    #        # If human, write to the ACCESS LOG
+    #        if not is_bot:
+    #            try:
+    #                # Set time to Philippine Standard Time (PST)
+    #                pst = pytz.timezone('Asia/Manila')
+    #                now = datetime.now(pst)
+                    
+    #                current_date = now.strftime("%Y-%m-%d")
+    #                current_time = now.strftime("%H:%M:%S")
+                    
+    #                new_entry = pd.DataFrame([{
+    #                    "Date": current_date,
+    #                    "Time": current_time,
+    #                    "Device": "Human"
+    #                }])
+                    
+    #                # Connect to GSheets and push the data silently
+    #                conn = st.connection("gsheets", type=GSheetsConnection)
+    #                existing_logs = conn.read(worksheet="ACCESS LOG", ttl=0)
+    #                updated_logs = pd.concat([existing_logs, new_entry], ignore_index=True)
+    #                conn.update(worksheet="ACCESS LOG", data=updated_logs)
+                    
+    #            except Exception as e:
+                    # Silently pass so a database tracking error doesn't crash the UI for the user
+    #                pass
+                    
+            # Lock the session state so it doesn't log them again if they switch dashboard tabs
+    #        st.session_state['has_logged_in'] = True
+    
+    # Fire the tracker immediately upon app boot
+    #silent_access_tracker()
+    
+    
+    # ==============================================================================
+    # CHAPTER 3: GLOBAL VARIABLES & DATABASE MAPPINGS
+    # Description: Defines the foundational data dictionaries. These dictionaries 
+    # link the user-facing app names to their exact CSV filenames in Supabase.
+    # ==============================================================================
 
 IMMUNIZATION_MAPPING = {
     "CPAB_BCG_HepB": "CPAB_Data",
