@@ -346,7 +346,7 @@ ABRA_COORDS = {
 }
 
 # --- DATA CLEANERS ---
-@st.cache_data(ttl=3600)
+
 def load_and_clean_fhsis_data(uploaded_file, year):
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -437,7 +437,7 @@ def load_and_clean_fhsis_data(uploaded_file, year):
         st.error(f"Error processing {uploaded_file.name}: {e}")
         return None
 
-@st.cache_data(ttl=3600)
+
 def load_and_clean_ncd_data(uploaded_file, year):
     try:
         xls = pd.ExcelFile(uploaded_file)
@@ -524,7 +524,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-@st.cache_data(ttl=3600)
+
 def load_and_clean_wash_data(uploaded_file, year):
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -673,7 +673,7 @@ def load_and_clean_wash_data(uploaded_file, year):
         st.error(f"WASH Template Parsing Error processing {uploaded_file.name}: {e}")
         return None
 
-@st.cache_data(ttl=3600)
+
 def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
     try:
         sheets_to_process = {}
@@ -812,7 +812,7 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
         st.error(f"Maternal Template Parsing Error for {uploaded_file.name}: {e}")
         return None
 
-@st.cache_data(ttl=3600)
+
 def load_and_clean_mortality_data(uploaded_file, year):
     try:
         name_low = uploaded_file.name.lower()
@@ -918,7 +918,7 @@ def load_and_clean_mortality_data(uploaded_file, year):
         return None
 
 # --- FAMILY PLANNING DATA CLEANERS ---
-@st.cache_data(ttl=3600)
+
 def load_and_clean_fp_methods(uploaded_file, year):
     try:
         xls = pd.ExcelFile(uploaded_file)
@@ -1018,7 +1018,7 @@ def load_and_clean_fp_methods(uploaded_file, year):
         st.error(f"Family Planning Error processing {uploaded_file.name}: {e}")
         return None
 
-@st.cache_data(ttl=3600)
+
 def load_and_clean_fp_demand(uploaded_file, year):
     # Specialized cleaner just for the "Demand Satisfied" template
     try:
