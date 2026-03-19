@@ -2737,7 +2737,7 @@ if page == "🏠 Home":
     * 🚰 **Environmental Health (WASH):** Mapping household access to basic safe water and sanitation facilities.
     * 🤰 **Maternal Health:** Analyzing the complete cascade of care across Antenatal, Postpartum, and Nutritional interventions.
     * 💀 **Mortality & Injuries:** Tracking premature NCD deaths and traffic-related fatalities.
-    * 👨‍👩‍👧 **Family Planning:** *(Module actively under construction!)*
+    * 👨‍👩‍👧 **Family Planning:** Tracking Contraceptive Prevalence Rate (CPR), user pipeline flows, and method mix preferences.
 
     **Core Engine Capabilities:**
     * **Automated Data ETL:** Safely parses messy, merged, and multi-sheet DOH Excel templates directly into a secure cloud database.
