@@ -1149,9 +1149,9 @@ def filter_data(df, start_month, end_month, gender, year):
     end_idx = months_order.index(end_month)
     valid_months = months_order[start_idx:end_idx+1]
     
-    filtered_df = df[df['Month'].isin(valid_months)]
+    filtered_df = df[df['Month'].isin(valid_months)].copy()
     if 'Year' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['Year'] == year]
+        filtered_df = filtered_df[filtered_df['Year'] == year].copy()
         
     cols_to_keep = ['Area', 'Month']
     if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
@@ -1161,7 +1161,7 @@ def filter_data(df, start_month, end_month, gender, year):
         clean_col = col.lower()
         is_valid_gender = False
         
-        # --- NEW: Improved M/F Detection ---
+        # --- IMPROVED M/F DETECTION ---
         if gender == "Total":
             if col.endswith("_Total") or not (col.endswith("_Male") or col.endswith("_Female") or col.endswith("_M") or col.endswith("_F")):
                 is_valid_gender = True
@@ -1169,13 +1169,14 @@ def filter_data(df, start_month, end_month, gender, year):
             short_g = "_M" if gender == "Male" else "_F"
             if col.endswith(f"_{gender}") or col.endswith(short_g):
                 is_valid_gender = True
-        # -----------------------------------
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
-            if pd.api.types.is_numeric_dtype(filtered_df[col]):
-                if filtered_df[col].sum() > 0: cols_to_keep.append(col)
-            else:
+            # --- THE INTELLIGENT HIDE FIX ---
+            # Force convert to numbers to bypass empty strings, then check if sum > 0
+            col_numeric = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
+            if col_numeric.sum() > 0: 
                 cols_to_keep.append(col)
+                filtered_df[col] = col_numeric # Clean it permanently to prevent TypeError crashes
                 
     cols_to_keep = list(dict.fromkeys(cols_to_keep))
     if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
@@ -1187,9 +1188,9 @@ def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
     end_idx = months_order.index(end_month)
     valid_months = months_order[start_idx:end_idx+1]
     
-    filtered_df = df[df['Month'].isin(valid_months)]
+    filtered_df = df[df['Month'].isin(valid_months)].copy()
     if 'Year' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['Year'] == year]
+        filtered_df = filtered_df[filtered_df['Year'] == year].copy()
         
     cols_to_keep = ['Area', 'Month']
     if 'Year' in filtered_df.columns: cols_to_keep.append('Year')
@@ -1199,7 +1200,7 @@ def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
         clean_col = col.lower()
         is_valid_gender = False
         
-        # --- NEW: Improved M/F Detection ---
+        # --- IMPROVED M/F DETECTION ---
         if is_cancer:
             is_valid_gender = True
         else:
@@ -1210,10 +1211,13 @@ def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
                 short_g = "_M" if gender == "Male" else "_F"
                 if col.endswith(f"_{gender}") or col.endswith(short_g):
                     is_valid_gender = True
-        # -----------------------------------
                 
         if is_valid_gender or "elig" in clean_col or "pop" in clean_col:
-            cols_to_keep.append(col)
+            # --- THE INTELLIGENT HIDE FIX ---
+            col_numeric = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
+            if col_numeric.sum() > 0: 
+                cols_to_keep.append(col)
+                filtered_df[col] = col_numeric
                 
     cols_to_keep = list(dict.fromkeys(cols_to_keep))
     if len(cols_to_keep) > 2: return filtered_df[cols_to_keep]
