@@ -3,3 +3,4 @@ pandas
 plotly
 st-gsheets-connection
 openpyxl
+supabase
