@@ -223,7 +223,16 @@ TARGET_WASH_COLS = [
     "HHs using Safely Managed Sanitation Service"
 ]
 
-# --- def save_data_to_cloud(new_data_dict):
+# --- SUPABASE CLOUD DATABASE ENGINE ---
+@st.cache_resource
+def init_supabase():
+    url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
+    key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
+    return create_client(url, key)
+
+supabase = init_supabase()
+
+def save_data_to_cloud(new_data_dict):
     for app_key, new_df in new_data_dict.items():
         file_name = f"{ALL_MAPPINGS[app_key]}.csv"
         
@@ -273,7 +282,7 @@ TARGET_WASH_COLS = [
             except Exception as e:
                 st.error(f"❌ Failed to save {file_name}. Error: {e}")
 
-# --- FIX 3: Removed the @st.cache_data decorator so it always fetches fresh data on reload ---
+# --- FIX 3: No @st.cache_data decorator so it always fetches fresh data ---
 def load_data_from_cloud():
     loaded_data = {}
     try:
