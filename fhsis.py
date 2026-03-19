@@ -1111,13 +1111,6 @@ with st.sidebar:
     page = st.radio("Navigation", nav_options)
     st.markdown("---")
     
-    # --- LAZY LOADING CLOUD DATA ---
-    # If they are on the Home page, skip the download so it boots instantly!
-    # If they click a dashboard, trigger the sync (and cache it for later).
-    if page != "🏠 Home" and 'fhsis_data' not in st.session_state:
-        with st.spinner(f"🔄 Syncing cloud database for the {page}..."):
-            st.session_state['fhsis_data'] = load_data_from_gsheets()
-    
     # 2. RUN FILTERS BASED ON THE SELECTED PAGE
     if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "👨‍👩‍👧 Family Planning Dashboard", "💀 Mortality Dashboard"]:
         st.subheader("🎛️ Global Filters")
@@ -2746,6 +2739,13 @@ if page == "🏠 Home":
     *Use the sidebar navigation to explore the provincial dashboards. Authorized PHO Admins can log in at the bottom of the sidebar to securely upload new DOH data.*
     """)
     st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO report.")
+
+# --- TRUE BACKGROUND LOADER ---
+    # The UI above loads instantly. Then this triggers at the very bottom!
+    if 'fhsis_data' not in st.session_state:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        with st.spinner("🔄 Pre-loading cloud database in the background..."):
+            st.session_state['fhsis_data'] = load_data_from_gsheets()
 
 elif page == "👶 Immunization Dashboard":
     st.title("💉 Child Immunization Dashboard")
