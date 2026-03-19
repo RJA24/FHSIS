@@ -1,3 +1,9 @@
+# ==============================================================================
+# ABRA PROVINCIAL HEALTH OFFICE (PHO) - FHSIS COMMAND CENTER
+# Engineered by: Ron Jay C. Ayup (Lead Data Developer / Data Controller III)
+# Description: An enterprise-grade ETL and visualization engine for DOH data.
+# ==============================================================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -13,17 +19,22 @@ import pytz
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
 
-# --- GLOBAL UI / UX POLISH ---
+
+# ==============================================================================
+# CHAPTER 1: UI / UX POLISH & GLOBAL STYLING
+# Description: Injects custom CSS to override default Streamlit components, 
+# ensuring the dashboard looks like a professional, bespoke web application.
+# ==============================================================================
+
 st.markdown("""
     <style>
-    /* 1. Make the active tab visually distinct with DOH-themed purple */
+    /* Make the active tab visually distinct with DOH-themed purple */
     .stTabs [aria-selected="true"] {
         color: #7209b7 !important;
         border-bottom-color: #7209b7 !important;
     }
     
-    /* 2. ELEVATED METRIC CARDS */
-    /* This applies a sleek, modern card look to all your big numbers */
+    /* ELEVATED METRIC CARDS: Applies a sleek, modern card look to all big numbers */
     [data-testid="stMetric"] {
         background-color: #ffffff;
         border-radius: 10px;
@@ -39,7 +50,7 @@ st.markdown("""
         box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
     }
     
-    /* Dark mode support for the cards */
+    /* Dark mode support for the metric cards */
     @media (prefers-color-scheme: dark) {
         [data-testid="stMetric"] {
             background-color: #1e1e1e;
@@ -50,62 +61,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-def silent_access_tracker():
-    # 1. Check if we have already logged this specific user's session
-    if 'has_logged_in' not in st.session_state:
-        
-        # 2. Basic Bot Filter (Checking if the session is a real browser request)
-        # We assume it's human unless the headers explicitly say otherwise.
-        is_bot = False
-        try:
-            # Note: Depending on your Streamlit version, accessing headers might vary slightly.
-            # In newer versions, st.context.headers works perfectly.
-            user_agent = st.context.headers.get("User-Agent", "").lower()
-            # Added more robust signatures for Uptime monitors and automated pings
-            bot_keywords = ['bot', 'crawler', 'spider', 'healthcheck', 'uptime', 'uptimerobot', 'cron', 'ping', 'monitor']
-            if any(bot in user_agent for bot in bot_keywords) or not user_agent:
-                is_bot = True
-        except Exception:
-            pass # Fail open and assume human if we can't read headers
-
-        # 3. If it is a human, write to the ACCESS LOG
-        if not is_bot:
-            try:
-                # Set time to Philippine Standard Time (PST)
-                pst = pytz.timezone('Asia/Manila')
-                now = datetime.now(pst)
-                
-                current_date = now.strftime("%Y-%m-%d")
-                current_time = now.strftime("%H:%M:%S")
-                
-                # Format the new entry
-                new_entry = pd.DataFrame([{
-                    "Date": current_date,
-                    "Time": current_time,
-                    "Device": "Human"
-                }])
-                
-                # Connect to GSheets and push the data
-                conn = st.connection("gsheets", type=GSheetsConnection)
-                
-                # Pull existing logs and append the new one
-                existing_logs = conn.read(worksheet="ACCESS LOG", ttl=0)
-                updated_logs = pd.concat([existing_logs, new_entry], ignore_index=True)
-                
-                # Push the updated log back to the cloud
-                conn.update(worksheet="ACCESS LOG", data=updated_logs)
-                
-            except Exception as e:
-                # Silently pass so a database error doesn't crash the UI for the user
-                pass
-                
-        # 4. Lock the session state so it doesn't log them again if they switch tabs
-        st.session_state['has_logged_in'] = True
-
-# Fire the tracker silently in the background
-silent_access_tracker()
-
 def apply_custom_css():
+    """
+    Applies secondary CSS rules specifically targeting text-wrapping 
+    and adaptive font sizes to prevent UI breakage on smaller screens.
+    """
     st.markdown("""
         <style>
         /* Adaptive Metric Card Styling */
@@ -121,7 +81,7 @@ def apply_custom_css():
             flex-direction: column !important;
         }
         
-        /* ULTIMATE TEXT WRAPPING */
+        /* ULTIMATE TEXT WRAPPING: Ensures long DOH indicator names don't get cut off */
         [data-testid="stMetricLabel"], 
         [data-testid="stMetricLabel"] > div, 
         [data-testid="stMetricLabel"] p, 
@@ -149,6 +109,7 @@ def apply_custom_css():
             margin-top: auto !important;
         }
         
+        /* Differentiates dropdown expanders from standard containers */
         .streamlit-expanderHeader {
             font-weight: 600;
             border-radius: 5px;
@@ -159,7 +120,70 @@ def apply_custom_css():
 
 apply_custom_css()
 
-# --- GSHEETS CONFIGURATION ---
+
+# ==============================================================================
+# CHAPTER 2: SILENT ANALYTICS & ACCESS TRACKING
+# Description: Runs quietly in the background upon app initialization to 
+# log human traffic to a private Google Sheet. Filters out automated web crawlers.
+# ==============================================================================
+
+def silent_access_tracker():
+    """
+    Identifies if the current session belongs to a genuine human user and 
+    silently logs the access time and date to the administrator's database.
+    """
+    # Check if we have already logged this specific user's session to prevent duplicate spam
+    if 'has_logged_in' not in st.session_state:
+        
+        # Basic Bot Filter: Assume human unless headers explicitly match known uptime monitors
+        is_bot = False
+        try:
+            user_agent = st.context.headers.get("User-Agent", "").lower()
+            bot_keywords = ['bot', 'crawler', 'spider', 'healthcheck', 'uptime', 'uptimerobot', 'cron', 'ping', 'monitor']
+            if any(bot in user_agent for bot in bot_keywords) or not user_agent:
+                is_bot = True
+        except Exception:
+            pass # Fail open and assume human if we can't read headers
+
+        # If human, write to the ACCESS LOG
+        if not is_bot:
+            try:
+                # Set time to Philippine Standard Time (PST)
+                pst = pytz.timezone('Asia/Manila')
+                now = datetime.now(pst)
+                
+                current_date = now.strftime("%Y-%m-%d")
+                current_time = now.strftime("%H:%M:%S")
+                
+                new_entry = pd.DataFrame([{
+                    "Date": current_date,
+                    "Time": current_time,
+                    "Device": "Human"
+                }])
+                
+                # Connect to GSheets and push the data silently
+                conn = st.connection("gsheets", type=GSheetsConnection)
+                existing_logs = conn.read(worksheet="ACCESS LOG", ttl=0)
+                updated_logs = pd.concat([existing_logs, new_entry], ignore_index=True)
+                conn.update(worksheet="ACCESS LOG", data=updated_logs)
+                
+            except Exception as e:
+                # Silently pass so a database tracking error doesn't crash the UI for the user
+                pass
+                
+        # Lock the session state so it doesn't log them again if they switch dashboard tabs
+        st.session_state['has_logged_in'] = True
+
+# Fire the tracker immediately upon app boot
+silent_access_tracker()
+
+
+# ==============================================================================
+# CHAPTER 3: GLOBAL VARIABLES & DATABASE MAPPINGS
+# Description: Defines the foundational data dictionaries. These dictionaries 
+# link the user-facing app names to their exact CSV filenames in Supabase.
+# ==============================================================================
+
 IMMUNIZATION_MAPPING = {
     "CPAB_BCG_HepB": "CPAB_Data",
     "Penta": "Penta_Data",
@@ -205,10 +229,10 @@ FP_MAPPING = {
     "FP_Demand": "FP_Demand_Data"
 }
 
-# Ensure FP_MAPPING is added to the ALL_MAPPINGS dictionary:
+# The master dictionary containing all 27 tracking modules
 ALL_MAPPINGS = {**IMMUNIZATION_MAPPING, **NCD_MAPPING, **WASH_MAPPING, **MATERNAL_MAPPING, **MORTALITY_MAPPING, **FP_MAPPING}
 
-# --- TARGET WASH INDICATORS ---
+# Explicit target columns for the WASH environmental tracking module
 TARGET_WASH_COLS = [
     "Projected No. of HHs",
     "HH with Access to Basic Safe Water Supply",
@@ -223,9 +247,41 @@ TARGET_WASH_COLS = [
     "HHs using Safely Managed Sanitation Service"
 ]
 
-# --- SUPABASE CLOUD DATABASE ENGINE ---
+# Standardized list of all 27 Rural Health Units in Abra Province
+ABRA_RHUS = [
+    "Bangued", "Boliney", "Bucay", "Bucloc", "Daguioman", "Danglas", 
+    "Dolores", "La Paz", "Lacub", "Lagangilang", "Lagayan", "Langiden", 
+    "Licuan-Baay", "Luba", "Malibcong", "Manabo", "Penarrubia", "Pidigan", 
+    "Pilar", "Sallapadan", "San Isidro", "San Juan", "San Quintin", 
+    "Tayum", "Tineg", "Tubo", "Villaviciosa"
+]
+
+# Geospatial mapping coordinates for heatmaps and scatter plots
+ABRA_COORDS = {
+    "Bangued": (17.595, 120.613), "Boliney": (17.394, 120.814), "Bucay": (17.541, 120.720),
+    "Bucloc": (17.433, 120.783), "Daguioman": (17.448, 120.822), "Danglas": (17.728, 120.655),
+    "Dolores": (17.647, 120.710), "La Paz": (17.668, 120.672), "Lacub": (17.669, 120.945),
+    "Lagangilang": (17.618, 120.735), "Lagayan": (17.734, 120.730), "Langiden": (17.579, 120.575),
+    "Licuan-Baay": (17.585, 120.884), "Luba": (17.324, 120.698), "Malibcong": (17.564, 120.988),
+    "Manabo": (17.434, 120.702), "Penarrubia": (17.563, 120.648), "Pidigan": (17.572, 120.589),
+    "Pilar": (17.421, 120.595), "Sallapadan": (17.456, 120.763), "San Isidro": (17.468, 120.606),
+    "San Juan": (17.683, 120.738), "San Quintin": (17.544, 120.521), "Tayum": (17.617, 120.665),
+    "Tineg": (17.785, 120.938), "Tubo": (17.234, 120.748), "Villaviciosa": (17.439, 120.632)
+}
+
+
+# ==============================================================================
+# CHAPTER 4: SUPABASE CLOUD ENGINE
+# Description: Handles all read, write, update, and delete actions between 
+# the Streamlit frontend and the Supabase PostgreSQL backend storage bucket.
+# ==============================================================================
+
 @st.cache_resource
 def init_supabase():
+    """
+    Initializes a persistent connection to the Supabase project. 
+    Decorated with @st.cache_resource to prevent re-authenticating on every UI interaction.
+    """
     url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
     key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
     return create_client(url, key)
@@ -233,12 +289,19 @@ def init_supabase():
 supabase = init_supabase()
 
 def save_data_to_cloud(new_data_dict):
+    """
+    Intelligently merges freshly uploaded Excel data with existing historical data, 
+    compresses it into a CSV format, and upserts it to the cloud bucket.
+    
+    Args:
+        new_data_dict (dict): A dictionary mapping dataset keys to their cleaned Pandas DataFrames.
+    """
     for app_key, new_df in new_data_dict.items():
         file_name = f"{ALL_MAPPINGS[app_key]}.csv"
         
         with st.spinner(f"Merging and saving {app_key} to Supabase..."):
             try:
-                # 1. Download existing data to merge
+                # 1. Download existing historical data to initiate the merge
                 existing_df = pd.DataFrame()
                 try:
                     res = supabase.storage.from_('fhsis-data').download(file_name)
@@ -246,13 +309,16 @@ def save_data_to_cloud(new_data_dict):
                 except Exception:
                     pass 
                     
-                # 2. Merge historical data with new uploads
+                # 2. Merge historical data with new uploads based on Year tagging
                 if not existing_df.empty and 'Area' in existing_df.columns:
                     existing_df = existing_df.dropna(subset=['Area', 'Year'])
                     old_df = existing_df.copy()
+                    
+                    # Temporarily force numeric typing for the merge evaluation
                     old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
                     new_df['Year_Num'] = pd.to_numeric(new_df['Year'], errors='coerce').fillna(0).astype(int)
                     
+                    # Remove old data for any years that are present in the new upload (Overwrite)
                     upload_years = new_df['Year_Num'].unique()
                     old_df = old_df[~old_df['Year_Num'].isin(upload_years)]
                     
@@ -266,10 +332,11 @@ def save_data_to_cloud(new_data_dict):
                 combined_df.columns = combined_df.columns.astype(str)
                 combined_df = combined_df.fillna("")
                 
-                # --- FIX 1: Force 'Year' to be a pure integer so it matches the dropdown ---
+                # Prevent TypeErrors down the pipeline by enforcing integer years
                 combined_df['Year'] = pd.to_numeric(combined_df['Year'], errors='coerce').fillna(0).astype(int)
                 
-                # --- FIX 2: cache-control "0" tells Supabase NEVER to serve an old file ---
+                # 3. Compress to CSV and execute the Upsert
+                # Note: cache-control "0" tells Supabase's CDN to NEVER serve a stale, cached file
                 csv_bytes = combined_df.to_csv(index=False).encode('utf-8')
                 supabase.storage.from_('fhsis-data').upload(
                     file=csv_bytes,
@@ -277,15 +344,21 @@ def save_data_to_cloud(new_data_dict):
                     file_options={"cache-control": "0", "upsert": "true"}
                 )
                 
+                # Inject the fresh data directly into the user's active session state
                 st.session_state['fhsis_data'][app_key] = combined_df
                 
             except Exception as e:
                 st.error(f"❌ Failed to save {file_name}. Error: {e}")
 
-# --- FIX 3: No @st.cache_data decorator so it always fetches fresh data ---
 def load_data_from_cloud():
+    """
+    Scans the cloud bucket for existing CSV files, pulls them into memory, 
+    and packages them into a dictionary for use across all dashboard tabs.
+    Deliberately lacks a caching decorator to ensure 100% data freshness on reload.
+    """
     loaded_data = {}
     try:
+        # Check what files actually exist in the bucket to prevent 404 errors
         files = supabase.storage.from_('fhsis-data').list()
         file_names = [f['name'] for f in files]
         
@@ -298,7 +371,7 @@ def load_data_from_cloud():
                     if not df.empty and 'Area' in df.columns:
                         df = df.dropna(subset=['Area', 'Year'])
                         
-                        # --- FIX 1 (Continued): Force 'Year' to integer immediately upon download ---
+                        # Guarantee integer years immediately upon payload download
                         df['Year'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
                         
                         loaded_data[app_key] = df
@@ -310,6 +383,9 @@ def load_data_from_cloud():
     return loaded_data
 
 def nuke_cloud_database(selected_keys):
+    """
+    Administrative tool to permanently wipe specific datasets from the cloud.
+    """
     for app_key in selected_keys:
         file_name = f"{ALL_MAPPINGS[app_key]}.csv"
         with st.spinner(f"Nuking {file_name} from cloud..."):
@@ -322,33 +398,23 @@ def nuke_cloud_database(selected_keys):
     st.cache_data.clear()
 
 def clear_session_data():
+    """Emergency manual override to clear active memory."""
     st.session_state['fhsis_data'] = {}
 
-# --- LIST OF 27 ABRA RHUs & COORDINATES ---
-ABRA_RHUS = [
-    "Bangued", "Boliney", "Bucay", "Bucloc", "Daguioman", "Danglas", 
-    "Dolores", "La Paz", "Lacub", "Lagangilang", "Lagayan", "Langiden", 
-    "Licuan-Baay", "Luba", "Malibcong", "Manabo", "Penarrubia", "Pidigan", 
-    "Pilar", "Sallapadan", "San Isidro", "San Juan", "San Quintin", 
-    "Tayum", "Tineg", "Tubo", "Villaviciosa"
-]
-
-ABRA_COORDS = {
-    "Bangued": (17.595, 120.613), "Boliney": (17.394, 120.814), "Bucay": (17.541, 120.720),
-    "Bucloc": (17.433, 120.783), "Daguioman": (17.448, 120.822), "Danglas": (17.728, 120.655),
-    "Dolores": (17.647, 120.710), "La Paz": (17.668, 120.672), "Lacub": (17.669, 120.945),
-    "Lagangilang": (17.618, 120.735), "Lagayan": (17.734, 120.730), "Langiden": (17.579, 120.575),
-    "Licuan-Baay": (17.585, 120.884), "Luba": (17.324, 120.698), "Malibcong": (17.564, 120.988),
-    "Manabo": (17.434, 120.702), "Penarrubia": (17.563, 120.648), "Pidigan": (17.572, 120.589),
-    "Pilar": (17.421, 120.595), "Sallapadan": (17.456, 120.763), "San Isidro": (17.468, 120.606),
-    "San Juan": (17.683, 120.738), "San Quintin": (17.544, 120.521), "Tayum": (17.617, 120.665),
-    "Tineg": (17.785, 120.938), "Tubo": (17.234, 120.748), "Villaviciosa": (17.439, 120.632)
-}
-
-# --- DATA CLEANERS ---
+# ==============================================================================
+# CHAPTER 5: AUTOMATED ETL PIPELINES (DATA CLEANERS)
+# Description: These functions act as the central nervous system of the app. 
+# They automatically ingest messy, multi-sheet DOH Excel templates, standardize 
+# the column headers, filter for Abra RHUs, and enforce clean numeric data types.
+# ==============================================================================
 
 def load_and_clean_fhsis_data(uploaded_file, year):
+    """
+    Parses standard Immunization Excel templates. Handles multi-level headers 
+    (e.g., combining 'Male/Female' sub-headers with Antigen names).
+    """
     try:
+        # Step 1: Detect File Type and Extract Valid Monthly Sheets
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
             sheets_to_process = {"Jan": df_raw} 
@@ -363,23 +429,28 @@ def load_and_clean_fhsis_data(uploaded_file, year):
             for sheet in xls.sheet_names:
                 sheet_lower = sheet.lower().strip()
                 months_found = [m for m in valid_months if m in sheet_lower]
+                # Skip sheets that don't represent a single month or contain summary keywords
                 if len(months_found) != 1: continue
                 if any(inv in sheet_lower for inv in invalid_keywords): continue
                 sheets_to_process[month_map[months_found[0]]] = pd.read_excel(xls, sheet_name=sheet, header=None)
 
         all_months_data = []
         for month_val, df in sheets_to_process.items():
+            # Step 2: Locate the dynamic data block by searching for the 'Area' keyword
             area_row_idx = -1
             for idx, row in df.iterrows():
                 if any('Area' in str(val).strip() for val in row.values if pd.notna(val)):
                     area_row_idx = idx; break
             if area_row_idx == -1: continue 
+            
+            # Locate the demographic sub-headers (Male/Female) right below the Area row
             sub_row_idx = -1
             for idx in range(area_row_idx + 1, min(area_row_idx + 5, len(df))):
                 row = df.iloc[idx]
                 if any(str(val).strip() in ['Male', 'Female'] for val in row.values if pd.notna(val)):
                     sub_row_idx = idx; break
 
+            # Step 3: Flatten Multi-Level Headers into a Single String (e.g., 'Penta 1_Male')
             main_headers = df.iloc[area_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], np.nan, regex=True).ffill()
             sub_headers = df.iloc[sub_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True) if sub_row_idx != -1 else pd.Series([''] * len(main_headers))
 
@@ -391,6 +462,7 @@ def load_and_clean_fhsis_data(uploaded_file, year):
                 elif top_str: flat_cols.append(top_str)
                 else: flat_cols.append(bot_str)
 
+            # Prevent Pandas from crashing by renaming any duplicate columns
             seen = set()
             unique_cols = []
             for c in flat_cols:
@@ -405,27 +477,34 @@ def load_and_clean_fhsis_data(uploaded_file, year):
                 seen.add(new_c)
                 unique_cols.append(new_c)
 
+            # Step 4: Clean the DataFrame and Standardize RHU Names
             start_data_idx = sub_row_idx + 1 if sub_row_idx != -1 else area_row_idx + 1
             df_clean = df.iloc[start_data_idx:].copy()
             df_clean.columns = unique_cols
             df_clean = df_clean.loc[:, df_clean.columns != '']
 
+            # Ensure the first valid column is strictly named 'Area'
             first_col = df_clean.columns[0]
             if first_col != 'Area':
                 if 'Area' in df_clean.columns: df_clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 df_clean.rename(columns={first_col: 'Area'}, inplace=True)
             
+            # Filter strictly for the 27 target RHUs in Abra
             df_clean.dropna(subset=['Area'], inplace=True)
             df_clean['Area_Clean'] = df_clean['Area'].astype(str).str.strip()
             df_clean = df_clean[df_clean['Area_Clean'].isin(ABRA_RHUS)]
             df_clean['Area'] = df_clean['Area_Clean']
             df_clean.drop(columns=['Area_Clean'], inplace=True)
+            
+            # Inject tracking metadata
             df_clean['Month'] = month_val
             df_clean['Year'] = year
             
+            # Step 5: Enforce strict numeric typing on all metric columns
             for col in df_clean.columns:
                 if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
                     if isinstance(df_clean[col], pd.DataFrame):
+                        # Failsafe: If DOH template accidentally merged identical columns
                         df_clean[col] = pd.to_numeric(df_clean[col].iloc[:, 0], errors='coerce').fillna(0)
                     else:
                         df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
@@ -437,8 +516,11 @@ def load_and_clean_fhsis_data(uploaded_file, year):
         st.error(f"Error processing {uploaded_file.name}: {e}")
         return None
 
-
 def load_and_clean_ncd_data(uploaded_file, year):
+    """
+    Parses Non-Communicable Disease (NCD) templates. Includes specialized 
+    targeting logic to detect regional headers (e.g., 'CAR', 'BANGUED').
+    """
     try:
         xls = pd.ExcelFile(uploaded_file)
         sheets_to_process = {}
@@ -459,6 +541,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
             area_row_idx = -1
             data_start_idx = -1
             
+            # Locate the exact row where Abra/CAR data begins to avoid extracting national/regional totals
             for idx, row in df.iterrows():
                 row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
                 if any('AREA' in v for v in row_str) and area_row_idx == -1:
@@ -470,6 +553,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
                         
             if area_row_idx == -1 or data_start_idx == -1: continue
             
+            # Forward-fill horizontally merged headers to construct unique column names
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
             headers_df.iloc[0] = headers_df.iloc[0].ffill() 
             if len(headers_df) > 1: headers_df.iloc[1] = headers_df.iloc[1].ffill() 
@@ -524,8 +608,11 @@ def load_and_clean_ncd_data(uploaded_file, year):
         st.error(f"NCD Template Error processing {uploaded_file.name}: {e}")
         return None
 
-
 def load_and_clean_wash_data(uploaded_file, year):
+    """
+    Parses Environmental WASH templates. Specifically configured to handle 
+    quarterly (Q1-Q4) data formats and dynamically map target WASH indicators.
+    """
     try:
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
@@ -604,6 +691,7 @@ def load_and_clean_wash_data(uploaded_file, year):
                 if 'Area' in clean.columns: clean.rename(columns={'Area': 'Area_Original'}, inplace=True)
                 clean.rename(columns={area_col: 'Area'}, inplace=True)
 
+            # Map the messy Excel headers to our standardized tracking targets
             renamed_cols = {}
             found_targets = set()
             
@@ -656,6 +744,7 @@ def load_and_clean_wash_data(uploaded_file, year):
                 if col not in ['Area', 'Month', 'Year']:
                     clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
                     
+            # Compute aggregate totals if the template split them by sub-levels
             if all(c in clean.columns for c in ["HH with Access to Basic Safe Water Supply_Lvl_1", "HH with Access to Basic Safe Water Supply_Lvl_2", "HH with Access to Basic Safe Water Supply_Lvl_3"]):
                 clean["HH with Access to Basic Safe Water Supply"] = clean["HH with Access to Basic Safe Water Supply_Lvl_1"] + clean["HH with Access to Basic Safe Water Supply_Lvl_2"] + clean["HH with Access to Basic Safe Water Supply_Lvl_3"]
                 
@@ -673,8 +762,11 @@ def load_and_clean_wash_data(uploaded_file, year):
         st.error(f"WASH Template Parsing Error processing {uploaded_file.name}: {e}")
         return None
 
-
 def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
+    """
+    Parses Maternal Health templates. Includes specialized logic to aggregate 
+    age brackets (10-14, 15-19, 20-49) into Provincial Totals.
+    """
     try:
         sheets_to_process = {}
         month_map = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", 
@@ -720,6 +812,8 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
             
             clean = df.iloc[data_start_idx:].copy()
             
+            # --- Livebirths Template Bypass ---
+            # Due to the unique formatting of the Livebirths template, it requires custom extraction
             if template_type == "Livebirths":
                 lb_clean = pd.DataFrame()
                 lb_clean['Area_Original'] = clean.iloc[:, 0]
@@ -786,9 +880,11 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
             clean['Month'] = month_val
             clean['Year'] = year
             
+            # Clean duplicate totals generated by the flattening process
             cols_to_drop = [c for c in clean.columns if "total deliveries" in str(c).lower() or "total livebirths" in str(c).lower()]
             clean.drop(columns=[c for c in cols_to_drop if c in clean.columns], inplace=True)
             
+            # Calculate unified totals for maternal indicators across all age brackets
             base_indicators = [c.replace("_10-14", "") for c in clean.columns if c.endswith("_10-14")]
             for base in base_indicators:
                 c14 = f"{base}_10-14"
@@ -812,10 +908,15 @@ def load_and_clean_maternal_data(uploaded_file, year, template_type="ANC"):
         st.error(f"Maternal Template Parsing Error for {uploaded_file.name}: {e}")
         return None
 
-
 def load_and_clean_mortality_data(uploaded_file, year):
+    """
+    Parses F1 Plus Mortality and Injury templates. Automatically detects the 
+    difference between Premature NCD templates and Traffic Death templates 
+    to apply the correct column offsets.
+    """
     try:
         name_low = uploaded_file.name.lower()
+        # Intelligent detection based on filename keywords
         is_premature_ncd = "plus 1" in name_low or "premature" in name_low
         is_traffic_death = "plus 2" in name_low or "traffic injuries" in name_low or "traffic death" in name_low
         is_traffic_acc = "plus 3" in name_low or "traffic accident" in name_low
@@ -847,6 +948,7 @@ def load_and_clean_mortality_data(uploaded_file, year):
         for month_val, df in sheets_to_process.items():
             df = df.dropna(how='all').reset_index(drop=True)
             
+            # Secondary detection check reading the internal text of the file
             if not (is_premature_ncd or is_traffic_death or is_traffic_acc):
                 head_str = str(df.head(15).values).lower()
                 if "cardiovascular" in head_str or "cancer" in head_str: is_premature_ncd = True
@@ -865,6 +967,7 @@ def load_and_clean_mortality_data(uploaded_file, year):
             if area_col_idx == -1:
                 continue 
             
+            # Map column offsets specifically designed for the DOH F1 Plus formats
             if is_premature_ncd:
                 offsets = [1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20]
                 col_names = [
@@ -917,9 +1020,11 @@ def load_and_clean_mortality_data(uploaded_file, year):
         st.code(traceback.format_exc())
         return None
 
-# --- FAMILY PLANNING DATA CLEANERS ---
-
 def load_and_clean_fp_methods(uploaded_file, year):
+    """
+    Parses Family Planning methodology templates (Acceptors and Dropouts). 
+    Extracts complex headers that combine the Contraceptive Method and Age Group.
+    """
     try:
         xls = pd.ExcelFile(uploaded_file)
         sheets_to_process = {}
@@ -940,7 +1045,7 @@ def load_and_clean_fp_methods(uploaded_file, year):
             area_row_idx = -1
             sub_row_idx = -1
             
-            # Find the header row (contains 'Area' and Method Names)
+            # Locate the main header row containing 'Area' and Method Names
             for idx, row in df.iterrows():
                 row_str = [str(val).strip().upper() for val in row.values if pd.notna(val)]
                 if any('AREA' in v for v in row_str):
@@ -949,7 +1054,7 @@ def load_and_clean_fp_methods(uploaded_file, year):
             
             if area_row_idx == -1: continue
             
-            # Find the sub-header row (contains age groups 10-14, 15-19, 20-49)
+            # Locate the sub-header row containing age brackets (10-14, 15-19, 20-49)
             for idx in range(area_row_idx + 1, min(area_row_idx + 4, len(df))):
                 row_str = [str(val).strip() for val in df.iloc[idx].values if pd.notna(val)]
                 if any('10-14' in v or '15-19' in v for v in row_str):
@@ -974,7 +1079,6 @@ def load_and_clean_fp_methods(uploaded_file, year):
                 else: 
                     flat_cols.append(bot_str)
 
-            # Ensure unique columns
             seen = set()
             unique_cols = []
             for c in flat_cols:
@@ -1005,7 +1109,7 @@ def load_and_clean_fp_methods(uploaded_file, year):
             df_clean['Month'] = month_val
             df_clean['Year'] = year
             
-            # Clean numeric columns
+            # Final numeric conversion sweep
             for col in df_clean.columns:
                 if col not in ['Area', 'Month', 'Year']:
                     df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
@@ -1018,9 +1122,10 @@ def load_and_clean_fp_methods(uploaded_file, year):
         st.error(f"Family Planning Error processing {uploaded_file.name}: {e}")
         return None
 
-
 def load_and_clean_fp_demand(uploaded_file, year):
-    # Specialized cleaner just for the "Demand Satisfied" template
+    """
+    A specialized cleaner explicitly for the Family Planning 'Demand Satisfied' template.
+    """
     try:
         xls = pd.ExcelFile(uploaded_file)
         sheets_to_process = {}
@@ -1075,9 +1180,16 @@ def load_and_clean_fp_demand(uploaded_file, year):
         
 @st.cache_data
 def convert_df_to_csv(df):
+    """Utility function to convert DataFrames into downloadable CSV bytes."""
     return df.to_csv(index=False).encode('utf-8')
 
-# --- SIDEBAR & RBAC ---
+# ==============================================================================
+# CHAPTER 6: SIDEBAR NAVIGATION & GLOBAL FILTERS
+# Description: Establishes the left-hand navigation menu, the secure Admin 
+# login expander (RBAC), and the Global Filters (Year, Demographic, RHU) 
+# that dictate what data the rest of the application displays.
+# ==============================================================================
+
 with st.sidebar:
     st.title("FHSIS Portal")
     
@@ -1096,7 +1208,7 @@ with st.sidebar:
         "📈 YoY Comparison"
     ]
 
-    # Only show the Uploader if unlocked
+    # Only reveal the Data Uploader tab if the user has successfully authenticated
     if st.session_state["is_admin"]:
         nav_options.append("📁 Data Uploader")
         
@@ -1118,7 +1230,7 @@ with st.sidebar:
             
         rhu_filter = st.multiselect("Select RHU(s)", options=["Abra (Total)"] + ABRA_RHUS, default=["Abra (Total)"])
         
-        # Determine the location header dynamically
+        # Determine the location header dynamically based on RHU selection length
         if not rhu_filter or "Abra (Total)" in rhu_filter:
             location_header = "📍 Abra Province (Total)"
         else:
@@ -1141,13 +1253,23 @@ with st.sidebar:
             st.rerun()
 
 # --- INITIALIZE SESSION STATE (LAZY LOAD) ---
-# Skip loading if they are on the Home page so it boots instantly!
+# Skip loading if they are on the Home page so the app boots instantly!
 if page != "🏠 Home" and 'fhsis_data' not in st.session_state:
     with st.spinner(f"🔄 Syncing cloud database for the {page.replace('👶 ', '').replace('🩺 ', '')}..."):
         st.session_state['fhsis_data'] = load_data_from_cloud()
         
-# --- HELPER FUNCTIONS ---
+
+# ==============================================================================
+# CHAPTER 7: DATA FILTERING & MAPPING UTILITIES
+# Description: Helper functions that slice the in-memory DataFrames based on 
+# the Global Filters, and clean up messy DOH indicator names for the UI.
+# ==============================================================================
+
 def filter_data(df, start_month, end_month, gender, year):
+    """
+    Slices the raw DataFrame by the selected month range, year, and demographic.
+    Intelligently hides columns that have a sum of 0 for the selected period.
+    """
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
     end_idx = months_order.index(end_month)
@@ -1187,6 +1309,10 @@ def filter_data(df, start_month, end_month, gender, year):
     return filtered_df
 
 def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
+    """
+    Slices the NCD DataFrame. Includes a bypass flag (is_cancer) for templates 
+    that are exclusively tracked for females (Breast/Cervical).
+    """
     months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     start_idx = months_order.index(start_month)
     end_idx = months_order.index(end_month)
@@ -1228,6 +1354,7 @@ def filter_ncd_data(df, start_month, end_month, gender, year, is_cancer=False):
     return filtered_df
 
 def get_ncd_col(df, include_words, exclude_words=None):
+    """Fuzzy matching utility to safely locate specific NCD columns despite typo variations."""
     if exclude_words is None: exclude_words = []
     for col in df.columns:
         cl = col.lower().replace('\n', ' ')
@@ -1242,6 +1369,10 @@ def get_ncd_col(df, include_words, exclude_words=None):
     return None
 
 def get_clean_indicator_name(col_name):
+    """
+    Translates raw, messy Excel column headers into clean, user-friendly 
+    labels for the Plotly charts and Metric cards.
+    """
     c_low = col_name.lower().replace('\n', ' ').replace('-', ' ')
     
     # --- NCD Mapping ---
@@ -1331,11 +1462,13 @@ def get_clean_indicator_name(col_name):
     elif 'adolescent women 15 19' in c_low and 'rate' not in c_low: return '2. Adolescent Women (15-19)'
     elif 'adolescent women 10 19' in c_low and 'rate' not in c_low: return '3. Adolescent Women (10-19)'
     
+    # General cleanup for metrics not caught by explicit mapping
     name = col_name.replace("_Total", "").replace("_Male", "").replace("_Female", "").split("(")[0].strip()
     if "_" in name: name = name.split("_")[0]
     return name
 
 def get_maternal_denominator(col_name, age_filter, all_cols):
+    """Dynamically links specific Maternal interventions to their correct baseline denominator for % calculations."""
     clean_name = get_clean_indicator_name(col_name)
     suffix = age_filter
     
@@ -1393,8 +1526,16 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
                 
     return "Elig. Pop." if "Elig. Pop." in all_cols else None
 
-# --- UI RENDERERS ---
+
+# ==============================================================================
+# CHAPTER 8: DYNAMIC UI RENDERERS (THE DASHBOARD ENGINES)
+# Description: These master functions take the cleaned DataFrames and construct 
+# the final UI—calculating metrics, generating interactive Plotly charts, 
+# and providing downloadable CSV reports.
+# ==============================================================================
+
 def render_footer():
+    """Generates the developer signature footer at the bottom of the UI."""
     st.markdown("---")
     st.markdown(
         """
@@ -1405,7 +1546,12 @@ def render_footer():
         """, 
         unsafe_allow_html=True
     )
+
 def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus):
+    """
+    Dynamically generates the UI for standard Immunization tabs.
+    Aggregates data, renders metric cards, and plots interactive geospatial/bar charts.
+    """
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         filtered_df = filter_data(raw_df, start_m, end_m, gender, year)
@@ -1600,6 +1746,7 @@ def render_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, 
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
         
 def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus):
+    """Dynamically generates the UI for Non-Communicable Disease (Adult/Senior Risk) tabs."""
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -1751,6 +1898,7 @@ def render_ncd_tab_content(tab_title, df_key, base_metrics, start_m, end_m, gend
         st.info("No NCD data uploaded yet. Please go to the Data Uploader page to add your files.")
 
 def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender, year, filter_rhus, chart_type="bar"):
+    """Dynamically generates the UI for the F1 Plus Mortality and Injuries templates."""
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -1932,6 +2080,7 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
 def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
+    """Dynamically generates the specialized UI for the Cervical Cancer screening cascade."""
     if gender == "Male":
         st.info("🎗️ Cervical Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
         return
@@ -2068,6 +2217,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
         st.info("No Cervical Cancer data uploaded yet.")
 
 def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
+    """Dynamically generates the specialized UI for the Breast Cancer screening cascade."""
     if gender == "Male":
         st.info("🎀 Breast Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
         return
@@ -2240,6 +2390,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
         st.info("No Breast Cancer data uploaded yet.")
 
 def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
+    """Dynamically generates the UI for the Environmental WASH data tracking."""
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -2281,6 +2432,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
                 primary_metric = "HH with Access to Basic Safe Water Supply" if tab_title == "Safe Water" else "HH with Basic Sanitation Facility"
                 has_primary = primary_metric in agg_df.columns and "Projected No. of HHs" in agg_df.columns
                 
+                # --- DATA QUALITY AUDIT (OVER 100% FLAG) ---
                 if has_primary:
                     over_100_df = agg_df[agg_df[primary_metric] > agg_df["Projected No. of HHs"]]
                     if not over_100_df.empty:
@@ -2434,6 +2586,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
 
 def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, filter_rhus):
+    """Dynamically generates the complex UI for the Maternal Health cascade of care."""
     if df_key in st.session_state['fhsis_data']:
         raw_df = st.session_state['fhsis_data'][df_key]
         
@@ -2680,7 +2833,12 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
         st.info(f"No {tab_title} data uploaded yet. Please use the Data Uploader.")
 
 
-# --- PAGES ---
+# ==============================================================================
+# CHAPTER 9: MAIN APPLICATION ROUTING (PAGES)
+# Description: The primary control flow structure of the Streamlit application. 
+# Routes the user to different dashboards based on their sidebar selection.
+# ==============================================================================
+
 if page == "🏠 Home":
     
     # Helper function to convert images so HTML can read them securely
@@ -2690,7 +2848,7 @@ if page == "🏠 Home":
                 return base64.b64encode(img_file.read()).decode()
         return ""
 
-    # CHANGE THESE FILENAMES IF YOURS ARE DIFFERENT!
+    # Custom seal images for the header
     abra_b64 = get_base64("Abra_provincial_seal.png")
     pho_b64 = get_base64("PHO logo.png")
     doh_b64 = get_base64("DOH logo.png")
@@ -2747,7 +2905,7 @@ if page == "🏠 Home":
     """)
     st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO report.")
 
-# --- TRUE BACKGROUND LOADER ---
+    # --- TRUE BACKGROUND LOADER ---
     # The UI above loads instantly. Then this triggers at the very bottom!
     if 'fhsis_data' not in st.session_state:
         st.markdown("<br><br>", unsafe_allow_html=True)
