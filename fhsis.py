@@ -2964,6 +2964,26 @@ if page == "🏠 Home":
         with st.spinner("🔄 Pre-loading cloud database in the background..."):
             st.session_state['fhsis_data'] = load_data_from_cloud()
 
+        # --- NEW: MASTER REGIONAL EXPORT ---
+    st.markdown("---")
+    st.markdown("### 📤 Regional Reporting")
+    st.markdown("Compile all currently loaded datasets into a single, multi-sheet Excel file for official DOH Regional Office submission.")
+    
+    if st.session_state.get('fhsis_data'):
+        try:
+            excel_bytes = generate_master_excel(st.session_state['fhsis_data'])
+            st.download_button(
+                label="📥 Download Master Regional Export (.xlsx)",
+                data=excel_bytes,
+                file_name=f"Abra_PHO_Master_Export_{selected_year}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
+        except Exception as e:
+            st.error(f"Error generating Master Export: {e}")
+    else:
+        st.info("Cloud database is currently syncing or empty. Please wait or upload data first.")
+
 elif page == "👶 Immunization Dashboard":
     st.title("💉 Child Immunization Dashboard")
     st.markdown(f"**{location_header}** &nbsp; | &nbsp; **📅 Year:** {selected_year} &nbsp; | &nbsp; **👥 Demographic:** {gender_filter}")
@@ -3821,22 +3841,49 @@ elif page == "📁 Data Uploader":
                 st.toast("No valid data uploaded yet to save.", icon="⚠️")
 
     st.markdown("---")
-    with st.expander("⚠️ Database Management (Danger Zone)"):
-        st.warning("Select the specific datasets you want to clear from the cloud database. This will permanently delete their historical data.")
-        
-        datasets_to_nuke = st.multiselect(
-            "Select Datasets to Nuke", 
-            options=list(ALL_MAPPINGS.keys()), 
-            default=[]
-        )
-        
-        if st.button("🚨 Nuke Selected Data", type="primary"):
-            if not datasets_to_nuke:
-                st.toast("Please select at least one dataset from the dropdown above to nuke.", icon="⚠️")
+    st.markdown("### 🗄️ Database Management")
+    
+    col_db1, col_db2 = st.columns(2)
+    
+    with col_db1:
+        # --- NEW: RESTORE BACKUP UI ---
+        with st.expander("⏪ Restore Previous Version"):
+            st.info("Every time you save new data, the system automatically creates a snapshot of the old data. You can safely restore those backups here if a mistake was made.")
+            
+            available_backups = get_cloud_backups()
+            
+            if available_backups:
+                selected_backup = st.selectbox("Select a backup file to restore:", available_backups)
+                
+                if st.button("⏪ Restore Selected Backup", type="primary", use_container_width=True):
+                    with st.spinner(f"Restoring {selected_backup}..."):
+                        success = restore_cloud_backup(selected_backup)
+                        if success:
+                            st.toast(f"Successfully restored! The dashboard is now using this version.", icon="✅")
+                            time.sleep(2)
+                            st.rerun()
             else:
-                nuke_cloud_database(datasets_to_nuke)
-                st.toast(f"Successfully wiped: {', '.join(datasets_to_nuke)}! Please re-upload your files.", icon="☢️")
-                time.sleep(2.5)
-                st.rerun()
+                st.write("No backups currently found in the cloud.")
+
+    with col_db2:
+        # --- UPGRADED DANGER ZONE ---
+        with st.expander("⚠️ Danger Zone (Permanent Deletion)"):
+            st.warning("Select the specific datasets you want to clear from the live cloud database. This will permanently delete their historical data.")
+            
+            datasets_to_nuke = st.multiselect(
+                "Select Datasets to Nuke", 
+                options=list(ALL_MAPPINGS.keys()), 
+                default=[],
+                key="nuke_select"
+            )
+            
+            if st.button("🚨 Nuke Selected Data", type="primary", use_container_width=True):
+                if not datasets_to_nuke:
+                    st.toast("Please select at least one dataset from the dropdown above to nuke.", icon="⚠️")
+                else:
+                    nuke_cloud_database(datasets_to_nuke)
+                    st.toast(f"Successfully wiped: {', '.join(datasets_to_nuke)}! Please re-upload your files.", icon="☢️")
+                    time.sleep(2.5)
+                    st.rerun()
 
 render_footer()
