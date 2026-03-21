@@ -13,8 +13,8 @@ from supabase import create_client, Client
 import time
 import base64
 import os
-# from datetime import datetime
-# import pytz
+from datetime import datetime
+import pytz
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
@@ -271,17 +271,15 @@ ABRA_COORDS = {
 
 
 # ==============================================================================
-# CHAPTER 4: SUPABASE CLOUD ENGINE
-# Description: Handles all read, write, update, and delete actions between 
-# the Streamlit frontend and the Supabase PostgreSQL backend storage bucket.
+# CHAPTER 4: SUPABASE CLOUD ENGINE & AUTOMATED BACKUPS
+# Description: Handles all read, write, update, and delete actions. Upgraded 
+# to automatically snapshot existing data before overwriting it, providing a 
+# fail-safe restore point in case of accidental data corruption.
 # ==============================================================================
 
 @st.cache_resource
 def init_supabase():
-    """
-    Initializes a persistent connection to the Supabase project. 
-    Decorated with @st.cache_resource to prevent re-authenticating on every UI interaction.
-    """
+    """Initializes a persistent connection to the Supabase project."""
     url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
     key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
     return create_client(url, key)
@@ -290,11 +288,8 @@ supabase = init_supabase()
 
 def save_data_to_cloud(new_data_dict):
     """
-    Intelligently merges freshly uploaded Excel data with existing historical data, 
-    compresses it into a CSV format, and upserts it to the cloud bucket.
-    
-    Args:
-        new_data_dict (dict): A dictionary mapping dataset keys to their cleaned Pandas DataFrames.
+    Merges new Excel data with existing history. Automatically creates a 
+    time-stamped backup snapshot of the old data before executing the upsert.
     """
     for app_key, new_df in new_data_dict.items():
         file_name = f"{ALL_MAPPINGS[app_key]}.csv"
@@ -305,6 +300,22 @@ def save_data_to_cloud(new_data_dict):
                 existing_df = pd.DataFrame()
                 try:
                     res = supabase.storage.from_('fhsis-data').download(file_name)
+                    
+                    # --- AUTOMATED CLOUD BACKUP ---
+                    # Save a snapshot of the existing data before we modify it
+                    try:
+                        pst = pytz.timezone('Asia/Manila')
+                        timestamp = datetime.now(pst).strftime("%Y%m%d_%H%M%S")
+                        backup_name = f"backups/{app_key}_{timestamp}.csv"
+                        supabase.storage.from_('fhsis-data').upload(
+                            file=res,
+                            path=backup_name,
+                            file_options={"cache-control": "0", "upsert": "true"}
+                        )
+                    except Exception:
+                        pass # Fail silently so backups don't interrupt the main workflow
+                    # ------------------------------
+                    
                     existing_df = pd.read_csv(io.BytesIO(res))
                 except Exception:
                     pass 
@@ -314,11 +325,9 @@ def save_data_to_cloud(new_data_dict):
                     existing_df = existing_df.dropna(subset=['Area', 'Year'])
                     old_df = existing_df.copy()
                     
-                    # Temporarily force numeric typing for the merge evaluation
                     old_df['Year_Num'] = pd.to_numeric(old_df['Year'], errors='coerce').fillna(0).astype(int)
                     new_df['Year_Num'] = pd.to_numeric(new_df['Year'], errors='coerce').fillna(0).astype(int)
                     
-                    # Remove old data for any years that are present in the new upload (Overwrite)
                     upload_years = new_df['Year_Num'].unique()
                     old_df = old_df[~old_df['Year_Num'].isin(upload_years)]
                     
@@ -331,12 +340,9 @@ def save_data_to_cloud(new_data_dict):
                     
                 combined_df.columns = combined_df.columns.astype(str)
                 combined_df = combined_df.fillna("")
-                
-                # Prevent TypeErrors down the pipeline by enforcing integer years
                 combined_df['Year'] = pd.to_numeric(combined_df['Year'], errors='coerce').fillna(0).astype(int)
                 
                 # 3. Compress to CSV and execute the Upsert
-                # Note: cache-control "0" tells Supabase's CDN to NEVER serve a stale, cached file
                 csv_bytes = combined_df.to_csv(index=False).encode('utf-8')
                 supabase.storage.from_('fhsis-data').upload(
                     file=csv_bytes,
@@ -344,21 +350,15 @@ def save_data_to_cloud(new_data_dict):
                     file_options={"cache-control": "0", "upsert": "true"}
                 )
                 
-                # Inject the fresh data directly into the user's active session state
                 st.session_state['fhsis_data'][app_key] = combined_df
                 
             except Exception as e:
                 st.error(f"❌ Failed to save {file_name}. Error: {e}")
 
 def load_data_from_cloud():
-    """
-    Scans the cloud bucket for existing CSV files, pulls them into memory, 
-    and packages them into a dictionary for use across all dashboard tabs.
-    Deliberately lacks a caching decorator to ensure 100% data freshness on reload.
-    """
+    """Scans the cloud bucket for existing CSV files and pulls them into memory."""
     loaded_data = {}
     try:
-        # Check what files actually exist in the bucket to prevent 404 errors
         files = supabase.storage.from_('fhsis-data').list()
         file_names = [f['name'] for f in files]
         
@@ -370,22 +370,49 @@ def load_data_from_cloud():
                     df = pd.read_csv(io.BytesIO(res))
                     if not df.empty and 'Area' in df.columns:
                         df = df.dropna(subset=['Area', 'Year'])
-                        
-                        # Guarantee integer years immediately upon payload download
                         df['Year'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
-                        
                         loaded_data[app_key] = df
                 except Exception:
                     pass
     except Exception as e:
         st.error(f"Supabase connection error: {e}")
-        
     return loaded_data
 
+def get_cloud_backups():
+    """Fetches a list of all automated backups currently stored in the Supabase bucket."""
+    try:
+        files = supabase.storage.from_('fhsis-data').list(path='backups')
+        return sorted([f['name'] for f in files if f['name'].endswith('.csv')], reverse=True)
+    except Exception:
+        return []
+
+def restore_cloud_backup(backup_filename):
+    """Restores a selected backup file to the main live directory."""
+    try:
+        res = supabase.storage.from_('fhsis-data').download(f"backups/{backup_filename}")
+        
+        # Extract the core app_key (e.g., 'Penta' from 'Penta_20260321_153000.csv')
+        app_key = backup_filename.split('_20')[0] 
+        live_file_name = f"{ALL_MAPPINGS.get(app_key, app_key)}.csv"
+        
+        # Overwrite the live database with the backup
+        supabase.storage.from_('fhsis-data').upload(
+            file=res,
+            path=live_file_name,
+            file_options={"cache-control": "0", "upsert": "true"}
+        )
+        
+        # Inject the restored data immediately into the UI
+        df = pd.read_csv(io.BytesIO(res))
+        df['Year'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
+        st.session_state['fhsis_data'][app_key] = df
+        return True
+    except Exception as e:
+        st.error(f"Restore failed: {e}")
+        return False
+
 def nuke_cloud_database(selected_keys):
-    """
-    Administrative tool to permanently wipe specific datasets from the cloud.
-    """
+    """Administrative tool to permanently wipe specific datasets from the cloud."""
     for app_key in selected_keys:
         file_name = f"{ALL_MAPPINGS[app_key]}.csv"
         with st.spinner(f"Nuking {file_name} from cloud..."):
@@ -400,7 +427,6 @@ def nuke_cloud_database(selected_keys):
 def clear_session_data():
     """Emergency manual override to clear active memory."""
     st.session_state['fhsis_data'] = {}
-
 # ==============================================================================
 # CHAPTER 5: AUTOMATED ETL PIPELINES (DATA CLEANERS)
 # Description: These functions act as the central nervous system of the app. 
@@ -1182,6 +1208,21 @@ def load_and_clean_fp_demand(uploaded_file, year):
 def convert_df_to_csv(df):
     """Utility function to convert DataFrames into downloadable CSV bytes."""
     return df.to_csv(index=False).encode('utf-8')
+
+@st.cache_data
+def generate_master_excel(data_dict):
+    """
+    Compiles all cleaned datasets currently in session memory into a 
+    single, multi-sheet Excel file for Regional reporting.
+    """
+    output = io.BytesIO()
+    # Use xlsxwriter engine to support multi-sheet creation
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        for sheet_name, df in data_dict.items():
+            # Excel limits sheet names to 31 characters
+            safe_sheet_name = str(sheet_name)[:31]
+            df.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+    return output.getvalue()
 
 # ==============================================================================
 # CHAPTER 6: SIDEBAR NAVIGATION & GLOBAL FILTERS
