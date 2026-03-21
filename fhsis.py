@@ -2415,7 +2415,7 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
         if filter_rhus and "Abra (Total)" not in filter_rhus:
             filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
         
-       safe_filename = tab_title.replace(" ", "_")
+        safe_filename = tab_title.replace(" ", "_")
         
         # --- THE INTELLIGENT HIDE FIX ---
         cols_to_plot = []
