@@ -2957,32 +2957,28 @@ if page == "🏠 Home":
     """)
     st.info("💡 **Tip:** Navigate to the **Immunization Dashboard** to view the Executive Summary and generate your monthly PHO report.")
 
-    # --- TRUE BACKGROUND LOADER ---
-    # The UI above loads instantly. Then this triggers at the very bottom!
-    if 'fhsis_data' not in st.session_state:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        with st.spinner("🔄 Pre-loading cloud database in the background..."):
-            st.session_state['fhsis_data'] = load_data_from_cloud()
-
-        # --- NEW: MASTER REGIONAL EXPORT ---
+    # --- NEW: MASTER REGIONAL EXPORT ---
     st.markdown("---")
     st.markdown("### 📤 Regional Reporting")
     st.markdown("Compile all currently loaded datasets into a single, multi-sheet Excel file for official DOH Regional Office submission.")
     
     if st.session_state.get('fhsis_data'):
-        try:
-            excel_bytes = generate_master_excel(st.session_state['fhsis_data'])
-            st.download_button(
-                label="📥 Download Master Regional Export (.xlsx)",
-                data=excel_bytes,
-                file_name=f"Abra_PHO_Master_Export_{selected_year}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
-            )
-        except Exception as e:
-            st.error(f"Error generating Master Export: {e}")
+        # Wrapping this in a checkbox prevents the app from lagging on initial load!
+        if st.checkbox("⚙️ Prepare Master Export File"):
+            with st.spinner("Compiling multi-sheet Excel file..."):
+                try:
+                    excel_bytes = generate_master_excel(st.session_state['fhsis_data'])
+                    st.download_button(
+                        label="📥 Download Master Regional Export (.xlsx)",
+                        data=excel_bytes,
+                        file_name=f"Abra_PHO_Master_Export_{selected_year}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary"
+                    )
+                except Exception as e:
+                    st.error(f"Error generating Master Export: {e}")
     else:
-        st.info("Cloud database is currently syncing or empty. Please wait or upload data first.")
+        st.info("Navigate to any dashboard tab first to sync the cloud database, then return here to export.")
 
 elif page == "👶 Immunization Dashboard":
     st.title("💉 Child Immunization Dashboard")
