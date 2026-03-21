@@ -2415,9 +2415,16 @@ def render_wash_tab(tab_title, df_key, selected_quarters, year, filter_rhus):
         if filter_rhus and "Abra (Total)" not in filter_rhus:
             filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
         
-        safe_filename = tab_title.replace(" ", "_")
+       safe_filename = tab_title.replace(" ", "_")
         
-        cols_to_plot = [c for c in filtered_df.columns if c not in ['Area', 'Month', 'Year']]
+        # --- THE INTELLIGENT HIDE FIX ---
+        cols_to_plot = []
+        for c in filtered_df.columns:
+            if c not in ['Area', 'Month', 'Year']:
+                col_numeric = pd.to_numeric(filtered_df[c], errors='coerce').fillna(0)
+                if col_numeric.sum() > 0:
+                    filtered_df[c] = col_numeric # Clean it to prevent math crashes
+                    cols_to_plot.append(c)
         
         if cols_to_plot:
             agg_df = filtered_df.groupby('Area')[cols_to_plot].sum().reset_index()
