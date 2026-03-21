@@ -4,3 +4,4 @@ plotly
 st-gsheets-connection
 openpyxl
 supabase
+xlsxwriter
