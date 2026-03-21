@@ -1210,19 +1210,56 @@ def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 @st.cache_data
-def generate_master_excel(data_dict):
+def generate_master_excel(data_dict, target_year):
     """
-    Compiles all cleaned datasets currently in session memory into a 
-    single, multi-sheet Excel file for Regional reporting.
+    Compiles datasets for a specific year into a multi-sheet Excel file.
+    Returns the Excel bytes and lists of included/empty modules to provide UX feedback.
     """
     output = io.BytesIO()
-    # Use xlsxwriter engine to support multi-sheet creation
+    included_modules = []
+    empty_modules = []
+    
+    # Map internal dictionary keys to friendly Excel tab names
+    friendly_names = {
+        "CPAB_BCG_HepB": "Birth Doses", "Penta": "Pentavalent", "Polio": "Polio", 
+        "PCV": "PCV", "MMR": "MMR & FIC", "Adults_Risk": "Adults NCD", 
+        "Seniors_Risk": "Seniors NCD", "Cervical_Cancer": "Cervical Cancer", 
+        "Breast_Cancer": "Breast Cancer", "Safe_Water": "Safe Water", 
+        "Sanitation": "Sanitation", "ANC": "ANC", "Nutritional_Status": "Nutrition", 
+        "Calcium_MMS": "Calcium & Deworming", "Syphilis_HepB": "Syphilis & HepB", 
+        "CBC_Gestational": "CBC & Gestational", "PPC": "PPC", "Livebirths": "Livebirths",
+        "Premature_NCD": "Premature NCD", "Traffic_Deaths": "Traffic Deaths", 
+        "Traffic_Accidents": "Traffic Accidents", "FP_Beginning": "FP Beginning",
+        "FP_New": "FP New", "FP_Other": "FP Other", "FP_Dropouts": "FP Dropouts",
+        "FP_End": "FP End", "FP_Demand": "FP Demand"
+    }
+    
+    has_data = False
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        for sheet_name, df in data_dict.items():
-            # Excel limits sheet names to 31 characters
-            safe_sheet_name = str(sheet_name)[:31]
-            df.to_excel(writer, sheet_name=safe_sheet_name, index=False)
-    return output.getvalue()
+        for sheet_key, df in data_dict.items():
+            # Safely filter the DataFrame for the requested year
+            if 'Year' in df.columns:
+                df['Year_Int'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
+                df_year = df[df['Year_Int'] == target_year].drop(columns=['Year_Int'])
+            else:
+                df_year = pd.DataFrame() # Fallback if Year column is missing
+                
+            friendly_name = friendly_names.get(sheet_key, sheet_key)
+            
+            if not df_year.empty:
+                # Excel limits tab names to 31 characters
+                safe_sheet_name = str(friendly_name)[:31]
+                df_year.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+                included_modules.append(friendly_name)
+                has_data = True
+            else:
+                empty_modules.append(friendly_name)
+    
+    # If the entire year is blank across all modules, return None
+    if not has_data:
+        return None, [], empty_modules
+        
+    return output.getvalue(), included_modules, empty_modules
 
 # ==============================================================================
 # CHAPTER 6: SIDEBAR NAVIGATION & GLOBAL FILTERS
@@ -2960,21 +2997,46 @@ if page == "🏠 Home":
     # --- NEW: MASTER REGIONAL EXPORT ---
     st.markdown("---")
     st.markdown("### 📤 Regional Reporting")
-    st.markdown("Compile all currently loaded datasets into a single, multi-sheet Excel file for official DOH Regional Office submission.")
+    st.markdown("Compile datasets for a specific year into a single, multi-sheet Excel file for official DOH Regional Office submission.")
+    
+    # Allow the user to select the specific year for export
+    export_year = st.selectbox("📅 Select Year to Export:", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
     
     if st.session_state.get('fhsis_data'):
-        # Wrapping this in a checkbox prevents the app from lagging on initial load!
-        if st.checkbox("⚙️ Prepare Master Export File"):
-            with st.spinner("Compiling multi-sheet Excel file..."):
+        # Wrapping this in a checkbox prevents the app from lagging on initial load
+        if st.checkbox(f"⚙️ Prepare Master Export File for {export_year}"):
+            with st.spinner(f"Scanning database and compiling {export_year} records..."):
                 try:
-                    excel_bytes = generate_master_excel(st.session_state['fhsis_data'])
-                    st.download_button(
-                        label="📥 Download Master Regional Export (.xlsx)",
-                        data=excel_bytes,
-                        file_name=f"Abra_PHO_Master_Export_{selected_year}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary"
-                    )
+                    excel_bytes, included, missing = generate_master_excel(st.session_state['fhsis_data'], export_year)
+                    
+                    if excel_bytes:
+                        # --- DYNAMIC UX FEEDBACK ---
+                        st.success(f"✅ **Compilation Complete!** Found data for {len(included)} modules in {export_year}.")
+                        
+                        col_inc, col_mis = st.columns(2)
+                        with col_inc:
+                            with st.expander(f"📦 Included Modules ({len(included)})", expanded=True):
+                                for mod in included:
+                                    st.markdown(f"- ✅ {mod}")
+                        with col_mis:
+                            with st.expander(f"📭 Empty Modules ({len(missing)})", expanded=False):
+                                if missing:
+                                    for mod in missing:
+                                        st.markdown(f"- ❌ {mod}")
+                                else:
+                                    st.markdown("- *None! All modules have data.*")
+                        
+                        # The final download button
+                        st.download_button(
+                            label=f"📥 Download {export_year} Master Regional Export (.xlsx)",
+                            data=excel_bytes,
+                            file_name=f"Abra_PHO_Master_Database_{export_year}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary"
+                        )
+                    else:
+                        st.error(f"❌ **No Data Found!** There are no records uploaded for the year {export_year} across any module. Please select a different year or upload data.")
+                        
                 except Exception as e:
                     st.error(f"Error generating Master Export: {e}")
     else:
