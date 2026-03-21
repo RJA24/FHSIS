@@ -2641,8 +2641,12 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                     if "Total Deliveries" in mapped_name and tab_title not in ["Antenatal Care (ANC)", "Postpartum Care (PPC)"]:
                         continue
                         
-                    if col not in cols_to_plot:
-                        cols_to_plot.append(col)
+                    # --- THE INTELLIGENT HIDE FIX ---
+                    col_numeric = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
+                    if col_numeric.sum() > 0:
+                        filtered_df[col] = col_numeric # Clean it to prevent math crashes
+                        if col not in cols_to_plot:
+                            cols_to_plot.append(col)
         
         if cols_to_plot:
             all_numeric_cols = [c for c in filtered_df.columns if pd.api.types.is_numeric_dtype(filtered_df[c]) and c not in ['Area', 'Month', 'Year']]
