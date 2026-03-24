@@ -412,48 +412,48 @@ def restore_cloud_backup(backup_filename):
         st.error(f"Restore failed: {e}")
         return False
 
-    def nuke_cloud_database(selected_keys, year_to_nuke):
-        """Administrative tool to wipe specific datasets or specific years from the cloud."""
-        for app_key in selected_keys:
-            file_name = f"{ALL_MAPPINGS[app_key]}.csv"
-            with st.spinner(f"Processing deletion for {file_name}..."):
-                try:
-                    # SCENARIO A: Total Annihilation (All Years)
-                    if year_to_nuke == "ALL YEARS":
-                        supabase.storage.from_('fhsis-data').remove([file_name])
-                        if app_key in st.session_state.get('fhsis_data', {}):
-                            del st.session_state['fhsis_data'][app_key]
+def nuke_cloud_database(selected_keys, year_to_nuke):
+    """Administrative tool to wipe specific datasets or specific years from the cloud."""
+    for app_key in selected_keys:
+        file_name = f"{ALL_MAPPINGS[app_key]}.csv"
+        with st.spinner(f"Processing deletion for {file_name}..."):
+            try:
+                # SCENARIO A: Total Annihilation (All Years)
+                if year_to_nuke == "ALL YEARS":
+                    supabase.storage.from_('fhsis-data').remove([file_name])
+                    if app_key in st.session_state.get('fhsis_data', {}):
+                        del st.session_state['fhsis_data'][app_key]
+                
+                # SCENARIO B: Surgical Deletion (Specific Year)
+                else:
+                    target_year = int(year_to_nuke)
+                    res = supabase.storage.from_('fhsis-data').download(file_name)
+                    df = pd.read_csv(io.BytesIO(res))
                     
-                    # SCENARIO B: Surgical Deletion (Specific Year)
-                    else:
-                        target_year = int(year_to_nuke)
-                        res = supabase.storage.from_('fhsis-data').download(file_name)
-                        df = pd.read_csv(io.BytesIO(res))
+                    if 'Year' in df.columns:
+                        df['Year_Num'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
+                        # Keep everything EXCEPT the year we are nuking
+                        df_kept = df[df['Year_Num'] != target_year].copy()
+                        df_kept.drop(columns=['Year_Num'], inplace=True)
                         
-                        if 'Year' in df.columns:
-                            df['Year_Num'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
-                            # Keep everything EXCEPT the year we are nuking
-                            df_kept = df[df['Year_Num'] != target_year].copy()
-                            df_kept.drop(columns=['Year_Num'], inplace=True)
-                            
-                            if df_kept.empty:
-                                # If deleting this year empties the file entirely, just remove the file
-                                supabase.storage.from_('fhsis-data').remove([file_name])
-                                if app_key in st.session_state.get('fhsis_data', {}):
-                                    del st.session_state['fhsis_data'][app_key]
-                            else:
-                                # Re-upload the cleaned data back to Supabase
-                                csv_bytes = df_kept.to_csv(index=False).encode('utf-8')
-                                supabase.storage.from_('fhsis-data').upload(
-                                    file=csv_bytes,
-                                    path=file_name,
-                                    file_options={"cache-control": "0", "upsert": "true"}
-                                )
-                                # Update active memory
-                                st.session_state['fhsis_data'][app_key] = df_kept
-                except Exception as e:
-                    pass # File probably doesn't exist yet, which is fine
-        st.cache_data.clear()
+                        if df_kept.empty:
+                            # If deleting this year empties the file entirely, just remove the file
+                            supabase.storage.from_('fhsis-data').remove([file_name])
+                            if app_key in st.session_state.get('fhsis_data', {}):
+                                del st.session_state['fhsis_data'][app_key]
+                        else:
+                            # Re-upload the cleaned data back to Supabase
+                            csv_bytes = df_kept.to_csv(index=False).encode('utf-8')
+                            supabase.storage.from_('fhsis-data').upload(
+                                file=csv_bytes,
+                                path=file_name,
+                                file_options={"cache-control": "0", "upsert": "true"}
+                            )
+                            # Update active memory
+                            st.session_state['fhsis_data'][app_key] = df_kept
+            except Exception as e:
+                pass # File probably doesn't exist yet, which is fine
+    st.cache_data.clear()
 
 def clear_session_data():
     """Emergency manual override to clear active memory."""
