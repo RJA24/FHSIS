@@ -2410,6 +2410,11 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
         if filter_rhus and "Abra (Total)" not in filter_rhus:
             filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
         
+        # --- NEW 2026 ELIGIBLE POPULATION MATCHER ---
+        elig_col = next((c for c in filtered_df.columns if ('target pop' in c.lower() or 'elig' in c.lower()) and '50-69' in c.lower()), None)
+        if not elig_col: elig_col = next((c for c in filtered_df.columns if '50-69' in c.lower() and 'pop' in c.lower()), None)
+
+        # --- YOUR ORIGINAL COLUMN MATCHERS (Untouched) ---
         b_leg_scr = get_ncd_col(filtered_df, ["screened for breast mass"], ["%", "suspicious"])
         b_leg_susp = get_ncd_col(filtered_df, ["suspicious breast mass"], ["%", "screened"])
         
@@ -2433,7 +2438,7 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
         b_as_link_mam = get_ncd_col(filtered_df, ["50-69", "linked", "mammogram"], ["%", "high risk"])
         b_as_link_tot = get_ncd_col(filtered_df, ["50-69", "linked", "total"], ["%", "high risk"])
         
-        all_cols = [b_leg_scr, b_leg_susp, b_hr_scr_cbe, b_hr_scr_mam, b_hr_scr_tot, b_hr_rem_cbe, b_hr_rem_mam, b_hr_rem_tot, b_hr_link_cbe, b_hr_link_mam, b_hr_link_tot,
+        all_cols = [elig_col, b_leg_scr, b_leg_susp, b_hr_scr_cbe, b_hr_scr_mam, b_hr_scr_tot, b_hr_rem_cbe, b_hr_rem_mam, b_hr_rem_tot, b_hr_link_cbe, b_hr_link_mam, b_hr_link_tot,
                     b_as_scr_cbe, b_as_scr_mam, b_as_scr_tot, b_as_rem_cbe, b_as_rem_mam, b_as_rem_tot, b_as_link_cbe, b_as_link_mam, b_as_link_tot]
         cols_to_agg = [c for c in all_cols if c]
         
@@ -2441,9 +2446,17 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
             st.warning("Could not identify specific Breast Cancer columns from the template.")
             return
             
-        agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
+        # Ensure numeric safety before aggregating
+        for c in cols_to_agg:
+            filtered_df[c] = pd.to_numeric(filtered_df[c], errors='coerce').fillna(0)
+            
+        # Use a dynamic agg dict so 'elig_col' gets max() while metrics get sum()
+        agg_dict = {c: 'max' if c == elig_col else 'sum' for c in cols_to_agg}
+        agg_df = filtered_df.groupby('Area').agg(agg_dict).reset_index()
+        
         is_2024 = b_leg_scr is not None or b_leg_susp is not None
         
+        # --- YOUR ORIGINAL 2024 LEGACY LOGIC (Untouched) ---
         if is_2024:
             st.info("📌 **2024 Legacy Format Detected:** Displaying simplified Breast Mass screening data.")
             st.markdown("### 🎀 Breast Cancer Screening (2024)")
@@ -2472,7 +2485,42 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
                 st.dataframe(agg_df, use_container_width=True, hide_index=True)
             return
 
-        st.markdown(f"### 🎀 High Risk Women (30-69 y.o.) | {location_header.replace('📍 ', '')}")
+        # =====================================================================
+        # --- NEW 2026 UI INJECTION (Matched to your Screenshot) ---
+        # =====================================================================
+        if elig_col and b_as_scr_tot:
+            st.markdown("### 🎀 Breast Cancer Screening (50-69 yrs old)")
+            
+            total_elig = agg_df[elig_col].sum()
+            total_screened = agg_df[b_as_scr_tot].sum()
+            total_signif = agg_df[b_as_rem_tot].sum() if b_as_rem_tot else 0
+            total_linked = agg_df[b_as_link_tot].sum() if b_as_link_tot else 0
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("👥 Eligible Pop. (50-69 yrs old women)", f"{total_elig:,.0f}")
+            col2.metric("🩺 Total Screened (Asymptomatic)", f"{total_screened:,.0f}")
+            col3.metric("⚠️ Found with Significant Results", f"{total_signif:,.0f}")
+            col4.metric("🏥 Remarkable Results Linked to Care", f"{total_linked:,.0f}")
+            
+            st.markdown("#### 🌟 Top RHUs (Breast Cancer Screening)")
+            rhu_brst = agg_df[['Area', b_as_scr_tot, elig_col]].copy()
+            rhu_brst['Coverage'] = (rhu_brst[b_as_scr_tot] / rhu_brst[elig_col] * 100).fillna(0)
+            rhu_brst = rhu_brst.sort_values(by='Coverage', ascending=False)
+            
+            if not rhu_brst.empty and rhu_brst['Coverage'].sum() > 0:
+                fig_brst = px.bar(rhu_brst, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Pinkyl")
+                fig_brst.update_traces(textposition='outside')
+                fig_brst.update_layout(xaxis_title="", yaxis_title="Screening Coverage (%)", margin=dict(t=30, b=0), coloraxis_showscale=False)
+                st.plotly_chart(fig_brst, use_container_width=True, key=f"breast_top_{year}")
+            else:
+                st.info("📊 No screening data reported yet for the selected period.")
+            st.markdown("---")
+
+
+        # =====================================================================
+        # --- YOUR ORIGINAL HIGH RISK & ASYMPTOMATIC BREAKDOWN (Untouched) ---
+        # =====================================================================
+        st.markdown(f"### 🎀 High Risk Women (30-69 y.o.)")
         hr_c1, hr_c2, hr_c3 = st.columns(3)
         if b_hr_scr_tot: hr_c1.metric("1. Screened (Total)", f"{int(agg_df[b_hr_scr_tot].sum()):,}")
         if b_hr_rem_tot: hr_c2.metric("2. Found Remarkable (Total)", f"{int(agg_df[b_hr_rem_tot].sum()):,}")
@@ -2498,10 +2546,10 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
             st.markdown("#### 📊 RHU Screening Breakdown (Stacked)")
             as_scr_cols = [c for c in [b_hr_scr_cbe, b_hr_scr_mam] if c] 
             if as_scr_cols:
-                agg_df = agg_df.sort_values(by='Area', ascending=True)
-                m = agg_df[['Area'] + as_scr_cols].melt(id_vars='Area')
+                agg_df_sorted = agg_df.sort_values(by='Area', ascending=True)
+                m = agg_df_sorted[['Area'] + as_scr_cols].melt(id_vars='Area')
                 m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_hr_scr_cbe else "Mammogram")
-                fig_hr_bar = px.bar(m, x='Area', y='value', color='variable', barmode='stack', title="Screenings by Methodology", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_hr_bar = px.bar(m, x='Area', y='value', color='variable', barmode='stack', title="Screenings by Methodology", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF"], category_orders={"Area": agg_df_sorted['Area'].tolist()})
                 fig_hr_bar.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=30))
                 st.plotly_chart(fig_hr_bar, use_container_width=True, key=f"breast_hr_bar_{year}")
 
@@ -2533,10 +2581,10 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
             st.markdown("#### 📊 RHU Screening Breakdown (Stacked)")
             as_scr_cols = [c for c in [b_as_scr_cbe, b_as_scr_mam] if c] 
             if as_scr_cols:
-                agg_df = agg_df.sort_values(by='Area', ascending=True)
-                m = agg_df[['Area'] + as_scr_cols].melt(id_vars='Area')
+                agg_df_sorted = agg_df.sort_values(by='Area', ascending=True)
+                m = agg_df_sorted[['Area'] + as_scr_cols].melt(id_vars='Area')
                 m['variable'] = m['variable'].apply(lambda x: "CBE" if x == b_as_scr_cbe else "Mammogram")
-                fig_as_bar = px.bar(m, x='Area', y='value', color='variable', barmode='stack', title="Screenings by Methodology", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_as_bar = px.bar(m, x='Area', y='value', color='variable', barmode='stack', title="Screenings by Methodology", text_auto=True, color_discrete_sequence=["#FF99CC", "#99CCFF"], category_orders={"Area": agg_df_sorted['Area'].tolist()})
                 fig_as_bar.update_layout(xaxis_title="RHU", yaxis_title="Patients", margin=dict(t=30))
                 st.plotly_chart(fig_as_bar, use_container_width=True, key=f"breast_as_bar_{year}")
 
@@ -2549,6 +2597,8 @@ def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
                 b_as_rem_cbe: "Asymp Remarkable (CBE)", b_as_rem_mam: "Asymp Remarkable (Mammo)", b_as_rem_tot: "Asymp Remarkable (Total)",
                 b_as_link_cbe: "Asymp Linked (CBE)", b_as_link_mam: "Asymp Linked (Mammo)", b_as_link_tot: "Asymp Linked (Total)"
             }
+            if elig_col: clean_names[elig_col] = "Eligible Pop. (50-69)"
+            
             display_df = agg_df.rename(columns=clean_names)
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             csv_data = convert_df_to_csv(display_df)
