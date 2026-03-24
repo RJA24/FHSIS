@@ -3144,7 +3144,7 @@ elif page == "👶 Immunization Dashboard":
                     drop_label += " ⚠️"
                     dq_warnings.append(f"**Negative Penta Dropout ({prov_drop:.1f}%):** More Penta 3 doses given than Penta 1. Verify if this is an expected catch-up surge or a data entry error.")
 
-                # --- NEW: NEGATIVE DELTA ANOMALY DETECTOR ---
+                # --- NEW: NEGATIVE DELTA ANOMALY DETECTOR (FIXED) ---
                 # Checks if cumulative YTD figures unexpectedly drop from one month to the next
                 months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                 
@@ -3158,9 +3158,14 @@ elif page == "👶 Immunization Dashboard":
                     prev_val = None
                     prev_month = None
                     for _, row in group.iterrows():
-                        curr_val = row[fic_col]
+                        curr_val = pd.to_numeric(row[fic_col], errors='coerce')
+                        curr_val = 0 if pd.isna(curr_val) else curr_val
                         curr_month = row['Month']
                         
+                        # The Fix: Skip months with 0 (assuming data hasn't been entered yet for that month)
+                        if curr_val == 0:
+                            continue
+                            
                         # If the current month's cumulative total is lower than the previous month, flag it
                         if prev_val is not None and curr_val < prev_val:
                             fic_label = "Fully Immunized Child (FIC) ⚠️" if "⚠️" not in fic_label else fic_label
