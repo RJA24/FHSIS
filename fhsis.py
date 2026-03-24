@@ -1525,15 +1525,15 @@ def get_clean_indicator_name(col_name):
         else: return '0. Total Deliveries'
     
     # --- Maternal Care (ANC) Exact Mapping ---
-    elif 'new pregnant' in c_low: return '1. New Pregnant Women Seen'
-    elif 'at least 4 anc' in c_low and 'delivered' in c_low: return '2. Delivered with at least 4 ANC visits'
-    elif ('gave birth' in c_low or 'delivered' in c_low) and 'tracked' in c_low and ('resident' in c_low or '(a)' in c_low) and '8anc' not in c_low and '(a+b)' not in c_low: return '3. Delivered & tracked during pregnancy (Resident) (a)'
-    elif 'trans in' in c_low and '8anc' not in c_low and '4pnc' not in c_low and 'pp' not in c_low: return '4. TRANS IN from other LGUs (b)'
-    elif 'trans out' in c_low and '8anc' in c_low: return '5. TRANS OUT before completing 8ANC (c)'
-    elif 'tracked' in c_low and 'delivered' in c_low and ('(a+b) c' in c_low or '(a+b)' in c_low or '(a+b)-c' in c_low) and '8anc' not in c_low: return '6. Delivered & tracked during pregnancy (a+b)'
-    elif '1st to 8th anc' in c_low: return '7. Provided 1st to 8th ANC on schedule (a)'
-    elif '8anc' in c_low and 'trans in' in c_low: return '8. Completed 8ANC TRANS IN (b)'
-    elif 'at least 8anc (a+b)' in c_low: return '9. Delivered & completed at least 8ANC (a+b)'
+    elif 'new pregnant' in c_low: return '1. New Pregnant Women Seen'
+    elif 'at least 4 anc' in c_low and 'delivered' in c_low: return '2. Delivered with at least 4 ANC visits'
+    elif ('gave birth' in c_low or 'delivered' in c_low) and 'tracked' in c_low and ('resident' in c_low or '(a)' in c_low) and '8anc' not in c_low and '(a+b)' not in c_low: return '3. Delivered & tracked during pregnancy (Resident) (a)'
+    elif 'trans in' in c_low and '8anc' not in c_low and '4pnc' not in c_low and 'pp' not in c_low: return '4. TRANS IN from other LGUs (b)'
+    elif 'trans out' in c_low and '8anc' in c_low: return '5. TRANS OUT before completing 8ANC (c)'
+    elif 'tracked' in c_low and 'delivered' in c_low and ('(a+b) c' in c_low or '(a+b)' in c_low or '(a+b)-c' in c_low) and '8anc' not in c_low: return '6. Delivered & tracked during pregnancy (a+b)'
+    elif '1st to 8th anc' in c_low: return '7. Provided 1st to 8th ANC on schedule (a)'
+    elif '8anc' in c_low and 'trans in' in c_low: return '8. Completed 8ANC TRANS IN (b)'
+    elif 'at least 8anc (a+b)' in c_low: return '9. Delivered & completed at least 8ANC (a+b)'
     
     # --- Maternal Care (PPC) Exact Mapping ---
     elif '2 postpartum check ups' in c_low: return '2. Completed at least 2 PP check-ups'
@@ -1587,19 +1587,19 @@ def get_clean_indicator_name(col_name):
     return name
 
 def get_maternal_denominator(col_name, age_filter, all_cols):
-    """Dynamically links specific Maternal interventions to their correct baseline denominator for % calculations."""
-    clean_name = get_clean_indicator_name(col_name)
-    suffix = age_filter
-    
-    denom_col = None
-    if clean_name == "2. Delivered with at least 4 ANC visits":
-        denom_col = f"Total Deliveries_{suffix}"
-    elif clean_name == "9. Delivered & completed at least 8ANC (a+b)":
-        denom_2026 = f"Women who delivered and were tracked during pregnancy (a+b)_{suffix}"
-        denom_legacy = f"Women who delivered and were tracked during pregnancy  (a+b)-c_{suffix}"
-        denom_col = denom_2026 if denom_2026 in all_cols else denom_legacy
-        
-    elif clean_name == "2. Completed at least 2 PP check-ups":
+    """Dynamically links specific Maternal interventions to their correct baseline denominator for % calculations."""
+    clean_name = get_clean_indicator_name(col_name)
+    suffix = age_filter
+    
+    denom_col = None
+    if clean_name == "2. Delivered with at least 4 ANC visits":
+        denom_col = f"Total Deliveries_{suffix}"
+    elif clean_name == "9. Delivered & completed at least 8ANC (a+b)":
+        denom_2026 = f"Women who delivered and were tracked during pregnancy (a+b)_{suffix}"
+        denom_legacy = f"Women who delivered and were tracked during pregnancy  (a+b)-c_{suffix}"
+        denom_col = denom_2026 if denom_2026 in all_cols else denom_legacy
+        
+    elif clean_name == "2. Completed at least 2 PP check-ups":
         denom_col = f"Total Deliveries_{suffix}"
     elif clean_name == "9. Women gave birth completed at least 4PNC =(a+b)":
         denom_col = f"PP Women who were tracked during pregnancy =(a+b)-c_{suffix}"
