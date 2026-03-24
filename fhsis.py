@@ -1537,13 +1537,13 @@ def get_clean_indicator_name(col_name):
     
     # --- Maternal Care (PPC) Exact Mapping ---
     elif '2 postpartum check ups' in c_low: return '2. Completed at least 2 PP check-ups'
-    elif 'tracked (a)' in c_low and 'pp women' in c_low: return '3. PP women who were tracked (a)'
+    elif 'pp women' in c_low and ('due for pnc' in c_low or 'tracked (a)' in c_low) and 'trans' not in c_low: return '3. PP women due for PNC (a)'
     elif 'trans in' in c_low and 'pp' in c_low and '4pnc' not in c_low: return '4. PP women TRANS-IN (b)'
     elif 'trans out' in c_low and 'pp' in c_low: return '5. PP women TRANS-OUT (c)'
-    elif '=(a+b) c' in c_low and 'pp' in c_low: return '6. PP Women tracked during pregnancy =(a+b)-c'
+    elif 'tracked during pregnancy' in c_low and 'pp' in c_low and ('(a+b)' in c_low or '=(a+b)' in c_low): return '6. PP Women tracked during pregnancy (a+b)'
     elif '1st to 4th pnc' in c_low: return '7. PP women provided 1st to 4th PNC on schedule (a)'
     elif '4pnc' in c_low and 'trans in' in c_low: return '8. PP women with completed 4PNC TRANS IN (b)'
-    elif 'at least 4pnc =(a+b)' in c_low: return '9. Women gave birth completed at least 4PNC =(a+b)'
+    elif 'at least 4pnc' in c_low and ('=(a+b)' in c_low or '(a+b)' in c_low): return '9. Women gave birth completed at least 4PNC (a+b)'
     elif 'iron with folic' in c_low: return '10. PP women who completed iron with folic acid'
     elif 'vitamin a' in c_low: return '11. PP women given Vitamin A supplementation'
 
@@ -1605,8 +1605,10 @@ def get_maternal_denominator(col_name, age_filter, all_cols):
         
     elif clean_name == "2. Completed at least 2 PP check-ups":
         denom_col = f"Total Deliveries_{suffix}"
-    elif clean_name == "9. Women gave birth completed at least 4PNC =(a+b)":
-        denom_col = f"PP Women who were tracked during pregnancy =(a+b)-c_{suffix}"
+    elif clean_name == "9. Women gave birth completed at least 4PNC (a+b)":
+        denom_2026 = f"PP Women who were tracked during pregnancy =(a+b)_{suffix}"
+        denom_legacy = f"PP Women who were tracked during pregnancy =(a+b)-c_{suffix}"
+        denom_col = denom_2026 if denom_2026 in all_cols else denom_legacy
         
     elif clean_name in ["10. PP women who completed iron with folic acid", "11. PP women given Vitamin A supplementation"]:
         denom_col = "Elig. Pop."
@@ -2912,7 +2914,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                     elif "PPC" in tab_title:
                         allowed_perc_indicators = [
                             "2. Completed at least 2 PP check-ups",
-                            "9. Women gave birth completed at least 4PNC =(a+b)",
+                            "9. Women gave birth completed at least 4PNC (a+b)",
                             "10. PP women who completed iron with folic acid",
                             "11. PP women given Vitamin A supplementation"
                         ]
