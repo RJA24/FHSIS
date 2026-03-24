@@ -3279,6 +3279,17 @@ elif page == "👶 Immunization Dashboard":
                         rhu_sorted = pd.DataFrame(columns=['Area', fic_col])
                         
                     top3 = rhu_sorted.head(3)
+                    
+                    # --- NEW: DEFENSIVE CHART GENERATION ---
+                    # Only draw the chart if there is actual data to plot!
+                    if not top3.empty and top3['Coverage'].sum() > 0:
+                        fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
+                        fig_top3.update_traces(textposition='outside')
+                        fig_top3.update_layout(xaxis_title="", yaxis_title="FIC Coverage", coloraxis_showscale=False)
+                        st.plotly_chart(fig_top3, use_container_width=True)
+                    else:
+                        st.info("📊 No Fully Immunized Child (FIC) data uploaded yet for this year.")
+                    # ---------------------------------------
                     fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
                     fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
                     st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
