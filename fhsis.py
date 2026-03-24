@@ -59,39 +59,6 @@ st.markdown("""
         }
     }
 
-    /* --- THE PRINT FIX: Makes Ctrl+P actually look like a document --- */
-        @media print {
-            /* 1. Hide the sidebar, top header, and floating Streamlit buttons */
-            [data-testid="stSidebar"], 
-            header[data-testid="stHeader"],
-            [data-testid="stToolbar"],
-            [data-testid="stAppDeployButton"],
-            footer {
-                display: none !important;
-            }
-            
-            /* 2. Hide interactive UI controls (Sliders, Radios, Tab buttons) */
-            [data-testid="stRadio"],
-            [data-testid="stSlider"],
-            div[role="tablist"] {
-                display: none !important;
-            }
-            
-            /* 3. Make the main page take up the full paper width */
-            .block-container {
-                max-width: 100% !important;
-                padding-top: 0 !important;
-                padding-left: 0 !important;
-                padding-right: 0 !important;
-            }
-        }
-
-        /* 4. Hide the official DOH print header on the screen, but show it on paper */
-        @media screen {
-            .print-only-header {
-                display: none !important;
-            }
-        }
     </style>
     """, unsafe_allow_html=True)
 
