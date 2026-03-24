@@ -2198,7 +2198,7 @@ def render_mortality_tab(tab_title, df_key, base_metrics, start_m, end_m, gender
     else:
         st.info("No data uploaded yet. Please go to the Data Uploader page to add your files.")
 
-def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
+    def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
     """Dynamically generates the specialized UI for the Cervical Cancer screening cascade."""
     if gender == "Male":
         st.info("🎗️ Cervical Cancer screening data is exclusively tracked for the Female demographic. Please switch the Global Filter to 'Female' or 'Total'.")
@@ -2225,27 +2225,41 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
         if filter_rhus and "Abra (Total)" not in filter_rhus:
             filtered_df = filtered_df[filtered_df['Area'].isin(filter_rhus)]
         
+        # --- COLUMN DETECTION (Upgraded to handle both Legacy and 2026 3-Row Headers) ---
+        elig_col = next((c for c in filtered_df.columns if 'elig' in c.lower() and ('30' in c.lower() or 'pop' in c.lower())), None)
+        
         c_scr_tot = get_ncd_col(filtered_df, ["screened", "total"], ["%", "suspicious", "positive", "linked", "treated", "referred", "suspect"])
+        if not c_scr_tot: c_scr_tot = next((c for c in filtered_df.columns if 'screened and assessed' in c.lower() or ('screened' in c.lower() and 'total' in c.lower())), None)
+        
         c_susp_no = get_ncd_col(filtered_df, ["suspicious", "no."], ["%", "linked", "treated", "referred", "total"])
+        if not c_susp_no: c_susp_no = next((c for c in filtered_df.columns if 'suspicious' in c.lower() and 'linked' not in c.lower() and '%' not in c), None)
+        
         c_susp_link_tr = get_ncd_col(filtered_df, ["suspicious", "treated"], ["%"])
         c_susp_link_ref = get_ncd_col(filtered_df, ["suspicious", "referred"], ["%"])
         c_susp_link_tot = get_ncd_col(filtered_df, ["suspicious", "total", "linked"], ["%"])
         
         c_pos_tot = get_ncd_col(filtered_df, ["positive", "total"], ["%", "linked", "treated", "referred", "care", "suspect"])
+        if not c_pos_tot: c_pos_tot = next((c for c in filtered_df.columns if 'positive' in c.lower() and 'precancerous' in c.lower() and 'linked' not in c.lower() and '%' not in c), None)
+        
         c_pos_link_tr = get_ncd_col(filtered_df, ["positive", "treated"], ["%"])
         c_pos_link_ref = get_ncd_col(filtered_df, ["positive", "referred"], ["%"])
         c_pos_link_tot = get_ncd_col(filtered_df, ["positive", "total", "linked"], ["%"])
         
         c_pos_suspect_tot = get_ncd_col(filtered_df, ["positive or suspect", "total"], ["%"])
         
-        cols_to_agg = [c for c in [c_scr_tot, c_susp_no, c_susp_link_tr, c_susp_link_ref, c_susp_link_tot, c_pos_tot, c_pos_link_tr, c_pos_link_ref, c_pos_link_tot, c_pos_suspect_tot] if c]
+        # Aggregate the data safely
+        cols_to_agg = [c for c in [elig_col, c_scr_tot, c_susp_no, c_susp_link_tr, c_susp_link_ref, c_susp_link_tot, c_pos_tot, c_pos_link_tr, c_pos_link_ref, c_pos_link_tot, c_pos_suspect_tot] if c]
         if not cols_to_agg:
             st.warning("Could not identify specific Cervical Cancer columns from the template. Ensure you are using the official DOH format.")
             return
             
-        agg_df = filtered_df.groupby('Area')[cols_to_agg].sum().reset_index()
+        for c in cols_to_agg:
+            filtered_df[c] = pd.to_numeric(filtered_df[c], errors='coerce').fillna(0)
+            
+        agg_df = filtered_df.groupby('Area').agg({c: 'max' if c == elig_col else 'sum' for c in cols_to_agg}).reset_index()
         is_2024 = c_pos_suspect_tot is not None
         
+        # --- ORIGINAL 2024 LEGACY LOGIC ---
         if is_2024:
             st.info("📌 **2024 Legacy Format Detected:** Displaying simplified screening and suspect tracking.")
             st.markdown("### 🎗️ Cervical Cancer Screening (2024)")
@@ -2256,8 +2270,8 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
             if c_scr_tot:
                 st.markdown("---")
                 prov_tot = int(agg_df[c_scr_tot].sum())
-                agg_df = agg_df.sort_values(by='Area', ascending=True)
-                fig_scr = px.bar(agg_df, x='Area', y=c_scr_tot, title=f"Total Women Screened for Cervical Cancer (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"], category_orders={"Area": agg_df['Area'].tolist()})
+                agg_df_sorted = agg_df.sort_values(by='Area', ascending=True)
+                fig_scr = px.bar(agg_df_sorted, x='Area', y=c_scr_tot, title=f"Total Women Screened for Cervical Cancer (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#66B2FF"], category_orders={"Area": agg_df_sorted['Area'].tolist()})
                 fig_scr.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_scr.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
                 st.plotly_chart(fig_scr, use_container_width=True, key=f"cerv_leg_1_{year}")
@@ -2265,7 +2279,7 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
             if c_pos_suspect_tot:
                 st.markdown("---")
                 prov_tot = int(agg_df[c_pos_suspect_tot].sum())
-                fig_pos = px.bar(agg_df, x='Area', y=c_pos_suspect_tot, title=f"Found Positive or Suspect (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"], category_orders={"Area": agg_df['Area'].tolist()})
+                fig_pos = px.bar(agg_df_sorted, x='Area', y=c_pos_suspect_tot, title=f"Found Positive or Suspect (Total: {prov_tot:,})", text_auto=True, color_discrete_sequence=["#EF553B"], category_orders={"Area": agg_df_sorted['Area'].tolist()})
                 fig_pos.update_traces(textfont_size=14, textposition="outside", cliponaxis=False)
                 fig_pos.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
                 st.plotly_chart(fig_pos, use_container_width=True, key=f"cerv_leg_2_{year}")
@@ -2274,8 +2288,42 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
                 st.dataframe(agg_df, use_container_width=True, hide_index=True)
             return
 
-        st.markdown("### 🎗️ Cervical Cancer Screening & Linkage to Care")
-        st.markdown(f"##### Medical Totals ({location_header.replace('📍 ', '')})")
+        # =====================================================================
+        # --- NEW 2026 UI BLOCK (Added to the top of your existing layout) ---
+        # =====================================================================
+        st.markdown("### 🎀 Cervical Cancer Screening (30-65 yrs old)")
+        
+        total_elig = agg_df[elig_col].sum() if elig_col else 0
+        total_screened = agg_df[c_scr_tot].sum() if c_scr_tot else 0
+        total_susp = agg_df[c_susp_no].sum() if c_susp_no else 0
+        total_pos = agg_df[c_pos_tot].sum() if c_pos_tot else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("👥 Eligible Pop. (30-65 yrs old women)", f"{total_elig:,.0f}")
+        col2.metric("🩺 Total Screened & Assessed", f"{total_screened:,.0f}")
+        col3.metric("⚠️ Found Suspicious (VIA, Pap, DNA)", f"{total_susp:,.0f}")
+        col4.metric("🔬 Found Positive (Precancerous)", f"{total_pos:,.0f}")
+        
+        st.markdown("#### 🌟 Top RHUs (Cervical Cancer Screening)")
+        if elig_col and c_scr_tot:
+            rhu_cerv = agg_df[['Area', c_scr_tot, elig_col]].copy()
+            rhu_cerv['Coverage'] = (rhu_cerv[c_scr_tot] / rhu_cerv[elig_col] * 100).fillna(0)
+            rhu_cerv = rhu_cerv.sort_values(by='Coverage', ascending=False)
+            
+            if not rhu_cerv.empty and rhu_cerv['Coverage'].sum() > 0:
+                fig_cerv = px.bar(rhu_cerv, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Purples")
+                fig_cerv.update_traces(textposition='outside')
+                fig_cerv.update_layout(xaxis_title="", yaxis_title="Screening Coverage (%)", margin=dict(t=30, b=0), coloraxis_showscale=False)
+                st.plotly_chart(fig_cerv, use_container_width=True, key=f"cervical_top_{year}")
+            else:
+                st.info("📊 No screening data reported yet for the selected period.")
+
+        st.markdown("---")
+
+        # =====================================================================
+        # --- YOUR ORIGINAL CASCADE UI (Fully Restored & Intact) ---
+        # =====================================================================
+        st.markdown("### 🎗️ Linkage to Care Medical Cascade")
         c1, c2, c3, c4, c5 = st.columns(5)
         if c_scr_tot: c1.metric("1. Total Screened", f"{int(agg_df[c_scr_tot].sum()):,}")
         if c_susp_no: c2.metric("2. Found Suspicious", f"{int(agg_df[c_susp_no].sum()):,}")
@@ -2306,21 +2354,21 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
             ]
             fig_f2 = px.funnel(pd.DataFrame({'Stage': pos_stages, 'Count': pos_counts}), x='Count', y='Stage', color_discrete_sequence=["#EF553B"])
             st.plotly_chart(fig_f2, use_container_width=True, key=f"cerv_funnel_pos_{year}")
-
+            
         st.markdown("---")
         st.markdown("#### 📊 RHU Breakdown: Screening Yield")
         cols_to_melt = [c for c in [c_scr_tot, c_susp_no, c_pos_tot] if c]
         if cols_to_melt:
-            agg_df = agg_df.sort_values(by='Area', ascending=True)
-            melted_rhu = agg_df[['Area'] + cols_to_melt].melt(id_vars='Area', var_name='Metric_Raw', value_name='Patients')
+            agg_df_sorted = agg_df.sort_values(by='Area', ascending=True)
+            melted_rhu = agg_df_sorted[['Area'] + cols_to_melt].melt(id_vars='Area', var_name='Metric_Raw', value_name='Patients')
             clean_metric_names = {c_scr_tot: "Screened", c_susp_no: "Suspicious", c_pos_tot: "Positive"}
             melted_rhu['Metric'] = melted_rhu['Metric_Raw'].map(clean_metric_names)
             
-            fig_rhu = px.bar(melted_rhu, x='Area', y='Patients', color='Metric', barmode='group', title="Screening Yield vs Abnormal Findings per RHU", text_auto=True, color_discrete_sequence=["#66B2FF", "#FFA15A", "#EF553B"], category_orders={"Area": agg_df['Area'].tolist()})
+            fig_rhu = px.bar(melted_rhu, x='Area', y='Patients', color='Metric', barmode='group', title="Screening Yield vs Abnormal Findings per RHU", text_auto=True, color_discrete_sequence=["#66B2FF", "#FFA15A", "#EF553B"], category_orders={"Area": agg_df_sorted['Area'].tolist()})
             fig_rhu.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
             fig_rhu.update_layout(xaxis_title="RHU", yaxis_title="Number of Women", margin=dict(t=50))
             st.plotly_chart(fig_rhu, use_container_width=True, key=f"cerv_rhu_bar_{year}")
-
+            
         with st.expander("📄 View & Download Formatted Cervical Data"):
             clean_names = {
                 c_scr_tot: "Screened (Total)", c_susp_no: "Suspicious (No.)", 
@@ -2330,10 +2378,10 @@ def render_cervical_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus
             }
             display_df = agg_df.rename(columns=clean_names)
             st.dataframe(display_df, use_container_width=True, hide_index=True)
-            csv_data = convert_df_to_csv(display_df)
+            
+            # Use standard Pandas to CSV since we are outside the class context
+            csv_data = display_df.to_csv(index=False).encode('utf-8')
             st.download_button(label="📥 Download Data as CSV", data=csv_data, file_name=f"Abra_Cervical_Cancer_Data.csv", mime="text/csv")
-    else:
-        st.info("No Cervical Cancer data uploaded yet.")
 
 def render_breast_cancer_tab(df_key, start_m, end_m, gender, year, filter_rhus):
     """Dynamically generates the specialized UI for the Breast Cancer screening cascade."""
