@@ -1338,7 +1338,7 @@ with st.sidebar:
     # 2. RUN FILTERS BASED ON THE SELECTED PAGE
     if page in ["👶 Immunization Dashboard", "🩺 NCD Dashboard", "📈 YoY Comparison", "🚰 WASH Dashboard", "🤰 Maternal Dashboard", "👨‍👩‍👧 Family Planning Dashboard", "💀 Mortality Dashboard"]:
         st.subheader("🎛️ Global Filters")
-        selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=6)
+        selected_year = st.selectbox("Select Year", options=[2021, 2022, 2023, 2024, 2025, 2026, 2027], index=5)
         
         # --- CONTEXT-AWARE GENDER FILTER ---
         if page != "👨‍👩‍👧 Family Planning Dashboard":
