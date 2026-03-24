@@ -2965,6 +2965,52 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                         
                         fig_main = px.funnel(cascade_data, x='Count', y='Indicator', title=chart_title, color_discrete_sequence=["#9B59B6"])
                         fig_main.update_traces(textposition="inside")
+                        st.plotly_chart(fig_main, use_container_width=True, key=f"mat_main_chart_{safe_filename}_{year}_{age_filter}")
+                        
+                    # --- NEW: SYPHILIS & HEP B 3-COLUMN CASCADE ---
+                    elif "Syphilis" in tab_title:
+                        st.markdown("#### 🌪️ Infectious Disease Linkage to Care Cascades")
+                        st.markdown("Visualizing the drop-off from screening, to diagnosis (reactive), to treatment.")
+                        
+                        f_col1, f_col2, f_col3 = st.columns(3)
+                        
+                        # Helper to safely grab counts from the aggregated data
+                        def get_count(ind_name):
+                            return int(cascade_data[cascade_data['Indicator'] == ind_name]['Count'].sum()) if ind_name in cascade_data['Indicator'].values else 0
+
+                        with f_col1:
+                            syph_data = pd.DataFrame({
+                                'Stage': ['Screened', 'Reactive', 'Treated'],
+                                'Count': [get_count('1. Screened for Syphilis'), get_count('2. Tested Positive for Syphilis'), get_count('7. Treated for Syphilis')]
+                            })
+                            syph_data = syph_data[syph_data['Count'] > 0] # Hide empty steps
+                            if not syph_data.empty:
+                                fig_s = px.funnel(syph_data, x='Count', y='Stage', title="Syphilis Cascade", color_discrete_sequence=["#EF553B"])
+                                fig_s.update_traces(textposition="inside")
+                                st.plotly_chart(fig_s, use_container_width=True, key=f"funnel_syph_{year}_{age_filter}")
+                                
+                        with f_col2:
+                            hep_data = pd.DataFrame({
+                                'Stage': ['Screened', 'Reactive'],
+                                'Count': [get_count('3. Screened for Hepatitis B'), get_count('4. Screened Reactive to Hepatitis B')]
+                            })
+                            hep_data = hep_data[hep_data['Count'] > 0]
+                            if not hep_data.empty:
+                                fig_h = px.funnel(hep_data, x='Count', y='Stage', title="Hepatitis B Cascade", color_discrete_sequence=["#FFA15A"])
+                                fig_h.update_traces(textposition="inside")
+                                st.plotly_chart(fig_h, use_container_width=True, key=f"funnel_hep_{year}_{age_filter}")
+                                
+                        with f_col3:
+                            hiv_data = pd.DataFrame({
+                                'Stage': ['Screened', 'Reactive'],
+                                'Count': [get_count('5. Screened for HIV'), get_count('6. Screened Reactive to HIV')]
+                            })
+                            hiv_data = hiv_data[hiv_data['Count'] > 0]
+                            if not hiv_data.empty:
+                                fig_v = px.funnel(hiv_data, x='Count', y='Stage', title="HIV Cascade", color_discrete_sequence=["#66B2FF"])
+                                fig_v.update_traces(textposition="inside")
+                                st.plotly_chart(fig_v, use_container_width=True, key=f"funnel_hiv_{year}_{age_filter}")
+                                
                     else:
                         st.markdown(f"#### 📊 {tab_title} Interventions & Screenings")
                         
@@ -2977,8 +3023,7 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                         fig_main = px.bar(cascade_data, x='Indicator', y='Count', title=chart_title, text_auto=True, color='Indicator', color_discrete_sequence=px.colors.qualitative.Pastel)
                         fig_main.update_traces(textposition="outside", cliponaxis=False)
                         fig_main.update_layout(showlegend=False, xaxis_title="", yaxis_title="Total Women", margin=dict(t=40))
-
-                    st.plotly_chart(fig_main, use_container_width=True, key=f"mat_main_chart_{safe_filename}_{year}_{age_filter}")
+                        st.plotly_chart(fig_main, use_container_width=True, key=f"mat_main_chart_{safe_filename}_{year}_{age_filter}")
                     
                     st.markdown("---")
                     st.markdown(f"#### 📊 {tab_title} - RHU Breakdown")
