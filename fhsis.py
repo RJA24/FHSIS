@@ -3133,15 +3133,21 @@ elif page == "👶 Immunization Dashboard":
             p1_col = next((c for c in penta_df.columns if (" 1" in c or "1_" in c) and "%" not in c and "DEFICIT" not in c.upper()), None)
             p3_col = next((c for c in penta_df.columns if (" 3" in c or "3_" in c) and "%" not in c and "DEFICIT" not in c.upper()), None)
             
+            # --- DEFENSIVE INITIALIZATION ---
+            # Ensures charts and layout variables always exist even if data is completely empty
+            top_list = pd.DataFrame(columns=['Area', 'Coverage'])
+            bot_list = pd.DataFrame(columns=['Area', 'Coverage'])
+            curr_cov = 0
+            projected_cov = 0
+            
             if fic_col and elig_col:
-                # --- NEW: Force numbers before math to prevent crashes ---
+                # Force numbers before math to prevent crashes
                 cols_to_clean = [fic_col, cic_col, p1_col, p3_col, elig_col]
                 for c in cols_to_clean:
                     if c and c in mmr_df.columns: 
                         mmr_df[c] = pd.to_numeric(mmr_df[c], errors='coerce').fillna(0)
                     if c and c in penta_df.columns: 
                         penta_df[c] = pd.to_numeric(penta_df[c], errors='coerce').fillna(0)
-                # ---------------------------------------------------------
                 
                 prov_fic = mmr_df[fic_col].sum()
                 prov_cic = mmr_df[cic_col].sum() if cic_col else 0
@@ -3185,37 +3191,6 @@ elif page == "👶 Immunization Dashboard":
                     drop_label += " ⚠️"
                     dq_warnings.append(f"**Negative Penta Dropout ({prov_drop:.1f}%):** More Penta 3 doses given than Penta 1. Verify if this is an expected catch-up surge or a data entry error.")
 
-              #  # --- NEW: NEGATIVE DELTA ANOMALY DETECTOR (FIXED) ---
-              #  # Checks if cumulative YTD figures unexpectedly drop from one month to the next
-              #  months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-              #  
-              # # Create a sorted copy for time-series analysis to ensure chronological checking
-              #  trend_audit_df = mmr_df[['Area', 'Month', fic_col]].copy()
-              #  trend_audit_df['Month_Cat'] = pd.Categorical(trend_audit_df['Month'], categories=months_order, ordered=True)
-              #  trend_audit_df = trend_audit_df.sort_values(['Area', 'Month_Cat'])
-              #  
-              #  # Scan each RHU's timeline individually
-              #  for rhu, group in trend_audit_df.groupby('Area'):
-                #    prev_val = None
-                #    prev_month = None
-                #    for _, row in group.iterrows():
-                #        curr_val = pd.to_numeric(row[fic_col], errors='coerce')
-                #       curr_val = 0 if pd.isna(curr_val) else curr_val
-                #        curr_month = row['Month']
-                #        
-                #        # The Fix: Skip months with 0 (assuming data hasn't been entered yet for that month)
-                #        if curr_val == 0:
-                #           continue
-                #           
-                #       # If the current month's cumulative total is lower than the previous month, flag it
-                #        if prev_val is not None and curr_val < prev_val:
-                #            fic_label = "Fully Immunized Child (FIC) ⚠️" if "⚠️" not in fic_label else fic_label
-                #            dq_warnings.append(f"**Negative Delta in {rhu}:** FIC dropped from {int(prev_val)} ({prev_month}) to {int(curr_val)} ({curr_month}). Please verify the raw Excel file for typos.")
-                #            
-                #        prev_val = curr_val
-                #        prev_month = curr_month
-                # --------------------------------------------
-
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
                 col_e1.metric(fic_label, f"{prov_fic:,.0f}", f"Current Cov: {curr_cov:.1f}%")
                 
@@ -3233,74 +3208,74 @@ elif page == "👶 Immunization Dashboard":
                     st.warning("🕵️‍♂️ **Automated Data Quality Audit:** Potential anomalies detected in the aggregated data.")
                     for w in dq_warnings:
                         st.markdown(f"- {w}")
-                   
-                    st.markdown(f"### Immunization Report")
-                    st.markdown(f"**Location Filter:** {location_header.replace('📍 ', '')}")
-                    st.markdown(f"**Reporting Period:** {start_month} to {end_month} {selected_year} | **Demographic:** {gender_filter}")
-                    st.markdown("---")
-                    st.markdown(f"""
-                    **1. Performance Summary**
-                    * **Total Fully Immunized Children (FIC):** {prov_fic:,.0f} 
-                    * **Current FIC Coverage Rate:** {curr_cov:.1f}% (DOH Target: 95%)
-                    * **Year-End FIC Forecast:** {projected_cov:.1f}%
-                    * **Penta 1 to Penta 3 Dropout Rate:** {prov_drop:.1f}% (Target: Below 10%)
-                    """)
-                    
-                    rhu_fic['Coverage'] = (rhu_fic[fic_col] / rhu_fic[elig_col] * 100).fillna(0)
-                    rhu_sorted = rhu_fic.sort_values(by='Coverage', ascending=False)
-                    top_list = rhu_sorted.head(3)
-                    bot_list = rhu_sorted.tail(3).sort_values(by='Coverage', ascending=True)
-                    
-                    st.markdown("**2. Top Performing Municipalities (FIC Coverage)**")
-                    for index, row in top_list.iterrows():
-                        st.markdown(f"* **{row['Area']}:** {row['Coverage']:.1f}%")
-                        
-                    st.markdown("**3. Action Required: Bottom Municipalities (FIC Coverage)**")
-                    for index, row in bot_list.iterrows():
-                        st.markdown(f"* **{row['Area']}:** {row['Coverage']:.1f}%")
-                    
-                    if dq_warnings:
-                        st.markdown("**4. Data Quality Flags (Requires RHU Verification)**")
-                        for w in dq_warnings:
-                            st.markdown(f"* {w}")
-                    
-                    st.info("Tip: Press **Ctrl + P** (Windows) or **Cmd + P** (Mac) to save this cleanly to PDF or print for your PHO meeting.")
-
-                st.markdown("---")
-                col_lead1, col_lead2 = st.columns(2)
                 
-                with col_lead1:
-                    st.markdown("#### 🌟 Top RHUs (FIC)")
-                    # --- DEFENSIVE CHART GENERATION ---
-                    if not top_list.empty and top_list['Coverage'].sum() > 0:
-                        fig_top3 = px.bar(top_list, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
-                        fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0), coloraxis_showscale=False)
-                        st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
-                    else:
-                        st.info("📊 No Fully Immunized Child (FIC) data uploaded yet for this year.")
-                    
-                with col_lead2:
-                    st.markdown("#### ⚠️ Bottom RHUs (FIC)")
-                    # --- DEFENSIVE CHART GENERATION ---
-                    if not bot_list.empty and bot_list['Coverage'].sum() > 0:
-                        fig_bot3 = px.bar(bot_list, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
-                        fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0), coloraxis_showscale=False)
-                        st.plotly_chart(fig_bot3, use_container_width=True, key=f"bot3_exec_fic_{selected_year}")
-                    else:
-                        st.info("📊 No Fully Immunized Child (FIC) data uploaded yet for this year.")
-
+                st.markdown(f"### Immunization Report")
+                st.markdown(f"**Location Filter:** {location_header.replace('📍 ', '')}")
+                st.markdown(f"**Reporting Period:** {start_month} to {end_month} {selected_year} | **Demographic:** {gender_filter}")
                 st.markdown("---")
-                st.markdown("#### 🚀 Target Forecasting (FIC Coverage)")
-                forecast_df = pd.DataFrame({
-                    "Metric": ["Current Coverage", "Projected Year-End", "DOH Target"],
-                    "Coverage (%)": [curr_cov, projected_cov, 95]
-                })
-                fig_forecast = px.bar(forecast_df, x="Coverage (%)", y="Metric", orientation='h', 
-                                      color="Metric", text_auto=".1f",
-                                      color_discrete_map={"Current Coverage": "#1f77b4", "Projected Year-End": "#ff7f0e", "DOH Target": "red"})
-                fig_forecast.add_vline(x=95, line_dash="dash", line_color="red", annotation_text="95% Target")
-                fig_forecast.update_layout(showlegend=False, xaxis_range=[0, max(100, projected_cov + 5)])
-                st.plotly_chart(fig_forecast, use_container_width=True, key=f"forecast_exec_{selected_year}")
+                st.markdown(f"""
+                **1. Performance Summary**
+                * **Total Fully Immunized Children (FIC):** {prov_fic:,.0f} 
+                * **Current FIC Coverage Rate:** {curr_cov:.1f}% (DOH Target: 95%)
+                * **Year-End FIC Forecast:** {projected_cov:.1f}%
+                * **Penta 1 to Penta 3 Dropout Rate:** {prov_drop:.1f}% (Target: Below 10%)
+                """)
+                
+                rhu_fic['Coverage'] = (rhu_fic[fic_col] / rhu_fic[elig_col] * 100).fillna(0)
+                rhu_sorted = rhu_fic.sort_values(by='Coverage', ascending=False)
+                top_list = rhu_sorted.head(3)
+                bot_list = rhu_sorted.tail(3).sort_values(by='Coverage', ascending=True)
+                
+                st.markdown("**2. Top Performing Municipalities (FIC Coverage)**")
+                for index, row in top_list.iterrows():
+                    st.markdown(f"* **{row['Area']}:** {row['Coverage']:.1f}%")
+                    
+                st.markdown("**3. Action Required: Bottom Municipalities (FIC Coverage)**")
+                for index, row in bot_list.iterrows():
+                    st.markdown(f"* **{row['Area']}:** {row['Coverage']:.1f}%")
+                
+                if dq_warnings:
+                    st.markdown("**4. Data Quality Flags (Requires RHU Verification)**")
+                    for w in dq_warnings:
+                        st.markdown(f"* {w}")
+
+            st.markdown("---")
+            col_lead1, col_lead2 = st.columns(2)
+            
+            with col_lead1:
+                st.markdown("#### 🌟 Top RHUs (FIC)")
+                # --- DEFENSIVE CHART GENERATION ---
+                if not top_list.empty and top_list['Coverage'].sum() > 0:
+                    fig_top3 = px.bar(top_list, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
+                    fig_top3.update_traces(textposition='outside')
+                    fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0), coloraxis_showscale=False)
+                    st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
+                else:
+                    st.info("📊 No Fully Immunized Child (FIC) data uploaded yet for this year.")
+                
+            with col_lead2:
+                st.markdown("#### ⚠️ Bottom RHUs (FIC)")
+                # --- DEFENSIVE CHART GENERATION ---
+                if not bot_list.empty and bot_list['Coverage'].sum() > 0:
+                    fig_bot3 = px.bar(bot_list, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
+                    fig_bot3.update_traces(textposition='outside')
+                    fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0), coloraxis_showscale=False)
+                    st.plotly_chart(fig_bot3, use_container_width=True, key=f"bot3_exec_fic_{selected_year}")
+                else:
+                    st.info("📊 No Fully Immunized Child (FIC) data uploaded yet for this year.")
+
+            st.markdown("---")
+            st.markdown("#### 🚀 Target Forecasting (FIC Coverage)")
+            forecast_df = pd.DataFrame({
+                "Metric": ["Current Coverage", "Projected Year-End", "DOH Target"],
+                "Coverage (%)": [curr_cov, projected_cov, 95]
+            })
+            fig_forecast = px.bar(forecast_df, x="Coverage (%)", y="Metric", orientation='h', 
+                                  color="Metric", text_auto=".1f",
+                                  color_discrete_map={"Current Coverage": "#1f77b4", "Projected Year-End": "#ff7f0e", "DOH Target": "red"})
+            fig_forecast.add_vline(x=95, line_dash="dash", line_color="red", annotation_text="95% Target")
+            fig_forecast.update_layout(showlegend=False, xaxis_range=[0, max(100, projected_cov + 5)])
+            st.plotly_chart(fig_forecast, use_container_width=True, key=f"forecast_exec_{selected_year}")
 
         else:
             st.info("Upload both 'Pentavalent' and 'MMR/FIC' data via the Data Uploader to unlock the Executive Summary.")
