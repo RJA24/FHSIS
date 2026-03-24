@@ -1133,6 +1133,15 @@ def load_and_clean_fp_methods(uploaded_file, year):
             main_headers = df.iloc[area_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], np.nan, regex=True).ffill()
             sub_headers = df.iloc[sub_row_idx].astype(str).replace([r'^Unnamed:.*', r'^\s*$', r'^nan$'], '', regex=True)
 
+            # --- DOH TYPO AUTO-HEALER ---
+            # Patches missing age brackets (e.g., the blank 15-19 column in Oct 2026 New Acceptors)
+            sub_headers_list = list(sub_headers)
+            for i in range(1, len(sub_headers_list) - 1):
+                if sub_headers_list[i] == '' and sub_headers_list[i-1] == '10-14' and sub_headers_list[i+1] == '20-49':
+                    sub_headers_list[i] = '15-19'
+            sub_headers = pd.Series(sub_headers_list)
+            # -----------------------------
+
             flat_cols = []
             for top, bot in zip(main_headers, sub_headers):
                 top_str = str(top).strip().replace('\n', ' ') if pd.notna(top) and str(top) != 'nan' else ""
