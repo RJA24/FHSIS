@@ -3193,18 +3193,7 @@ elif page == "👶 Immunization Dashboard":
                     st.warning("🕵️‍♂️ **Automated Data Quality Audit:** Potential anomalies detected in the aggregated data.")
                     for w in dq_warnings:
                         st.markdown(f"- {w}")
-
-                with st.expander("🖨️ Generate Printable PHO Report", expanded=False):
-                    # --- ADDED: THE HIDDEN PRINT HEADER ---
-                    st.markdown("""
-                    <div class='print-only-header'>
-                        <h3>Republic of the Philippines</h3>
-                        <h3>Department of Health</h3>
-                        <h2>Abra Provincial Health Office</h2>
-                        <hr>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
+                   
                     st.markdown(f"### Immunization Report")
                     st.markdown(f"**Location Filter:** {location_header.replace('📍 ', '')}")
                     st.markdown(f"**Reporting Period:** {start_month} to {end_month} {selected_year} | **Demographic:** {gender_filter}")
