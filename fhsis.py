@@ -547,6 +547,7 @@ def load_and_clean_ncd_data(uploaded_file, year):
     """
     Parses Non-Communicable Disease (NCD) templates. Includes specialized 
     targeting logic to detect regional headers (e.g., 'CAR', 'BANGUED').
+    Upgraded for 2026 to handle 3-row headers and strip cumulative YTD columns.
     """
     try:
         xls = pd.ExcelFile(uploaded_file)
@@ -580,10 +581,12 @@ def load_and_clean_ncd_data(uploaded_file, year):
                         
             if area_row_idx == -1 or data_start_idx == -1: continue
             
-            # Forward-fill horizontally merged headers to construct unique column names
+            # --- UPGRADE 1: DYNAMIC HEADER FORWARD-FILL ---
+            # Handles the new 2026 Cervical Cancer format which uses 3 rows of merged headers
             headers_df = df.iloc[area_row_idx:data_start_idx].copy()
-            headers_df.iloc[0] = headers_df.iloc[0].ffill() 
-            if len(headers_df) > 1: headers_df.iloc[1] = headers_df.iloc[1].ffill() 
+            for i in range(len(headers_df)):
+                headers_df.iloc[i] = headers_df.iloc[i].ffill() 
+            # ----------------------------------------------
             
             flat_cols = []
             for col_idx in range(headers_df.shape[1]):
@@ -624,8 +627,15 @@ def load_and_clean_ncd_data(uploaded_file, year):
             clean['Month'] = month_val
             clean['Year'] = year
             
+            # --- UPGRADE 2: PROTECT AGAINST CUMULATIVE INFLATION ---
+            # Drops the new '(as of)' columns so they don't break discrete month-to-month aggregations
+            cols_to_drop = [c for c in clean.columns if "(as of)" in str(c).lower()]
+            clean.drop(columns=[c for c in cols_to_drop if c in clean.columns], inplace=True)
+            # -------------------------------------------------------
+            
             for col in clean.columns:
-                if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken']:
+                # Also ignores the new 'VALIDATION' text column in Breast Cancer
+                if col not in ['Area', 'Month', 'Year', 'Interpretation', 'Recommendation/Actions Taken', 'VALIDATION']:
                     clean[col] = pd.to_numeric(clean[col], errors='coerce').fillna(0)
             all_months_data.append(clean)
             
