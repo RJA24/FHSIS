@@ -1563,12 +1563,16 @@ def get_clean_indicator_name(col_name):
     elif 'given 1 dose of deworming tablet' in c_low: return '3. Given 1 dose of Deworming Tablet'
 
     # --- Syphilis & Hep B (File 4) ---
-    elif 'screened for syphilis' in c_low: return '1. Screened for Syphilis'
-    elif 'tested positive for syphilis' in c_low: return '2. Tested Positive for Syphilis'
-    elif 'screened for hepatitis b' in c_low: return '3. Screened for Hepatitis B'
-    elif 'screened reactive to hepatitis b' in c_low: return '4. Screened Reactive to Hepatitis B'
-    elif 'screened for hiv' in c_low: return '5. Screened for HIV'
-    elif 'screened reactive to hiv' in c_low: return '6. Screened Reactive to HIV'
+    # Note: Reactive/Treated checks MUST come before screening checks to prevent overlap
+    elif 'syphilis' in c_low and ('reactive' in c_low or 'positive' in c_low): return '2. Tested Positive for Syphilis'
+    elif 'syphilis' in c_low and 'treated' in c_low: return '7. Treated for Syphilis'
+    elif 'syphilis' in c_low and 'screened' in c_low: return '1. Screened for Syphilis'
+    
+    elif 'hepatitis b' in c_low and 'reactive' in c_low: return '4. Screened Reactive to Hepatitis B'
+    elif 'hepatitis b' in c_low and 'screened' in c_low: return '3. Screened for Hepatitis B'
+    
+    elif 'hiv' in c_low and 'reactive' in c_low: return '6. Screened Reactive to HIV'
+    elif 'hiv' in c_low and 'screened' in c_low: return '5. Screened for HIV'
 
     # --- CBC & Gestational Diabetes (File 5) ---
     elif 'tested for cbc/hgb/hct' in c_low and 'anemia' not in c_low: return '1. Tested for CBC/Hgb/Hct'
