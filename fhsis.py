@@ -3144,35 +3144,35 @@ elif page == "👶 Immunization Dashboard":
                     drop_label += " ⚠️"
                     dq_warnings.append(f"**Negative Penta Dropout ({prov_drop:.1f}%):** More Penta 3 doses given than Penta 1. Verify if this is an expected catch-up surge or a data entry error.")
 
-                # --- NEW: NEGATIVE DELTA ANOMALY DETECTOR (FIXED) ---
-                # Checks if cumulative YTD figures unexpectedly drop from one month to the next
-                months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-                
-                # Create a sorted copy for time-series analysis to ensure chronological checking
-                trend_audit_df = mmr_df[['Area', 'Month', fic_col]].copy()
-                trend_audit_df['Month_Cat'] = pd.Categorical(trend_audit_df['Month'], categories=months_order, ordered=True)
-                trend_audit_df = trend_audit_df.sort_values(['Area', 'Month_Cat'])
-                
-                # Scan each RHU's timeline individually
-                for rhu, group in trend_audit_df.groupby('Area'):
-                    prev_val = None
-                    prev_month = None
-                    for _, row in group.iterrows():
-                        curr_val = pd.to_numeric(row[fic_col], errors='coerce')
-                        curr_val = 0 if pd.isna(curr_val) else curr_val
-                        curr_month = row['Month']
-                        
-                        # The Fix: Skip months with 0 (assuming data hasn't been entered yet for that month)
-                        if curr_val == 0:
-                            continue
-                            
-                        # If the current month's cumulative total is lower than the previous month, flag it
-                        if prev_val is not None and curr_val < prev_val:
-                            fic_label = "Fully Immunized Child (FIC) ⚠️" if "⚠️" not in fic_label else fic_label
-                            dq_warnings.append(f"**Negative Delta in {rhu}:** FIC dropped from {int(prev_val)} ({prev_month}) to {int(curr_val)} ({curr_month}). Please verify the raw Excel file for typos.")
-                            
-                        prev_val = curr_val
-                        prev_month = curr_month
+              #  # --- NEW: NEGATIVE DELTA ANOMALY DETECTOR (FIXED) ---
+              #  # Checks if cumulative YTD figures unexpectedly drop from one month to the next
+              #  months_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+              #  
+              # # Create a sorted copy for time-series analysis to ensure chronological checking
+              #  trend_audit_df = mmr_df[['Area', 'Month', fic_col]].copy()
+              #  trend_audit_df['Month_Cat'] = pd.Categorical(trend_audit_df['Month'], categories=months_order, ordered=True)
+              #  trend_audit_df = trend_audit_df.sort_values(['Area', 'Month_Cat'])
+              #  
+              #  # Scan each RHU's timeline individually
+              #  for rhu, group in trend_audit_df.groupby('Area'):
+                #    prev_val = None
+                #    prev_month = None
+                #    for _, row in group.iterrows():
+                #        curr_val = pd.to_numeric(row[fic_col], errors='coerce')
+                #       curr_val = 0 if pd.isna(curr_val) else curr_val
+                #        curr_month = row['Month']
+                #        
+                #        # The Fix: Skip months with 0 (assuming data hasn't been entered yet for that month)
+                #        if curr_val == 0:
+                #           continue
+                #           
+                #       # If the current month's cumulative total is lower than the previous month, flag it
+                #        if prev_val is not None and curr_val < prev_val:
+                #            fic_label = "Fully Immunized Child (FIC) ⚠️" if "⚠️" not in fic_label else fic_label
+                #            dq_warnings.append(f"**Negative Delta in {rhu}:** FIC dropped from {int(prev_val)} ({prev_month}) to {int(curr_val)} ({curr_month}). Please verify the raw Excel file for typos.")
+                #            
+                #        prev_val = curr_val
+                #        prev_month = curr_month
                 # --------------------------------------------
 
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
