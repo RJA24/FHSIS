@@ -412,17 +412,47 @@ def restore_cloud_backup(backup_filename):
         st.error(f"Restore failed: {e}")
         return False
 
-def nuke_cloud_database(selected_keys):
-    """Administrative tool to permanently wipe specific datasets from the cloud."""
+    def nuke_cloud_database(selected_keys, year_to_nuke):
+    """Administrative tool to wipe specific datasets or specific years from the cloud."""
     for app_key in selected_keys:
         file_name = f"{ALL_MAPPINGS[app_key]}.csv"
-        with st.spinner(f"Nuking {file_name} from cloud..."):
+        with st.spinner(f"Processing deletion for {file_name}..."):
             try:
-                supabase.storage.from_('fhsis-data').remove([file_name])
-                if app_key in st.session_state.get('fhsis_data', {}):
-                    del st.session_state['fhsis_data'][app_key]
-            except Exception:
-                pass
+                # SCENARIO A: Total Annihilation (All Years)
+                if year_to_nuke == "ALL YEARS":
+                    supabase.storage.from_('fhsis-data').remove([file_name])
+                    if app_key in st.session_state.get('fhsis_data', {}):
+                        del st.session_state['fhsis_data'][app_key]
+                
+                # SCENARIO B: Surgical Deletion (Specific Year)
+                else:
+                    target_year = int(year_to_nuke)
+                    res = supabase.storage.from_('fhsis-data').download(file_name)
+                    df = pd.read_csv(io.BytesIO(res))
+                    
+                    if 'Year' in df.columns:
+                        df['Year_Num'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
+                        # Keep everything EXCEPT the year we are nuking
+                        df_kept = df[df['Year_Num'] != target_year].copy()
+                        df_kept.drop(columns=['Year_Num'], inplace=True)
+                        
+                        if df_kept.empty:
+                            # If deleting this year empties the file entirely, just remove the file
+                            supabase.storage.from_('fhsis-data').remove([file_name])
+                            if app_key in st.session_state.get('fhsis_data', {}):
+                                del st.session_state['fhsis_data'][app_key]
+                        else:
+                            # Re-upload the cleaned data back to Supabase
+                            csv_bytes = df_kept.to_csv(index=False).encode('utf-8')
+                            supabase.storage.from_('fhsis-data').upload(
+                                file=csv_bytes,
+                                path=file_name,
+                                file_options={"cache-control": "0", "upsert": "true"}
+                            )
+                            # Update active memory
+                            st.session_state['fhsis_data'][app_key] = df_kept
+            except Exception as e:
+                pass # File probably doesn't exist yet, which is fine
     st.cache_data.clear()
 
 def clear_session_data():
@@ -3957,7 +3987,7 @@ elif page == "📁 Data Uploader":
     with col_db2:
         # --- UPGRADED DANGER ZONE ---
         with st.expander("⚠️ Danger Zone (Permanent Deletion)"):
-            st.warning("Select the specific datasets you want to clear from the live cloud database. This will permanently delete their historical data.")
+            st.warning("Select datasets and the specific year you want to wipe from the cloud database.")
             
             datasets_to_nuke = st.multiselect(
                 "Select Datasets to Nuke", 
@@ -3966,12 +3996,19 @@ elif page == "📁 Data Uploader":
                 key="nuke_select"
             )
             
+            # Target specific year or ALL years
+            year_to_nuke = st.selectbox(
+                "Select Year to Wipe:", 
+                ["ALL YEARS", 2021, 2022, 2023, 2024, 2025, 2026, 2027], 
+                index=6 # Defaults to 2026
+            )
+            
             if st.button("🚨 Nuke Selected Data", type="primary", use_container_width=True):
                 if not datasets_to_nuke:
-                    st.toast("Please select at least one dataset from the dropdown above to nuke.", icon="⚠️")
+                    st.toast("Please select at least one dataset to nuke.", icon="⚠️")
                 else:
-                    nuke_cloud_database(datasets_to_nuke)
-                    st.toast(f"Successfully wiped: {', '.join(datasets_to_nuke)}! Please re-upload your files.", icon="☢️")
+                    nuke_cloud_database(datasets_to_nuke, year_to_nuke)
+                    st.toast(f"Successfully wiped {year_to_nuke} data for: {', '.join(datasets_to_nuke)}!", icon="☢️")
                     time.sleep(2.5)
                     st.rerun()
 
