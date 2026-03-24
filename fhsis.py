@@ -3943,7 +3943,7 @@ elif page == "📁 Data Uploader":
     st.info("🔒 The Data Uploader is active. You are logged in as Admin.")
         
     st.markdown("Upload your FHSIS Excel files here. The app extracts all 12 monthly sheets, filters for Abra's 27 RHUs, and saves them to Google Sheets.")
-    upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=4)
+    upload_year = st.selectbox("📅 Select Year for these uploads (Important for historical tracking):", [2021, 2022, 2023, 2024, 2025, 2026, 2027], index=5)
     
     upload_tab_imm, upload_tab_ncd, upload_tab_wash, upload_tab_mat, upload_tab_mort, upload_tab_fp = st.tabs(["👶 Child Immunization", "🩺 NCD", "🚰 WASH", "🤰 Maternal Health", "💀 Mortality & Injuries", "👨‍👩‍👧 Family Planning"])
     
