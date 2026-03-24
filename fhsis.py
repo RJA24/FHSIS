@@ -3271,35 +3271,23 @@ elif page == "👶 Immunization Dashboard":
                 
                 with col_lead1:
                     st.markdown("#### 🌟 Top RHUs (FIC)")
-                    # Safely calculate the sorted RHU totals for the leaderboard
-                    if not mmr_df.empty and fic_col in mmr_df.columns:
-                        # Since data is discrete monthly, we sum() it to get the Year-to-Date total
-                        rhu_sorted = mmr_df.groupby('Area')[fic_col].sum().reset_index().sort_values(by=fic_col, ascending=False)
-                    else:
-                        rhu_sorted = pd.DataFrame(columns=['Area', fic_col])
-                        
-                    top3 = rhu_sorted.head(3)
-                    
-                    # --- NEW: DEFENSIVE CHART GENERATION ---
-                    # Only draw the chart if there is actual data to plot!
-                    if not top3.empty and top3['Coverage'].sum() > 0:
-                        fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
-                        fig_top3.update_traces(textposition='outside')
-                        fig_top3.update_layout(xaxis_title="", yaxis_title="FIC Coverage", coloraxis_showscale=False)
-                        st.plotly_chart(fig_top3, use_container_width=True)
+                    # --- DEFENSIVE CHART GENERATION ---
+                    if not top_list.empty and top_list['Coverage'].sum() > 0:
+                        fig_top3 = px.bar(top_list, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
+                        fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0), coloraxis_showscale=False)
+                        st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
                     else:
                         st.info("📊 No Fully Immunized Child (FIC) data uploaded yet for this year.")
-                    # ---------------------------------------
-                    fig_top3 = px.bar(top3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Greens")
-                    fig_top3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
-                    st.plotly_chart(fig_top3, use_container_width=True, key=f"top3_exec_fic_{selected_year}")
                     
                 with col_lead2:
                     st.markdown("#### ⚠️ Bottom RHUs (FIC)")
-                    bot3 = rhu_sorted.tail(3).sort_values(by='Coverage', ascending=True)
-                    fig_bot3 = px.bar(bot3, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
-                    fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0))
-                    st.plotly_chart(fig_bot3, use_container_width=True, key=f"bot3_exec_fic_{selected_year}")
+                    # --- DEFENSIVE CHART GENERATION ---
+                    if not bot_list.empty and bot_list['Coverage'].sum() > 0:
+                        fig_bot3 = px.bar(bot_list, x='Area', y='Coverage', text_auto='.1f', color='Coverage', color_continuous_scale="Reds_r")
+                        fig_bot3.update_layout(xaxis_title="", yaxis_title="Coverage (%)", margin=dict(t=30, b=0), coloraxis_showscale=False)
+                        st.plotly_chart(fig_bot3, use_container_width=True, key=f"bot3_exec_fic_{selected_year}")
+                    else:
+                        st.info("📊 No Fully Immunized Child (FIC) data uploaded yet for this year.")
 
                 st.markdown("---")
                 st.markdown("#### 🚀 Target Forecasting (FIC Coverage)")
