@@ -58,6 +58,31 @@ st.markdown("""
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
     }
+
+    /* --- THE PRINT FIX: Makes Ctrl+P actually look like a document --- */
+        @media print {
+            /* Hide the sidebar, top header, and empty spaces */
+            [data-testid="stSidebar"], 
+            header[data-testid="stHeader"],
+            .stDeployButton,
+            footer {
+                display: none !important;
+            }
+            
+            /* Make the main page take up the full paper width */
+            .block-container {
+                max-width: 100% !important;
+                padding-top: 0 !important;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+            }
+            
+            /* Ensure the background prints as crisp white */
+            body {
+                background-color: white !important;
+                color: black !important;
+            }
+        }
     </style>
     """, unsafe_allow_html=True)
 
