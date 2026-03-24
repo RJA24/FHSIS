@@ -3008,17 +3008,6 @@ def render_maternal_tab(tab_title, df_key, start_m, end_m, year, age_filter, fil
                                 fig_v.update_traces(textposition="outside", textinfo="value+percent initial")
                                 st.plotly_chart(fig_v, use_container_width=True, key=f"funnel_hiv_{year}_{age_filter}")
                                 
-                        with f_col3:
-                            hiv_data = pd.DataFrame({
-                                'Stage': ['Screened', 'Reactive'],
-                                'Count': [get_count('5. Screened for HIV'), get_count('6. Screened Reactive to HIV')]
-                            })
-                            hiv_data = hiv_data[hiv_data['Count'] > 0]
-                            if not hiv_data.empty:
-                                fig_v = px.funnel(hiv_data, x='Count', y='Stage', title="HIV Cascade", color_discrete_sequence=["#66B2FF"])
-                                fig_v.update_traces(textposition="inside")
-                                st.plotly_chart(fig_v, use_container_width=True, key=f"funnel_hiv_{year}_{age_filter}")
-                                
                     else:
                         st.markdown(f"#### 📊 {tab_title} Interventions & Screenings")
                         
