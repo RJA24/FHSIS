@@ -15,6 +15,8 @@ import base64
 import os
 from datetime import datetime
 import pytz
+import threading
+from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Abra Provincial Health Data Portal", page_icon="Abra_provincial_seal.png", layout="wide")
@@ -1380,11 +1382,36 @@ with st.sidebar:
             st.session_state["is_admin"] = False
             st.rerun()
 
-# --- INITIALIZE SESSION STATE (LAZY LOAD) ---
-# Skip loading if they are on the Home page so the app boots instantly!
-if page != "🏠 Home" and 'fhsis_data' not in st.session_state:
-    with st.spinner(f"🔄 Syncing cloud database for the {page.replace('👶 ', '').replace('🩺 ', '')}..."):
-        st.session_state['fhsis_data'] = load_data_from_cloud()
+# --- TRUE BACKGROUND LOADING ENGINE ---
+# Description: Spawns a separate background thread to download Supabase data 
+# silently while the user views the Home page, ensuring zero UI freeze.
+
+if 'fhsis_data' not in st.session_state:
+    if 'is_bg_loading' not in st.session_state:
+        st.session_state['is_bg_loading'] = True
+        
+        def load_in_background():
+            try:
+                # Silently pull everything from the cloud in the background
+                data = load_data_from_cloud()
+                st.session_state['fhsis_data'] = data
+            except Exception:
+                pass 
+            finally:
+                st.session_state['is_bg_loading'] = False
+
+        # Create and start the background thread
+        bg_thread = threading.Thread(target=load_in_background)
+        # Attach Streamlit's context so the thread can safely write to memory
+        add_script_run_ctx(bg_thread)
+        bg_thread.start()
+
+# Failsafe: If the user clicks a dashboard *before* the background thread finishes downloading
+if page != "🏠 Home" and st.session_state.get('is_bg_loading', True):
+    with st.spinner("🔄 Finishing background cloud sync..."):
+        while st.session_state.get('is_bg_loading', True):
+            time.sleep(0.5)
+        st.rerun() # Refresh immediately once the data lands in memory
         
 
 # ==============================================================================
