@@ -5,3 +5,4 @@ st-gsheets-connection
 openpyxl
 supabase
 xlsxwriter
+pytz
